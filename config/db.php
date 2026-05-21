@@ -1,0 +1,318 @@
+<?php
+require_once __DIR__ . '/constants.php';
+
+$conn = new mysqli("localhost", "root", "", "posiisdb");
+
+if ($conn->connect_error) {
+    die("Database connection failed: " . $conn->connect_error);
+}
+
+$conn->set_charset("utf8mb4");
+
+// L-01: run schema migrations only once per version — skipped on every subsequent request
+$_db_version   = '1.4.4';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+
+// One-time migration: procurement_access column
+$conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS procurement_access ENUM('none','pending','approved','denied') DEFAULT 'none'");
+
+// One-time migration: quantity discrepancy alerts table
+$conn->query("CREATE TABLE IF NOT EXISTS quantity_alerts (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    product_name VARCHAR(255),
+    barcode      VARCHAR(100),
+    invoice      VARCHAR(100),
+    supplier_id  INT,
+    batch_qty    INT,
+    received_qty INT,
+    flagged_by   INT,
+    status       ENUM('pending','recounting','resolved') DEFAULT 'pending',
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: procurement batch lifecycle tracking
+$conn->query("CREATE TABLE IF NOT EXISTS procurement_batches (
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    staff_id             INT,
+    staff_username       VARCHAR(100),
+    approved_by          INT DEFAULT NULL,
+    approved_by_username VARCHAR(100) DEFAULT NULL,
+    supplier_id          INT DEFAULT NULL,
+    supplier_name        VARCHAR(255) DEFAULT NULL,
+    invoice              VARCHAR(100) DEFAULT NULL,
+    approved_at          DATETIME DEFAULT NULL,
+    encoding_started_at  DATETIME DEFAULT NULL,
+    receiving_started_at DATETIME DEFAULT NULL,
+    officialized_at      DATETIME DEFAULT NULL,
+    status               ENUM('approved','encoding','receiving','complete_clean','complete_errors','recount_pending') DEFAULT 'approved',
+    item_count           INT DEFAULT 0,
+    discrepancy_count    INT DEFAULT 0,
+    price_flag_count     INT DEFAULT 0,
+    minutes_to_complete  INT DEFAULT NULL,
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: procurement access audit log
+$conn->query("CREATE TABLE IF NOT EXISTS procurement_access_log (
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    staff_id             INT,
+    staff_username       VARCHAR(100),
+    action               ENUM('requested','approved','denied','consumed','recount_auto') DEFAULT 'requested',
+    actioned_by          INT DEFAULT NULL,
+    actioned_by_username VARCHAR(100) DEFAULT NULL,
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: security anomaly flags
+$conn->query("CREATE TABLE IF NOT EXISTS security_flags (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    flag_type      VARCHAR(50),
+    severity       ENUM('low','medium','high') DEFAULT 'medium',
+    reference_id   INT DEFAULT NULL,
+    reference_type VARCHAR(50) DEFAULT NULL,
+    message        TEXT,
+    reviewed_by    INT DEFAULT NULL,
+    reviewed_at    DATETIME DEFAULT NULL,
+    status         ENUM('open','reviewed','dismissed') DEFAULT 'open',
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: support ticket system
+$conn->query("CREATE TABLE IF NOT EXISTS support_tickets (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    user_id      INT NOT NULL,
+    username     VARCHAR(100) DEFAULT NULL,
+    subject      VARCHAR(255) NOT NULL,
+    status       ENUM('open','in_progress','resolved') DEFAULT 'open',
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at  DATETIME DEFAULT NULL
+)");
+$conn->query("CREATE TABLE IF NOT EXISTS support_messages (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    ticket_id        INT NOT NULL,
+    sender_id        INT NOT NULL,
+    sender_username  VARCHAR(100) DEFAULT NULL,
+    sender_role      VARCHAR(50)  DEFAULT NULL,
+    message          TEXT NOT NULL,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: per-product low-stock intake baseline
+$conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS max_quantity INT DEFAULT 0");
+
+// One-time migration: support ticket last-activity timestamp
+$conn->query("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT NULL");
+
+// One-time migration: two-step payment approval workflow
+$conn->query("CREATE TABLE IF NOT EXISTS payment_approvals (
+    id                      INT AUTO_INCREMENT PRIMARY KEY,
+    payment_id              INT NOT NULL,
+    requested_by            INT DEFAULT NULL,
+    requested_by_username   VARCHAR(100) DEFAULT NULL,
+    step1_approver_id       INT DEFAULT NULL,
+    step1_username          VARCHAR(100) DEFAULT NULL,
+    step1_at                DATETIME DEFAULT NULL,
+    step1_action            ENUM('approved','denied') DEFAULT NULL,
+    step2_approver_id       INT DEFAULT NULL,
+    step2_username          VARCHAR(100) DEFAULT NULL,
+    step2_at                DATETIME DEFAULT NULL,
+    step2_action            ENUM('approved','denied') DEFAULT NULL,
+    status                  ENUM('pending_step1','pending_step2','approved','denied') DEFAULT 'pending_step1',
+    created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: controlled price update approval workflow
+$conn->query("CREATE TABLE IF NOT EXISTS price_update_requests (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    product_id          INT NOT NULL,
+    product_name        VARCHAR(255),
+    barcode             VARCHAR(100),
+    current_price       DECIMAL(10,2) NOT NULL,
+    proposed_price      DECIMAL(10,2) NOT NULL,
+    supplier_id         INT DEFAULT NULL,
+    supplier_name       VARCHAR(255) DEFAULT NULL,
+    invoice             VARCHAR(100) DEFAULT NULL,
+    submitted_by        INT DEFAULT NULL,
+    submitted_username  VARCHAR(100) DEFAULT NULL,
+    step1_by            INT DEFAULT NULL,
+    step1_username      VARCHAR(100) DEFAULT NULL,
+    step1_at            DATETIME DEFAULT NULL,
+    step2_by            INT DEFAULT NULL,
+    step2_username      VARCHAR(100) DEFAULT NULL,
+    step2_at            DATETIME DEFAULT NULL,
+    applied_by          INT DEFAULT NULL,
+    applied_username    VARCHAR(100) DEFAULT NULL,
+    applied_at          DATETIME DEFAULT NULL,
+    rejected_by         INT DEFAULT NULL,
+    rejected_username   VARCHAR(100) DEFAULT NULL,
+    rejected_at         DATETIME DEFAULT NULL,
+    reject_reason       TEXT DEFAULT NULL,
+    status              ENUM('pending','step1_approved','approved','applied','rejected') DEFAULT 'pending',
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS price_update_logs (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    request_id      INT NOT NULL,
+    action          ENUM('submitted','step1_approved','step1_rejected','step2_approved','step2_rejected','applied','cancelled') DEFAULT 'submitted',
+    actor_id        INT NOT NULL,
+    actor_username  VARCHAR(100),
+    old_price       DECIMAL(10,2) DEFAULT NULL,
+    new_price       DECIMAL(10,2) DEFAULT NULL,
+    note            TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: delivery return ticket request workflow
+$conn->query("CREATE TABLE IF NOT EXISTS delivery_return_requests (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    ticket_no           VARCHAR(50) DEFAULT NULL,
+    invoice_no          VARCHAR(100) NOT NULL,
+    supplier_id         INT NOT NULL,
+    supplier_name       VARCHAR(255) DEFAULT NULL,
+    purpose             TEXT,
+    deduct_pay          TINYINT(1) DEFAULT 1,
+    requested_by        INT DEFAULT NULL,
+    requested_username  VARCHAR(100) DEFAULT NULL,
+    reviewed_by         INT DEFAULT NULL,
+    reviewed_username   VARCHAR(100) DEFAULT NULL,
+    reviewed_at         DATETIME DEFAULT NULL,
+    reject_reason       TEXT DEFAULT NULL,
+    status              ENUM('pending','approved','rejected') DEFAULT 'pending',
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS delivery_return_request_items (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    request_id   INT NOT NULL,
+    product_id   INT NOT NULL,
+    product_name VARCHAR(255) DEFAULT NULL,
+    qty          INT NOT NULL,
+    reason       VARCHAR(255) DEFAULT 'Damaged',
+    unit_price   DECIMAL(10,2) DEFAULT 0.00,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// H-01: separate rejection reason from superadmin override note
+$conn->query("ALTER TABLE refunds ADD COLUMN IF NOT EXISTS reject_note TEXT DEFAULT NULL");
+
+// system_settings table + default rows (was missing — caused low-stock threshold to never save)
+$conn->query("CREATE TABLE IF NOT EXISTS system_settings (
+    setting_key   VARCHAR(100) PRIMARY KEY,
+    setting_value TEXT DEFAULT NULL,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)");
+$conn->query("INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES
+    ('store_name',                 'My Store'),
+    ('low_stock_threshold',        '10'),
+    ('expiry_warning_days',        '7'),
+    ('price_spike_pct',            '30'),
+    ('speed_anomaly_minutes',      '3'),
+    ('speed_anomaly_min_items',    '3'),
+    ('repeat_discrepancy_count',   '3')
+");
+
+// One-time migration: tier lock flag — set after retail price approval, cleared after admin saves tiers
+$conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS tiers_locked TINYINT(1) DEFAULT 0");
+
+// One-time migration: locked_qty — batch units held until price request is applied
+$conn->query("ALTER TABLE price_update_requests ADD COLUMN IF NOT EXISTS locked_qty INT DEFAULT 0");
+
+// One-time migration: recount workflow — expected/actual/variance + lifecycle columns
+$conn->query("ALTER TABLE quantity_alerts
+    ADD COLUMN IF NOT EXISTS actual_qty   INT          DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS expected_qty INT          DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS variance     INT          DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS requested_by INT          DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS submitted_by INT          DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS submitted_at DATETIME     DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS approved_by  INT          DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS approved_at  DATETIME     DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS reject_reason TEXT        DEFAULT NULL
+");
+$conn->query("ALTER TABLE quantity_alerts MODIFY COLUMN status ENUM('pending','recounting','submitted','approved','rejected','resolved') DEFAULT 'pending'");
+
+// One-time migration: link quantity_alerts to the specific product row being recounted
+$conn->query("ALTER TABLE quantity_alerts ADD COLUMN IF NOT EXISTS product_id INT DEFAULT NULL");
+
+// One-time migration: deferred price apply — status and log action extended
+$conn->query("ALTER TABLE price_update_requests MODIFY COLUMN status ENUM('pending','step1_approved','approved','deferred','applied','rejected') DEFAULT 'pending'");
+$conn->query("ALTER TABLE price_update_logs MODIFY COLUMN action ENUM('submitted','step1_approved','step1_rejected','step2_approved','step2_rejected','applied','cancelled','deferred','auto_applied') DEFAULT 'submitted'");
+
+// One-time migration: expired/damaged items disposal workflow
+$conn->query("CREATE TABLE IF NOT EXISTS product_disposals (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    product_id          INT NOT NULL,
+    product_name        VARCHAR(255),
+    barcode             VARCHAR(100),
+    qty                 INT NOT NULL,
+    reason              ENUM('Expired','Contaminated','Damaged','Spoiled','Other') DEFAULT 'Expired',
+    expiry_date         DATE DEFAULT NULL,
+    notes               TEXT DEFAULT NULL,
+    requested_by        INT DEFAULT NULL,
+    requested_username  VARCHAR(100) DEFAULT NULL,
+    approved_by         INT DEFAULT NULL,
+    approved_username   VARCHAR(100) DEFAULT NULL,
+    approved_at         DATETIME DEFAULT NULL,
+    reject_reason       TEXT DEFAULT NULL,
+    status              ENUM('pending','approved','rejected') DEFAULT 'pending',
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+$conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_date DATE DEFAULT NULL");
+
+// One-time migration: per-item notes on delivery return request items
+$conn->query("ALTER TABLE delivery_return_request_items ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT NULL");
+
+// One-time migration: delivery_returns audit table (moved from inline page creation)
+$conn->query("CREATE TABLE IF NOT EXISTS delivery_returns (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    supplier_id INT NOT NULL,
+    product_id  INT NOT NULL,
+    qty         INT NOT NULL,
+    reason      VARCHAR(255) DEFAULT 'Damaged',
+    deduct_pay  TINYINT(1)  DEFAULT 1,
+    created_at  TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
+)");
+
+// One-time migration: track when a product was archived for dashboard notifications
+$conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS archived_at DATETIME DEFAULT NULL");
+
+// One-time migration: supervision system — recount double-fail flagging
+$conn->query("ALTER TABLE quantity_alerts ADD COLUMN IF NOT EXISTS fail_count INT DEFAULT 0");
+$conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS supervision_flag ENUM('none','supervised') DEFAULT 'none'");
+$conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS supervision_flagged_at DATETIME DEFAULT NULL");
+$conn->query("CREATE TABLE IF NOT EXISTS recount_mismatch_log (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    alert_id            INT NOT NULL,
+    product_id          INT DEFAULT NULL,
+    product_name        VARCHAR(255),
+    barcode             VARCHAR(100),
+    invoice             VARCHAR(100),
+    supplier_id         INT DEFAULT NULL,
+    expected_qty        INT NOT NULL,
+    submitted_qty       INT NOT NULL,
+    variance            INT NOT NULL,
+    fail_number         INT DEFAULT 1,
+    submitted_by        INT DEFAULT NULL,
+    submitted_username  VARCHAR(100) DEFAULT NULL,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+// v1.4.2 — expiry date on products
+$conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_date DATE NULL");
+
+// v1.4.3 — old_value / new_value audit columns used by refund_approve, price_maintenance, recount_finalize
+$conn->query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS old_value VARCHAR(255) DEFAULT NULL");
+$conn->query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS new_value VARCHAR(255) DEFAULT NULL");
+
+// v1.4.4 — procurement denial reason so staff can see why access was denied
+$conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS procurement_denial_reason TEXT DEFAULT NULL");
+
+// Mark migrations as done for this version
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    // A failed migration must never lock out the app — write the flag anyway
+    // so the next request skips the broken migration entirely
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end migration block

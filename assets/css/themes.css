@@ -1,0 +1,236 @@
+/* ====== GENERAL RESET ====== */
+* {
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+body {
+    margin: 0;
+    background: #f8f8f8;
+    color: #333;
+}
+
+/* ===== NAVBAR BASE ===== */
+.topnav a,
+.dropdown-toggle {
+  color: #fff;
+  text-decoration: none;
+  cursor: pointer;
+  padding: 6px 8px;
+  transition: color 0.2s ease;
+}
+
+.topnav a:hover,
+.dropdown-toggle:hover {
+  color: #ff7f11; /* complementary orange */
+}
+
+/* ===== DROPDOWN FIX ===== */
+.dropdown {
+  position: relative;
+}
+
+.dropdown:hover .dropdown-content {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* Dropdown menu */
+.dropdown-content {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+  padding: 8px 0;
+  margin-top: 8px;       /* hover buffer */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: all 0.2s ease;
+  z-index: 999;
+}
+
+.dropdown-content::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: 0;
+  width: 100%;
+  height: 10px;
+}
+
+.dropdown-content a {
+  display: block;
+  padding: 10px 14px;
+  color: #0f172a;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.dropdown-content a:hover {
+  background: #f1f5f9;
+}
+
+/* Logout */
+.logout {
+  margin-left: auto;
+  background: #ef4444;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+
+.logout:hover {
+  background: #dc2626;
+}
+
+/* ====== BUTTONS ====== */
+.btn {
+    background: #b11226;
+    color: #fff;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 20px;
+    cursor: pointer;
+}
+
+.btn:hover {
+    background: #8f0e1d;
+}
+
+/* ====== HERO SECTION ====== */
+.hero {
+    background: #fff;
+    display: flex;
+    padding: 40px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.hero-text h1 {
+    color: #1c7c2f;
+    font-size: 40px;
+}
+
+.hero-text span {
+    color: #b11226;
+}
+
+.hero-text p {
+    font-size: 16px;
+    margin: 10px 0;
+}
+
+/* ====== PROMO CARDS ====== */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 25px;
+    padding: 30px;
+}
+
+.card {
+    background: #ffd45c;
+    border-radius: 20px;
+    padding: 20px;
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    transition: transform 0.2s ease;
+}
+.card:hover {
+    transform: translateY(-4px);
+}
+
+.card h3 {
+    color: #1c7c2f;
+}
+
+.price {
+    background: #e6f4ff;
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 10px;
+    font-weight: bold;
+}
+
+/* ====== TABLES ====== */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+}
+
+.table th, .table td {
+    padding: 12px;
+    border-bottom: 1px solid #ddd;
+}
+
+.table th {
+    background: #f1f1f1;
+}
+
+.table tr:hover {
+    background: #fafafa;
+}
+
+/* ====== STATUS BADGES ====== */
+.badge {
+    padding: 4px 10px;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 12px;
+}
+
+.ok { background: #28a745; }
+.low { background: #dc3545; }
+
+/* ===== POLISH & UX ===== */
+input, select {
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid #ccc;
+    outline: none;
+    margin: 5px 0;
+    width: 100%;
+}
+
+input:focus, select:focus {
+    border-color: #b11226;
+}
+
+hr {
+    margin: 25px 0;
+    border: none;
+    border-top: 1px solid #ddd;
+}
+
+/* ===== DASHBOARD CARDS ===== */
+.stat-card {
+    background: linear-gradient(135deg, #b11226, #e04b4b);
+    color: #fff;
+    padding: 25px;
+    border-radius: 18px;
+    font-size: 18px;
+}
+
+.stat-card span {
+    font-size: 32px;
+    font-weight: bold;
+}
+
+/* ===== POS UX ===== */
+.pos-input {
+    max-width: 350px;
+}
+
+.qty-btn {
+    padding: 6px 10px;
+    border-radius: 8px;
+}
+
+/* ===== FOOTER SPACE ===== */
+.container {
+    padding-bottom: 60px;
+}
