@@ -424,14 +424,14 @@ $active_sid  = intval($_SESSION['active_batch_id']);
 $active_name = $_SESSION['active_batch_name'] ?? '';
 $active_inv  = $_SESSION['active_invoice']     ?? '';
 
-// Group by barcode so duplicate draft rows (e.g. split entries) merge into one line.
+// Group by barcode + expiry_date so same product with different expiry dates appear as separate line items.
 $draft_stmt = $conn->prepare("
-    SELECT MIN(id) AS id, name, barcode,
+    SELECT MIN(id) AS id, name, barcode, expiry_date,
            SUM(quantity) AS total_qty, MAX(price) AS price, MAX(category) AS category
     FROM products
     WHERE supplier_id = ? AND status = '" . PRODUCT_DRAFT . "'
-    GROUP BY barcode
-    ORDER BY name ASC
+    GROUP BY barcode, expiry_date
+    ORDER BY name ASC, expiry_date ASC
 ");
 $draft_stmt->bind_param("i", $active_sid);
 $draft_stmt->execute();
@@ -492,12 +492,16 @@ $items = $draft_stmt->get_result();
                         <?php while($p = $items->fetch_assoc()): ?>
                         <tr class="hover:bg-slate-50/30 transition-all">
                             <td class="px-8 py-8">
-                                <input type="hidden" name="p_ids[]"      value="<?= $p['id'] ?>">
-                                <input type="hidden" name="p_barcodes[]" value="<?= htmlspecialchars($p['barcode']) ?>">
-                                <input type="hidden" name="p_names[]"    value="<?= htmlspecialchars($p['name']) ?>">
-                                <input type="hidden" name="batch_qtys[]" value="<?= intval($p['total_qty']) ?>">
+                                <input type="hidden" name="p_ids[]"        value="<?= $p['id'] ?>">
+                                <input type="hidden" name="p_barcodes[]"  value="<?= htmlspecialchars($p['barcode']) ?>">
+                                <input type="hidden" name="p_names[]"     value="<?= htmlspecialchars($p['name']) ?>">
+                                <input type="hidden" name="batch_qtys[]"  value="<?= intval($p['total_qty']) ?>">
+                                <input type="hidden" name="expiry_dates[]" value="<?= htmlspecialchars($p['expiry_date'] ?? '') ?>">
                                 <p class="font-bold text-slate-800 text-lg leading-tight mb-1"><?= htmlspecialchars($p['name']) ?></p>
                                 <code class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">#<?= $p['barcode'] ?></code>
+                                <?php if (!empty($p['expiry_date'])): ?>
+                                <p class="text-[10px] font-bold text-amber-500 mt-0.5">Exp: <?= date('M j, Y', strtotime($p['expiry_date'])) ?></p>
+                                <?php endif; ?>
                             </td>
 
                             <!-- RETAIL PRICE -->

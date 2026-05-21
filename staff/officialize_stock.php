@@ -6,16 +6,17 @@ if (!isset($_POST['p_ids']) || empty($_POST['p_ids'])) {
     die("Error: No data received from form. Please go back and try again.");
 }
 
-$p_ids      = $_POST['p_ids'];
-$p_names    = $_POST['p_names'];
-$p_barcodes = $_POST['p_barcodes'];
-$prices     = $_POST['prices'];
-$final_qtys = $_POST['final_qtys'];
-$batch_qtys = $_POST['batch_qtys'] ?? [];
-$t1_qtys    = $_POST['t1_qtys'];
-$t1_prices  = $_POST['t1_prices'];
-$t2_qtys    = $_POST['t2_qtys'];
-$t2_prices  = $_POST['t2_prices'];
+$p_ids        = $_POST['p_ids'];
+$p_names      = $_POST['p_names'];
+$p_barcodes   = $_POST['p_barcodes'];
+$prices       = $_POST['prices'];
+$final_qtys   = $_POST['final_qtys'];
+$batch_qtys   = $_POST['batch_qtys'] ?? [];
+$expiry_dates = $_POST['expiry_dates'] ?? [];
+$t1_qtys      = $_POST['t1_qtys'];
+$t1_prices    = $_POST['t1_prices'];
+$t2_qtys      = $_POST['t2_qtys'];
+$t2_prices    = $_POST['t2_prices'];
 
 $user_id = $_SESSION['user_id'] ?? null;
 $invoice = $_SESSION['active_invoice'] ?? 'N/A';
@@ -49,9 +50,11 @@ try {
             throw new Exception("Quantity for '$item_name' cannot be negative.");
         }
 
-        // Lookup by barcode + supplier — never merge across different suppliers
-        $master_q = $conn->prepare("SELECT id, price, quantity FROM products WHERE barcode = ? AND supplier_id = ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "') LIMIT 1");
-        $master_q->bind_param("si", $barcode, $sup_id); $master_q->execute();
+        // Lookup by barcode + supplier + expiry — never merge across different expiry lots or suppliers
+        $expiry = $expiry_dates[$index] ?? null;
+        $expiry = ($expiry === '') ? null : $expiry;
+        $master_q = $conn->prepare("SELECT id, price, quantity FROM products WHERE barcode = ? AND supplier_id = ? AND expiry_date <=> ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "') LIMIT 1");
+        $master_q->bind_param("sis", $barcode, $sup_id, $expiry); $master_q->execute();
         $master_res = $master_q->get_result();
 
         // Separate price reference across all suppliers (for spike detection only)

@@ -72,14 +72,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     if(empty($barcode)) $barcode = "628" . substr(time(), -7);
 
-    $check_draft = $conn->prepare("SELECT id FROM products WHERE barcode = ? AND supplier_id = ? AND status = 'draft' LIMIT 1");
-    $check_draft->bind_param("si", $barcode, $sup_id);
+    $check_draft = $conn->prepare("SELECT id FROM products WHERE barcode = ? AND supplier_id = ? AND expiry_date <=> ? AND status = 'draft' LIMIT 1");
+    $check_draft->bind_param("sis", $barcode, $sup_id, $expiry_date);
     $check_draft->execute();
     $existing_draft = $check_draft->get_result()->fetch_assoc();
 
     if ($existing_draft) {
-        $stmt = $conn->prepare("UPDATE products SET quantity = quantity + ?, expiry_date = ? WHERE id = ?");
-        $stmt->bind_param("isi", $qty, $expiry_date, $existing_draft['id']);
+        $stmt = $conn->prepare("UPDATE products SET quantity = quantity + ? WHERE id = ?");
+        $stmt->bind_param("ii", $qty, $existing_draft['id']);
     } else {
         $stmt = $conn->prepare("INSERT INTO products (name, barcode, quantity, supplier_id, category, expiry_date, status) VALUES (?, ?, ?, ?, ?, ?, 'draft')");
         $stmt->bind_param("ssiiss", $name, $barcode, $qty, $sup_id, $category, $expiry_date);
@@ -223,7 +223,7 @@ $shipments = $conn->query("SELECT id, name, invoice_number, created_at FROM supp
                         <tbody class="divide-y divide-slate-50">
                             <?php
                             $locked_sid   = intval($_SESSION['active_batch_id']);
-                            $locked_items = $conn->query("SELECT name, barcode, category, SUM(quantity) as total_qty FROM products WHERE supplier_id = $locked_sid AND status = 'draft' GROUP BY barcode, TRIM(LOWER(name)) ORDER BY name ASC");
+                            $locked_items = $conn->query("SELECT name, barcode, category, expiry_date, SUM(quantity) as total_qty FROM products WHERE supplier_id = $locked_sid AND status = 'draft' GROUP BY barcode, TRIM(LOWER(name)), expiry_date ORDER BY name ASC, expiry_date ASC");
                             if ($locked_items && $locked_items->num_rows > 0):
                                 while($lp = $locked_items->fetch_assoc()): ?>
                                 <tr>
@@ -355,13 +355,16 @@ $shipments = $conn->query("SELECT id, name, invoice_number, created_at FROM supp
                     <tbody class="divide-y divide-slate-50">
                         <?php
                         $sid = $_SESSION['active_batch_id'];
-                        $recent = $conn->query("SELECT name, barcode, category, SUM(quantity) as total_qty FROM products WHERE supplier_id = $sid AND status = 'draft' GROUP BY barcode, TRIM(LOWER(name)) ORDER BY id DESC LIMIT 15");
+                        $recent = $conn->query("SELECT name, barcode, category, expiry_date, SUM(quantity) as total_qty FROM products WHERE supplier_id = $sid AND status = 'draft' GROUP BY barcode, TRIM(LOWER(name)), expiry_date ORDER BY id DESC, expiry_date ASC LIMIT 15");
                         if ($recent->num_rows > 0):
                             while($p = $recent->fetch_assoc()): ?>
                             <tr class="hover:bg-blue-50/10 transition-colors">
                                 <td class="px-12 py-8">
                                     <p class="font-black text-slate-800 text-lg tracking-tight"><?= htmlspecialchars($p['name']) ?></p>
                                     <code class="text-[10px] text-slate-400 font-mono tracking-tighter uppercase opacity-50">SKU ID: <?= htmlspecialchars($p['barcode']) ?></code>
+                                    <?php if (!empty($p['expiry_date'])): ?>
+                                    <p class="text-[10px] font-bold text-amber-500 mt-0.5">Exp: <?= date('M j, Y', strtotime($p['expiry_date'])) ?></p>
+                                    <?php endif; ?>
                                 </td>
                                 <td class="px-8 py-8 text-center text-xs font-black uppercase text-slate-300"><?= $p['category'] ?></td>
                                 <td class="px-12 py-8 text-center font-black text-emerald-600 text-4xl tracking-tighter">

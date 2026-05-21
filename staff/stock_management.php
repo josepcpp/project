@@ -150,7 +150,7 @@ if (!empty($batch_filter)) {
                    s.name AS supplier_display,
                    s.invoice_number,
                    s.created_at AS supplier_date,
-                   MIN(p.expiry_date) AS earliest_expiry,
+                   p.expiry_date AS earliest_expiry,
                    (SELECT pur.proposed_price
                     FROM price_update_requests pur
                     WHERE pur.product_id = MIN(p.id)
@@ -166,8 +166,8 @@ if (!empty($batch_filter)) {
             FROM products p
             LEFT JOIN suppliers s ON p.supplier_id = s.id
             {$where_sql}
-            GROUP BY p.supplier_id, LOWER(TRIM(p.name))
-            ORDER BY p.name ASC, total_stock ASC";
+            GROUP BY p.supplier_id, LOWER(TRIM(p.name)), p.expiry_date
+            ORDER BY p.name ASC, p.expiry_date ASC, total_stock ASC";
 }
 
 if ($types === '') {
