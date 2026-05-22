@@ -109,8 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $ph = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
                 $ph->bind_param("idd", $req['product_id'], $req['current_price'], $req['proposed_price']); $ph->execute();
 
-                $upd_prod = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE id = ?");
-                $upd_prod->bind_param("di", $req['proposed_price'], $req['product_id']); $upd_prod->execute();
+                $upd_prod = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE barcode = ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "')");
+                $upd_prod->bind_param("ds", $req['proposed_price'], $req['barcode']); $upd_prod->execute();
 
                 $upd_req = $conn->prepare("UPDATE price_update_requests SET status='" . PRICE_REQ_APPLIED . "', applied_by=?, applied_username=?, applied_at=NOW() WHERE id=?");
                 $upd_req->bind_param("isi", $user_id, $uname, $req_id); $upd_req->execute();

@@ -10,10 +10,15 @@ $_SESSION['cart'] = $_SESSION['cart'] ?? [];
 $categories = $conn->query("SELECT DISTINCT category FROM products WHERE status = '" . PRODUCT_ACTIVE . "'");
 $cur_cat = $_GET['category'] ?? 'All';
 
-$sql = "SELECT p.id, p.name, p.barcode, p.quantity, p.price, p.category, p.bulk_qty_half, p.bulk_qty_full, p.tiers_locked,
-        COALESCE((SELECT pur.locked_qty FROM price_update_requests pur WHERE pur.product_id = p.id AND pur.status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "') LIMIT 1), 0) AS locked_qty,
-        EXISTS(SELECT 1 FROM price_update_requests pur WHERE pur.product_id = p.id AND pur.status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')) AS has_pending_price
+$sql = "SELECT MIN(p.id) AS id, p.name, MIN(p.barcode) AS barcode,
+        SUM(p.quantity) AS quantity, MAX(p.price) AS price,
+        MAX(p.category) AS category,
+        MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.bulk_qty_full) AS bulk_qty_full,
+        MAX(p.tiers_locked) AS tiers_locked,
+        COALESCE(SUM(pur.locked_qty), 0) AS locked_qty,
+        MAX(IF(pur.id IS NOT NULL, 1, 0)) AS has_pending_price
         FROM products p
+        LEFT JOIN price_update_requests pur ON pur.product_id = p.id AND pur.status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')
         WHERE p.status = '" . PRODUCT_ACTIVE . "' AND p.quantity > 0 AND (p.expiry_date IS NULL OR p.expiry_date > CURDATE())";
 
 if ($cur_cat !== 'All') {

@@ -106,6 +106,9 @@ if ($cat_filter !== '') {
     $types   .= 's';
 }
 
+// Exclude products currently under an active recount — hidden until resolved
+$wheres[] = "NOT EXISTS (SELECT 1 FROM quantity_alerts qa WHERE qa.product_id = p.id AND qa.status IN ('pending','recounting','submitted'))";
+
 $where_sql = "WHERE " . implode(" AND ", $wheres);
 
 // HAVING for stock level (grouped / no-batch mode only)

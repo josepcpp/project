@@ -40,10 +40,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['alert_action'])) {
 
         $exp_qty = 0;
         if ($alert_row) {
-            if (!empty($alert_row['product_id']) && !empty($alert_row['received_qty'])) {
-                // Delivery discrepancy: expected = what was recorded as received (not full shelf).
-                // Staff counts only this batch's units, not the entire shelf.
-                $exp_qty = intval($alert_row['received_qty']);
+            if (!empty($alert_row['product_id']) && !empty($alert_row['batch_qty'])) {
+                // Delivery discrepancy: expected = PM-encoded qty (what stock was set to on officialize).
+                $exp_qty = intval($alert_row['batch_qty']);
             } else {
                 // Staff-initiated recount: snapshot live stock total at approval time.
                 $pq = $conn->prepare("SELECT COALESCE(SUM(quantity),0) AS total FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "'");
