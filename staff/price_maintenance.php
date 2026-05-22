@@ -397,6 +397,8 @@ foreach ($pending_rows as $pr) {
                                     <!-- Submitted info -->
                                     <div class="flex-1 min-w-0">
                                         <p class="text-[8px] font-black text-amber-500 uppercase tracking-widest mb-1.5">Price Update Request — Pending Approval</p>
+                                        <p class="font-bold text-slate-800 text-sm leading-tight mb-0.5"><?= htmlspecialchars($req['product_name']) ?></p>
+                                        <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded inline-block mb-1.5">#<?= htmlspecialchars($req['barcode']) ?></code>
                                         <div class="flex flex-wrap gap-1.5">
                                             <?php if ($req['supplier_name']): ?>
                                                 <span class="text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100 uppercase"><?= htmlspecialchars($req['supplier_name']) ?></span>
