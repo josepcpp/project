@@ -9,7 +9,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // 1. Identify Product ID
     if ($barcode && !$pid) {
-        $p_query = $conn->prepare("SELECT id FROM products WHERE barcode = ?");
+        $p_query = $conn->prepare("SELECT id FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0 AND (expiry_date IS NULL OR expiry_date > CURDATE()) ORDER BY expiry_date ASC LIMIT 1");
         $p_query->bind_param("s", $barcode);
         $p_query->execute();
         $res = $p_query->get_result()->fetch_assoc();

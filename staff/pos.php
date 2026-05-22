@@ -14,7 +14,7 @@ $sql = "SELECT p.id, p.name, p.barcode, p.quantity, p.price, p.category, p.bulk_
         COALESCE((SELECT pur.locked_qty FROM price_update_requests pur WHERE pur.product_id = p.id AND pur.status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "') LIMIT 1), 0) AS locked_qty,
         EXISTS(SELECT 1 FROM price_update_requests pur WHERE pur.product_id = p.id AND pur.status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')) AS has_pending_price
         FROM products p
-        WHERE p.status = '" . PRODUCT_ACTIVE . "' AND p.quantity > 0";
+        WHERE p.status = '" . PRODUCT_ACTIVE . "' AND p.quantity > 0 AND (p.expiry_date IS NULL OR p.expiry_date > CURDATE())";
 
 if ($cur_cat !== 'All') {
     $sql .= " AND p.category = '" . $conn->real_escape_string($cur_cat) . "'";

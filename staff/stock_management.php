@@ -837,7 +837,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                                         <?php if ($s_exp): ?>
                                             <span class="font-bold <?= $s_exp_cls ?> whitespace-nowrap"><?= date('M j, Y', strtotime($s_exp)) ?></span>
                                             <?php if ($s_exp_badge): ?><span class="ml-1 text-[8px] font-black <?= $s_exp_cls ?> uppercase tracking-widest"><?= $s_exp_badge ?></span><?php endif; ?>
-                                        <?php else: ?><span class="text-slate-200">—</span><?php endif; ?>
+                                        <?php else: ?><span class="text-[9px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-widest">No Expiry Set</span><?php endif; ?>
                                     </td>
                                     <?php if ($role === ROLE_STAFF && !$is_archived): ?>
                                     <td class="px-5 py-3">
