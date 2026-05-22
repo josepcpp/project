@@ -140,7 +140,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $pb->execute();
 
                     $pal = $conn->prepare("INSERT INTO procurement_access_log (staff_id, staff_username, action, actioned_by, actioned_by_username) VALUES (?, ?, ?, ?, ?)");
-                    $pal->bind_param("isiss", $for_id, $for_uname, PROC_APPROVED, $user_id, $admin_uname);
+                    $proc_status = PROC_APPROVED;
+                    $pal->bind_param("isiss", $for_id, $for_uname, $proc_status, $user_id, $admin_uname);
                     $pal->execute();
 
                     $sf = $conn->prepare("INSERT INTO security_flags (flag_type, severity, reference_id, reference_type, message) VALUES ('" . FLAG_ACCESS_EVENT . "','" . SEV_LOW . "',?,'user',?)");
