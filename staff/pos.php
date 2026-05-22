@@ -10,22 +10,33 @@ $_SESSION['cart'] = $_SESSION['cart'] ?? [];
 $categories = $conn->query("SELECT DISTINCT category FROM products WHERE status = '" . PRODUCT_ACTIVE . "'");
 $cur_cat = $_GET['category'] ?? 'All';
 
-$sql = "SELECT MIN(p.id) AS id, p.name, MIN(p.barcode) AS barcode,
-        SUM(p.quantity) AS quantity, MAX(p.price) AS price,
-        MAX(p.category) AS category,
-        MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.bulk_qty_full) AS bulk_qty_full,
-        MAX(p.tiers_locked) AS tiers_locked,
-        COALESCE(SUM(pur.locked_qty), 0) AS locked_qty,
-        MAX(IF(pur.id IS NOT NULL, 1, 0)) AS has_pending_price
-        FROM products p
-        LEFT JOIN price_update_requests pur ON pur.product_id = p.id AND pur.status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')
-        WHERE p.status = '" . PRODUCT_ACTIVE . "' AND p.quantity > 0 AND (p.expiry_date IS NULL OR p.expiry_date > CURDATE())";
+$cat_filter = $cur_cat !== 'All' ? " AND p.category = '" . $conn->real_escape_string($cur_cat) . "'" : "";
 
-if ($cur_cat !== 'All') {
-    $sql .= " AND p.category = '" . $conn->real_escape_string($cur_cat) . "'";
-}
-
-$sql .= " GROUP BY LOWER(TRIM(p.name)) ORDER BY p.name ASC";
+// Inner query groups products first, then joins aggregated price_update_requests by barcode.
+// This avoids JOIN multiplication when multiple pending requests exist for the same product.
+$sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
+        p_agg.quantity, p_agg.price, p_agg.category,
+        p_agg.bulk_qty_half, p_agg.bulk_qty_full, p_agg.tiers_locked,
+        COALESCE(pur_agg.total_locked, 0) AS locked_qty,
+        IF(pur_agg.cnt > 0, 1, 0) AS has_pending_price
+        FROM (
+            SELECT MIN(p.id) AS id, p.name, MIN(p.barcode) AS barcode,
+                   SUM(p.quantity) AS quantity, MAX(p.price) AS price,
+                   MAX(p.category) AS category,
+                   MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.bulk_qty_full) AS bulk_qty_full,
+                   MAX(p.tiers_locked) AS tiers_locked
+            FROM products p
+            WHERE p.status = '" . PRODUCT_ACTIVE . "' AND p.quantity > 0
+              AND (p.expiry_date IS NULL OR p.expiry_date > CURDATE())" . $cat_filter . "
+            GROUP BY LOWER(TRIM(p.name))
+        ) AS p_agg
+        LEFT JOIN (
+            SELECT barcode, SUM(locked_qty) AS total_locked, COUNT(*) AS cnt
+            FROM price_update_requests
+            WHERE status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')
+            GROUP BY barcode
+        ) AS pur_agg ON pur_agg.barcode = p_agg.barcode
+        ORDER BY p_agg.name ASC";
 $products = $conn->query($sql);
 
 // Calculate Subtotal (No VAT Tax as requested)

@@ -115,6 +115,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $upd_req = $conn->prepare("UPDATE price_update_requests SET status='" . PRICE_REQ_APPLIED . "', applied_by=?, applied_username=?, applied_at=NOW() WHERE id=?");
                 $upd_req->bind_param("isi", $user_id, $uname, $req_id); $upd_req->execute();
 
+                // Cascade: any other queued requests for this barcode now have a new current_price baseline
+                $upd_cur = $conn->prepare("UPDATE price_update_requests SET current_price = ? WHERE barcode = ? AND id != ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
+                $upd_cur->bind_param("dsi", $req['proposed_price'], $req['barcode'], $req_id);
+                $upd_cur->execute();
+
                 $conn->commit();
                 _log_price_action($conn, $req_id, 'applied', $user_id, $uname, $req['current_price'], $req['proposed_price']);
                 _log_activity($conn, $user_id, $req['product_id'],
@@ -205,10 +210,10 @@ while ($r = $pending_requests->fetch_assoc()) $pending_rows[] = $r;
 $closed_rows = [];
 while ($r = $closed_requests->fetch_assoc()) $closed_rows[] = $r;
 
-// Keyed by product_id for O(1) lookup in table loop
-$pending_by_product_id = [];
+// Keyed by barcode — each barcode maps to an ordered array of all pending requests
+$pending_by_barcode = [];
 foreach ($pending_rows as $pr) {
-    $pending_by_product_id[intval($pr['product_id'])] = $pr;
+    $pending_by_barcode[$pr['barcode']][] = $pr;
 }
 ?>
 
@@ -296,10 +301,12 @@ foreach ($pending_rows as $pr) {
                         <?php while ($r = $result->fetch_assoc()):
                             $suppliers_raw  = explode(';;', $r['supplier_list'] ?? '');
                             $primary_sup    = explode('||', $suppliers_raw[0]);
-                            $req            = $pending_by_product_id[intval($r['id'])] ?? null;
+                            $reqs           = $pending_by_barcode[$r['barcode']] ?? [];
+                            $first_req      = $reqs[0] ?? null;
+                            $has_pending    = !empty($reqs);
                             $tiers_locked   = intval($r['tiers_locked']) === 1;
                         ?>
-                        <tr class="hover:bg-slate-50/30 transition-all <?= $tiers_locked ? 'bg-rose-50/40' : ($req ? 'bg-amber-50/40' : '') ?>">
+                        <tr class="hover:bg-slate-50/30 transition-all <?= $tiers_locked ? 'bg-rose-50/40' : ($has_pending ? 'bg-amber-50/40' : '') ?>">
                             <td class="px-8 py-5">
                                 <p class="font-bold text-slate-800 text-base leading-tight"><?= htmlspecialchars($r['product_name']) ?></p>
                                 <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
@@ -307,17 +314,17 @@ foreach ($pending_rows as $pr) {
                                     <span class="text-[10px] font-black text-blue-500 uppercase bg-blue-50/50 px-2 py-0.5 rounded"><?= htmlspecialchars($r['category']) ?></span>
                                     <?php if ($tiers_locked): ?>
                                         <span class="text-[9px] font-black text-rose-600 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 uppercase animate-pulse">⚠ Tiers Need Review</span>
-                                    <?php elseif ($req): ?>
-                                        <span class="text-[9px] font-black text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-200 uppercase">Price Update Pending</span>
+                                    <?php elseif ($has_pending): ?>
+                                        <span class="text-[9px] font-black text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-200 uppercase"><?= count($reqs) > 1 ? count($reqs) . ' Price Updates Pending' : 'Price Update Pending' ?></span>
                                     <?php endif; ?>
                                 </div>
                             </td>
 
                             <td class="px-6 py-5 text-center">
                                 <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Current</p>
-                                <p class="text-xl font-black <?= $req ? 'text-amber-500' : 'text-emerald-600' ?>">₱<?= number_format($r['price'], 2) ?></p>
-                                <?php if ($req): ?>
-                                    <p class="text-[8px] font-black text-slate-300 mt-0.5">→ <span class="text-rose-500">₱<?= number_format($req['proposed_price'], 2) ?></span></p>
+                                <p class="text-xl font-black <?= $has_pending ? 'text-amber-500' : 'text-emerald-600' ?>">₱<?= number_format($r['price'], 2) ?></p>
+                                <?php if ($first_req): ?>
+                                    <p class="text-[8px] font-black text-slate-300 mt-0.5">→ <span class="text-rose-500">₱<?= number_format($first_req['proposed_price'], 2) ?></span><?= count($reqs) > 1 ? ' <span class="text-slate-300">+' . (count($reqs)-1) . ' more</span>' : '' ?></p>
                                 <?php endif; ?>
                             </td>
 
@@ -378,7 +385,7 @@ foreach ($pending_rows as $pr) {
                             </td>
                         </tr>
 
-                        <?php if ($req):
+                        <?php foreach ($reqs as $req_idx => $req):
                             $step        = $req['status'];
                             $s1_done     = in_array($step, [PRICE_REQ_STEP1_APPROVED, PRICE_REQ_APPROVED, PRICE_REQ_DEFERRED]);
                             $can_step1   = $step === PRICE_REQ_PENDING;
@@ -483,7 +490,7 @@ foreach ($pending_rows as $pr) {
                                 </div>
                             </td>
                         </tr>
-                        <?php endif; ?>
+                        <?php endforeach; ?>
 
                         <?php endwhile; ?>
                     <?php endif; ?>

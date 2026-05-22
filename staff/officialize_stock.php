@@ -83,18 +83,14 @@ try {
             $price_changed = ($old_price > 0 && abs($price - $old_price) > 0.001);
 
             if ($price_changed) {
-                // Create a pending price update request instead of overwriting price
-                $ex_q = $conn->prepare("SELECT id FROM price_update_requests WHERE product_id = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "') LIMIT 1");
-                $ex_q->bind_param("i", $master_id); $ex_q->execute();
-                if ($ex_q->get_result()->num_rows === 0) {
-                    $pur = $conn->prepare("INSERT INTO price_update_requests (product_id, product_name, barcode, current_price, proposed_price, supplier_id, supplier_name, invoice, submitted_by, submitted_username, locked_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                    $pur->bind_param("issddissisi", $master_id, $item_name, $barcode, $old_price, $price, $sup_id, $sup_name, $invoice, $user_id, $uname, $qty_to_add);
-                    $pur->execute();
-                    $pur_id = $conn->insert_id;
-                    $pul = $conn->prepare("INSERT INTO price_update_logs (request_id, action, actor_id, actor_username, old_price, new_price) VALUES (?, 'submitted', ?, ?, ?, ?)");
-                    $pul->bind_param("iisdd", $pur_id, $user_id, $uname, $old_price, $price);
-                    $pul->execute();
-                }
+                // Queue a new price update request — each delivery at a new price gets its own request
+                $pur = $conn->prepare("INSERT INTO price_update_requests (product_id, product_name, barcode, current_price, proposed_price, supplier_id, supplier_name, invoice, submitted_by, submitted_username, locked_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $pur->bind_param("issddissisi", $master_id, $item_name, $barcode, $old_price, $price, $sup_id, $sup_name, $invoice, $user_id, $uname, $qty_to_add);
+                $pur->execute();
+                $pur_id = $conn->insert_id;
+                $pul = $conn->prepare("INSERT INTO price_update_logs (request_id, action, actor_id, actor_username, old_price, new_price) VALUES (?, 'submitted', ?, ?, ?, ?)");
+                $pul->bind_param("iisdd", $pur_id, $user_id, $uname, $old_price, $price);
+                $pul->execute();
                 // Quantity-only update — price stays unchanged pending approval
                 $stmt = $conn->prepare("UPDATE products SET quantity = quantity + ?, max_quantity = ?, bulk_qty_half = ?, price_half_box = ?, bulk_qty_full = ?, price_full_box = ?, status = '" . PRODUCT_ACTIVE . "' WHERE id = ?");
                 $stmt->bind_param("iiididi", $qty_to_add, $new_max, $t1_qtys[$index], $t1_prices[$index], $t2_qtys[$index], $t2_prices[$index], $master_id);
@@ -110,21 +106,40 @@ try {
             $final_id = $master_id;
         } else {
             // No existing row for this supplier + barcode.
-            // Cross-supplier price spike check using any known market price for this barcode.
-            if ($price_ref && floatval($price_ref['price']) > 0 && $price > floatval($price_ref['price']) * DEFAULT_PRICE_SPIKE_MULTIPLIER) {
+            $existing_price = $price_ref ? floatval($price_ref['price']) : 0;
+
+            // Cross-supplier price spike check
+            if ($existing_price > 0 && $price > $existing_price * DEFAULT_PRICE_SPIKE_MULTIPLIER) {
                 $price_flags++;
-                $ref_price = floatval($price_ref['price']);
-                $spike_pct = round((($price - $ref_price) / $ref_price) * 100);
+                $spike_pct = round((($price - $existing_price) / $existing_price) * 100);
                 $sf = $conn->prepare("INSERT INTO security_flags (flag_type, severity, reference_id, reference_type, message) VALUES ('" . FLAG_PRICE_SPIKE . "','" . SEV_HIGH . "',?,'product',?)");
-                $sf_msg = "Price spike on '{$item_name}' (#{$barcode}) from new supplier '{$sup_name}': market ref " . number_format($ref_price, 2) . " -> " . number_format($price, 2) . " (+{$spike_pct}%). Invoice: {$invoice}.";
+                $sf_msg = "Price spike on '{$item_name}' (#{$barcode}) from new supplier '{$sup_name}': market ref " . number_format($existing_price, 2) . " -> " . number_format($price, 2) . " (+{$spike_pct}%). Invoice: {$invoice}.";
                 $sf->bind_param("is", $draft_id, $sf_msg);
                 $sf->execute();
             }
 
-            // Activate the draft as its own independent product row for this supplier
-            $stmt = $conn->prepare("UPDATE products SET price = ?, quantity = ?, max_quantity = ?, bulk_qty_half = ?, price_half_box = ?, bulk_qty_full = ?, price_full_box = ?, status = '" . PRODUCT_ACTIVE . "' WHERE id = ?");
-            $stmt->bind_param("diiididi", $price, $qty_to_add, $qty_to_add, $t1_qtys[$index], $t1_prices[$index], $t2_qtys[$index], $t2_prices[$index], $draft_id);
-            $stmt->execute();
+            $cross_price_changed = $existing_price > 0 && abs($price - $existing_price) > 0.001;
+
+            if ($cross_price_changed) {
+                // Price differs from existing stock — queue through approval workflow.
+                // Activate new row at existing price so all lots stay in sync; proposed price queued for admin.
+                $ref_product_id = intval($price_ref['id']);
+                $pur = $conn->prepare("INSERT INTO price_update_requests (product_id, product_name, barcode, current_price, proposed_price, supplier_id, supplier_name, invoice, submitted_by, submitted_username, locked_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $pur->bind_param("issddissisi", $ref_product_id, $item_name, $barcode, $existing_price, $price, $sup_id, $sup_name, $invoice, $user_id, $uname, $qty_to_add);
+                $pur->execute();
+                $pur_id = $conn->insert_id;
+                $pul = $conn->prepare("INSERT INTO price_update_logs (request_id, action, actor_id, actor_username, old_price, new_price) VALUES (?, 'submitted', ?, ?, ?, ?)");
+                $pul->bind_param("iisdd", $pur_id, $user_id, $uname, $existing_price, $price);
+                $pul->execute();
+                $stmt = $conn->prepare("UPDATE products SET price = ?, quantity = ?, max_quantity = ?, bulk_qty_half = ?, price_half_box = ?, bulk_qty_full = ?, price_full_box = ?, status = '" . PRODUCT_ACTIVE . "' WHERE id = ?");
+                $stmt->bind_param("diiididi", $existing_price, $qty_to_add, $qty_to_add, $t1_qtys[$index], $t1_prices[$index], $t2_qtys[$index], $t2_prices[$index], $draft_id);
+                $stmt->execute();
+            } else {
+                // No existing stock or price matches — activate at specified price directly
+                $stmt = $conn->prepare("UPDATE products SET price = ?, quantity = ?, max_quantity = ?, bulk_qty_half = ?, price_half_box = ?, bulk_qty_full = ?, price_full_box = ?, status = '" . PRODUCT_ACTIVE . "' WHERE id = ?");
+                $stmt->bind_param("diiididi", $price, $qty_to_add, $qty_to_add, $t1_qtys[$index], $t1_prices[$index], $t2_qtys[$index], $t2_prices[$index], $draft_id);
+                $stmt->execute();
+            }
             $final_id = $draft_id;
         }
 

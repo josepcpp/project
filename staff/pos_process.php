@@ -24,9 +24,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $product = $product_query->get_result()->fetch_assoc();
 
         if ($product) {
-            // Effective sellable qty = total minus units locked pending a price approval
-            $lq_q = $conn->prepare("SELECT COALESCE(locked_qty,0) AS lq FROM price_update_requests WHERE product_id = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "') LIMIT 1");
-            $lq_q->bind_param("i", $pid); $lq_q->execute();
+            // Effective sellable qty = total minus all units locked pending price approvals (any request for this barcode)
+            $lq_q = $conn->prepare("SELECT COALESCE(SUM(locked_qty),0) AS lq FROM price_update_requests WHERE barcode = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
+            $lq_q->bind_param("s", $product['barcode']); $lq_q->execute();
             $locked_qty    = intval($lq_q->get_result()->fetch_assoc()['lq'] ?? 0);
             $effective_qty = max(0, intval($product['quantity']) - $locked_qty);
 
