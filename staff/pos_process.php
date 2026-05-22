@@ -24,11 +24,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $product = $product_query->get_result()->fetch_assoc();
 
         if ($product) {
-            // Effective sellable qty = total minus all units locked pending price approvals (any request for this barcode)
+            // Sum ALL active rows for this barcode — mirrors pos.php's grouped SUM(quantity).
+            // Using a single row's quantity would break when multiple lots exist (e.g. cross-supplier),
+            // because locked_qty spans the whole barcode but the LIMIT 1 row might be the small locked batch.
+            $tq_q = $conn->prepare("SELECT COALESCE(SUM(quantity),0) AS tq FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND (expiry_date IS NULL OR expiry_date > CURDATE())");
+            $tq_q->bind_param("s", $product['barcode']); $tq_q->execute();
+            $total_qty     = intval($tq_q->get_result()->fetch_assoc()['tq'] ?? 0);
+
             $lq_q = $conn->prepare("SELECT COALESCE(SUM(locked_qty),0) AS lq FROM price_update_requests WHERE barcode = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
             $lq_q->bind_param("s", $product['barcode']); $lq_q->execute();
             $locked_qty    = intval($lq_q->get_result()->fetch_assoc()['lq'] ?? 0);
-            $effective_qty = max(0, intval($product['quantity']) - $locked_qty);
+            $effective_qty = max(0, $total_qty - $locked_qty);
 
             // Initialize item in cart if not exists
             if (!isset($_SESSION['cart'][$pid])) {
