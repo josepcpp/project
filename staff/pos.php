@@ -119,10 +119,22 @@ if(!empty($_SESSION['cart'])) {
     </div>
 
     <!-- 🔵 RIGHT: Cart Sidebar Section -->
-    <div class="w-full lg:w-[380px] bg-white rounded-[3.5rem] shadow-xl border border-slate-50 flex flex-col overflow-hidden relative">
-        <div class="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/20">
-            <h3 class="serif-title text-2xl font-black text-slate-800">Current Cart</h3>
-            <span class="bg-emerald-500 text-white px-3 py-1.5 rounded-full text-[8px] font-black uppercase">Active</span>
+    <div class="w-full lg:w-[380px] bg-white rounded-[3.5rem] shadow-xl border border-slate-50 flex flex-col overflow-hidden relative" onmouseenter="focusScanField()">
+        <div class="p-8 border-b border-slate-50 bg-slate-50/20 space-y-4">
+            <div class="flex justify-between items-center">
+                <h3 class="serif-title text-2xl font-black text-slate-800">Current Cart</h3>
+                <span class="bg-emerald-500 text-white px-3 py-1.5 rounded-full text-[8px] font-black uppercase">Active</span>
+            </div>
+            <div class="relative">
+                <svg class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 pointer-events-none" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="1" y="4" width="2" height="16" rx="0.5"/><rect x="5" y="4" width="1" height="16" rx="0.5"/><rect x="8" y="4" width="3" height="16" rx="0.5"/><rect x="13" y="4" width="1" height="16" rx="0.5"/><rect x="16" y="4" width="2" height="16" rx="0.5"/><rect x="20" y="4" width="3" height="16" rx="0.5"/>
+                </svg>
+                <input type="text" id="barcode-scan-input"
+                       autocomplete="off" autocorrect="off" spellcheck="false"
+                       placeholder="Scan barcode here..."
+                       class="w-full pl-10 pr-4 py-2.5 bg-white border-2 border-slate-200 rounded-2xl text-sm font-mono text-slate-700 outline-none transition-colors duration-300 focus:border-emerald-400"
+                       onkeydown="onScanKeydown(event)">
+            </div>
         </div>
 
         <!-- Scrollable Cart Area -->
@@ -220,6 +232,10 @@ function renderCart(data) {
     }
 
     if (totalEl) totalEl.textContent = '₱' + data.subtotal;
+    var wasScan = _scanPending;
+    _scanPending = false;
+    focusScanField();
+    if (wasScan) flashScanField(data.found);
 }
 
 function esc(str) {
@@ -268,6 +284,36 @@ function setQty(id, val) {
     fd.append('action', 'set_qty');
     cartAction(fd);
 }
+
+// ── BARCODE SCANNER ───────────────────────────────────────────────────────────
+var _scanPending = false;
+
+function focusScanField() {
+    var f = document.getElementById('barcode-scan-input');
+    if (f && document.activeElement !== f) f.focus();
+}
+
+function flashScanField(found) {
+    var f = document.getElementById('barcode-scan-input');
+    if (!f || found) return;
+    f.style.borderColor = '#f43f5e';
+    f.placeholder = 'Not found — try again';
+    setTimeout(function() {
+        f.style.borderColor = '';
+        f.placeholder = 'Scan barcode here...';
+    }, 1000);
+}
+
+function onScanKeydown(e) {
+    if (e.key !== 'Enter') return;
+    var barcode = e.target.value.trim();
+    e.target.value = '';
+    if (!barcode) return;
+    _scanPending = true;
+    quickAdd(barcode);
+}
+
+focusScanField();
 </script>
 
 <?php include 'layout_bottom.php'; ?>

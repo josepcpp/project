@@ -129,5 +129,6 @@ foreach ($_SESSION['cart'] as $id => $item) {
 echo json_encode([
     'cart'     => $cart_rows,
     'subtotal' => number_format($subtotal, 2),
+    'found'    => isset($pid) && $pid > 0,
 ]);
 exit();
