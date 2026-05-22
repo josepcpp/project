@@ -77,15 +77,27 @@ if ($is_admin && $active_tab === 'queue') {
 
 // ── DISPOSAL TAB DATA ────────────────────────────────────────────────────────
 $disposal_product      = null;
+$disposal_products     = []; // multiple batches when search returns more than one row
 $disposal_history      = [];
 $near_expiry_batches   = [];
 $disposal_search       = trim($_GET['disposal_search'] ?? '');
+$disposal_product_id   = intval($_GET['disposal_product_id'] ?? 0);
 if ($active_tab === 'disposal') {
-    if ($disposal_search !== '') {
+    if ($disposal_product_id > 0) {
+        // Direct load by product_id — used by near-expiry button and batch selector
+        $dp = $conn->prepare("SELECT * FROM products WHERE id = ? AND status = '" . PRODUCT_ACTIVE . "'");
+        $dp->bind_param("i", $disposal_product_id); $dp->execute();
+        $disposal_product = $dp->get_result()->fetch_assoc();
+    } elseif ($disposal_search !== '') {
         $dsl = "%{$disposal_search}%";
-        $ds  = $conn->prepare("SELECT * FROM products WHERE (name LIKE ? OR barcode LIKE ?) AND status = '" . PRODUCT_ACTIVE . "' ORDER BY name ASC LIMIT 1");
+        $ds  = $conn->prepare("SELECT * FROM products WHERE (name LIKE ? OR barcode LIKE ?) AND status = '" . PRODUCT_ACTIVE . "' ORDER BY expiry_date ASC, name ASC");
         $ds->bind_param("ss", $dsl, $dsl); $ds->execute();
-        $disposal_product = $ds->get_result()->fetch_assoc();
+        $disposal_products = $ds->get_result()->fetch_all(MYSQLI_ASSOC);
+        // Single match — load directly, no picker needed
+        if (count($disposal_products) === 1) {
+            $disposal_product  = $disposal_products[0];
+            $disposal_products = [];
+        }
     }
     if ($is_admin) {
         $dh = $conn->query("SELECT * FROM product_disposals ORDER BY created_at DESC LIMIT 30");
@@ -872,7 +884,7 @@ if ($active_tab === 'delivery') {
                         <div class="flex items-center gap-3 flex-shrink-0">
                             <span class="text-[9px] font-black px-3 py-1.5 rounded-xl <?= $ni_badge_cls ?> uppercase tracking-widest whitespace-nowrap"><?= $ni_badge ?></span>
                             <button type="button"
-                                    onclick="quickDispose(<?= htmlspecialchars(json_encode($ni['barcode'])) ?>)"
+                                    onclick="quickDispose(<?= intval($ni['id']) ?>)"
                                     class="text-[9px] font-black text-orange-600 border border-orange-200 bg-white px-3 py-1.5 rounded-xl hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-all uppercase tracking-widest whitespace-nowrap">
                                 Log Disposal
                             </button>
@@ -906,11 +918,46 @@ if ($active_tab === 'delivery') {
                 </div>
             </div>
 
-            <?php if ($disposal_search !== '' && !$disposal_product): ?>
+            <?php if (($disposal_search !== '' || $disposal_product_id > 0) && !$disposal_product && empty($disposal_products)): ?>
             <div class="card-modern text-center py-16">
-                <p class="text-slate-400 font-black uppercase text-sm">No active product found for "<?= htmlspecialchars($disposal_search) ?>"</p>
+                <p class="text-slate-400 font-black uppercase text-sm">No active product found<?= $disposal_search !== '' ? ' for "' . htmlspecialchars($disposal_search) . '"' : '' ?></p>
             </div>
-            <?php elseif (!$disposal_product): ?>
+            <?php elseif (!empty($disposal_products)): ?>
+            <!-- Multiple batches — let user pick the exact lot -->
+            <div class="bg-white rounded-[3rem] border-2 border-amber-200 shadow-2xl overflow-hidden animate-in">
+                <div class="px-8 py-5 bg-amber-50 border-b border-amber-100 flex items-center gap-3">
+                    <svg class="w-5 h-5 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <div>
+                        <p class="font-black text-amber-800 text-sm uppercase tracking-widest">Multiple Batches Found</p>
+                        <p class="text-amber-600 text-[10px] font-bold mt-0.5">Select the specific batch you want to dispose</p>
+                    </div>
+                </div>
+                <?php foreach ($disposal_products as $dp_row):
+                    $dp_days = $dp_row['expiry_date'] ? (int)ceil((strtotime($dp_row['expiry_date']) - strtotime('today')) / 86400) : null;
+                    $dp_exp_cls = ($dp_days !== null && $dp_days <= 0) ? 'text-rose-500' : 'text-amber-500';
+                    $dp_exp_lbl = $dp_days === null ? '' : ($dp_days <= 0 ? ' (EXPIRED)' : " (in {$dp_days}d)");
+                ?>
+                <div class="px-8 py-4 border-b border-slate-50 last:border-b-0 flex items-center gap-4 hover:bg-orange-50/20 transition-all">
+                    <div class="flex-1 min-w-0">
+                        <p class="font-bold text-slate-800 text-sm leading-tight"><?= htmlspecialchars($dp_row['name']) ?></p>
+                        <div class="flex flex-wrap items-center gap-3 mt-1">
+                            <code class="text-[10px] text-slate-400 font-bold">#<?= htmlspecialchars($dp_row['barcode']) ?></code>
+                            <?php if ($dp_row['expiry_date']): ?>
+                                <span class="text-[10px] font-black <?= $dp_exp_cls ?>">Exp: <?= date('M j, Y', strtotime($dp_row['expiry_date'])) ?><?= $dp_exp_lbl ?></span>
+                            <?php else: ?>
+                                <span class="text-[10px] text-slate-300 font-bold">No expiry date</span>
+                            <?php endif; ?>
+                            <span class="text-[10px] text-slate-400 font-bold"><?= number_format($dp_row['quantity']) ?> units</span>
+                        </div>
+                    </div>
+                    <a href="refund_management.php?tab=disposal&disposal_product_id=<?= intval($dp_row['id']) ?>"
+                       class="text-[9px] font-black text-orange-600 border border-orange-200 bg-white px-4 py-2 rounded-xl hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-all uppercase tracking-widest whitespace-nowrap flex-shrink-0">
+                        Select Batch
+                    </a>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <?php elseif (!$disposal_product && $disposal_search === '' && !$disposal_product_id): ?>
             <div class="card-modern text-center py-16">
                 <p class="text-slate-300 font-black text-sm uppercase tracking-widest">Search for a product above to log a disposal</p>
             </div>
@@ -1444,13 +1491,8 @@ function doDisposalSearch() {
     navigate(url);
 }
 
-function quickDispose(barcode) {
-    var input = document.getElementById('disposalSearchInput');
-    if (input) {
-        input.value = barcode;
-        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-    var url = 'refund_management.php?tab=disposal&disposal_search=' + encodeURIComponent(barcode);
+function quickDispose(productId) {
+    var url = 'refund_management.php?tab=disposal&disposal_product_id=' + encodeURIComponent(productId);
     window.history.pushState({}, '', url);
     navigate(url);
 }

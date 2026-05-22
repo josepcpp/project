@@ -97,10 +97,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
     }
 
-    // ── Apply approved price ──────────────────────────────────────────────────
+    // ── Apply approved price (also handles deferred) ─────────────────────────
     if ($action === 'price_apply') {
         $req_id = intval($_POST['req_id']);
-        $rq = $conn->prepare("SELECT * FROM price_update_requests WHERE id = ? AND status = '" . PRICE_REQ_APPROVED . "' LIMIT 1");
+        $rq = $conn->prepare("SELECT * FROM price_update_requests WHERE id = ? AND status IN ('" . PRICE_REQ_APPROVED . "','" . PRICE_REQ_DEFERRED . "') LIMIT 1");
         $rq->bind_param("i", $req_id); $rq->execute();
         $req = $rq->get_result()->fetch_assoc();
         if ($req) {

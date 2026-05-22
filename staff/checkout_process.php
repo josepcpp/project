@@ -123,6 +123,41 @@ try {
         $update_stock = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
         $update_stock->bind_param("isis", $new_qty, $new_status, $new_status, $pid);
         $update_stock->execute();
+
+        // Auto-apply deferred price when old-price stock is exhausted
+        $bc_check = $product_data['barcode'] ?? '';
+        if ($bc_check !== '') {
+            $tq_s = $conn->prepare("SELECT COALESCE(SUM(quantity),0) AS tq FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "'");
+            $tq_s->bind_param("s", $bc_check); $tq_s->execute();
+            $rem_qty = intval($tq_s->get_result()->fetch_assoc()['tq'] ?? 0);
+
+            $lq_s = $conn->prepare("SELECT COALESCE(SUM(locked_qty),0) AS lq FROM price_update_requests WHERE barcode = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
+            $lq_s->bind_param("s", $bc_check); $lq_s->execute();
+            $locked = intval($lq_s->get_result()->fetch_assoc()['lq'] ?? 0);
+
+            // Effective sellable qty hit zero and there is a deferred request waiting
+            if ($locked > 0 && ($rem_qty - $locked) <= 0) {
+                $def_s = $conn->prepare("SELECT * FROM price_update_requests WHERE barcode = ? AND status = '" . PRICE_REQ_DEFERRED . "' ORDER BY id ASC LIMIT 1");
+                $def_s->bind_param("s", $bc_check); $def_s->execute();
+                $def_req = $def_s->get_result()->fetch_assoc();
+                if ($def_req) {
+                    $auto_uname = $_SESSION['username'] ?? 'system';
+
+                    $ph_s = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
+                    $ph_s->bind_param("idd", $def_req['product_id'], $def_req['current_price'], $def_req['proposed_price']); $ph_s->execute();
+
+                    $upd_p = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE barcode = ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "')");
+                    $upd_p->bind_param("ds", $def_req['proposed_price'], $bc_check); $upd_p->execute();
+
+                    $upd_r = $conn->prepare("UPDATE price_update_requests SET status='" . PRICE_REQ_APPLIED . "', applied_by=?, applied_username=?, applied_at=NOW() WHERE id=?");
+                    $upd_r->bind_param("isi", $user_id, $auto_uname, $def_req['id']); $upd_r->execute();
+
+                    // Cascade the new price baseline to any remaining queued requests for this barcode
+                    $upd_c = $conn->prepare("UPDATE price_update_requests SET current_price = ? WHERE barcode = ? AND id != ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
+                    $upd_c->bind_param("dsi", $def_req['proposed_price'], $bc_check, $def_req['id']); $upd_c->execute();
+                }
+            }
+        }
     }
 
     $conn->commit();
