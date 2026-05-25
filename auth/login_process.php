@@ -52,7 +52,7 @@ if (isset($_POST['username']) && isset($_POST['password'])) {
             if (in_array($user_role, ROLES_ADMIN_AND_UP)) {
                 header("Location: ../staff/dashboard.php");
             } elseif ($user_role === ROLE_STAFF) {
-                header("Location: ../staff/pos.php");
+                header("Location: ../staff/pos/pos.php");
             } else {
                 header("Location: ../public/index.php");
             }

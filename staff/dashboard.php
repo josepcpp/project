@@ -105,12 +105,12 @@ if ($role === ROLE_STAFF):
                     <p class="text-amber-600 text-xs font-bold">Owner flagged <?= count($recount_items) ?> item<?= count($recount_items) > 1 ? 's' : '' ?> for physical recount. Procurement section is now unlocked.</p>
                 </div>
             </div>
-            <a href="delivery_receive.php" class="hidden sm:flex items-center gap-2 bg-amber-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-3 rounded-2xl hover:bg-amber-600 transition-all shadow-md">
+            <a href="procurement/delivery_receive.php" class="hidden sm:flex items-center gap-2 bg-amber-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-3 rounded-2xl hover:bg-amber-600 transition-all shadow-md">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
                 Go to Receiving Station
             </a>
         </div>
-        <form method="POST" action="recount_submit.php" onsubmit="confirmForm(event, this, 'Submit your physical count for all flagged items?', 'Submit Recount?')">
+        <form method="POST" action="procurement/recount_submit.php" onsubmit="confirmForm(event, this, 'Submit your physical count for all flagged items?', 'Submit Recount?')">
             <div class="divide-y divide-amber-100">
                 <?php foreach ($recount_items as $ri): ?>
                 <div class="p-6 flex flex-col sm:flex-row sm:items-center gap-5 hover:bg-amber-50/80 transition-all">
@@ -154,7 +154,7 @@ if ($role === ROLE_STAFF):
                     <p class="text-orange-600 text-xs font-bold"><?= count($expiry_soon) ?> item<?= count($expiry_soon) > 1 ? 's' : '' ?> expiring within 7 days or already expired.</p>
                 </div>
             </div>
-            <a href="stock_management.php" class="hidden sm:flex items-center gap-2 bg-orange-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-3 rounded-2xl hover:bg-orange-600 transition-all shadow-md">
+            <a href="inventory/stock_management.php" class="hidden sm:flex items-center gap-2 bg-orange-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-3 rounded-2xl hover:bg-orange-600 transition-all shadow-md">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
                 View Inventory
             </a>
@@ -183,7 +183,7 @@ if ($role === ROLE_STAFF):
     </div>
     <?php endif; ?>
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-5">
-        <a href="pos.php" class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-7 hover:shadow-lg hover:border-emerald-200 transition-all group">
+        <a href="pos/pos.php" class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-7 hover:shadow-lg hover:border-emerald-200 transition-all group">
             <div class="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
             </div>
@@ -191,14 +191,14 @@ if ($role === ROLE_STAFF):
             <p class="text-2xl font-black text-slate-800"><?= $today_sales['cnt'] ?> <span class="text-sm text-slate-300 font-bold italic">txns</span></p>
             <p class="text-sm font-black text-emerald-600 mt-1">₱<?= number_format($today_sales['amt'], 2) ?></p>
         </a>
-        <a href="stock_management.php?filter=low_stock" class="bg-white rounded-[2rem] border <?= $low_count > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-7 hover:shadow-lg transition-all">
+        <a href="inventory/stock_management.php?filter=low_stock" class="bg-white rounded-[2rem] border <?= $low_count > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-7 hover:shadow-lg transition-all">
             <div class="w-10 h-10 <?= $low_count > 0 ? 'bg-red-500 animate-pulse' : 'bg-slate-100' ?> rounded-xl flex items-center justify-center mb-4">
                 <svg class="w-5 h-5 <?= $low_count > 0 ? 'text-white' : 'text-slate-400' ?>" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-width="2"/></svg>
             </div>
             <p class="<?= $low_count > 0 ? 'text-red-500' : 'text-slate-400' ?> text-[10px] font-black uppercase tracking-widest mb-1">Low Stock Alerts</p>
             <p class="text-2xl font-black <?= $low_count > 0 ? 'text-red-700' : 'text-slate-800' ?>"><?= $low_count ?> <span class="text-sm font-bold opacity-30 italic">items</span></p>
         </a>
-        <a href="refund_management.php?tab=queue" class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-7 hover:shadow-lg transition-all group">
+        <a href="sales/refund_management.php?tab=queue" class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-7 hover:shadow-lg transition-all group">
             <div class="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
             </div>
@@ -395,7 +395,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                     <?php if ($dr_pending_ct > 0): ?>
                     <span class="bg-rose-500 text-white text-[9px] font-black px-3 py-1 rounded-full"><?= $dr_pending_ct ?> pending</span>
                     <?php endif; ?>
-                    <a href="refund_management.php?tab=queue" class="text-[9px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl hover:bg-rose-100 transition-all uppercase tracking-widest border border-rose-100">Queue →</a>
+                    <a href="sales/refund_management.php?tab=queue" class="text-[9px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl hover:bg-rose-100 transition-all uppercase tracking-widest border border-rose-100">Queue →</a>
                 </div>
             </div>
             <div class="divide-y divide-slate-50">
@@ -483,7 +483,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                     </div>
                     <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">Active Procurement</h4>
                 </div>
-                <a href="product_info.php" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a>
+                <a href="inventory/product_info.php" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a>
             </div>
             <?php if ($live_batches && $live_batches->num_rows > 0): ?>
             <div class="divide-y divide-slate-50">
@@ -522,7 +522,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                     <p class="font-black text-slate-800 text-lg">₱<?= number_format($last_sale['total'], 2) ?></p>
                     <p class="text-[10px] text-slate-400 font-bold"><?= date('M d, h:i A', strtotime($last_sale['created_at'])) ?></p>
                 </div>
-                <a href="pos.php" class="text-[9px] font-black text-emerald-500 hover:underline uppercase tracking-widest">POS →</a>
+                <a href="pos/pos.php" class="text-[9px] font-black text-emerald-500 hover:underline uppercase tracking-widest">POS →</a>
             </div>
             <?php endif; ?>
             <div id="refund-widget" class="bg-white rounded-[2rem] border <?= $ref_pend > 0 ? 'border-amber-200' : 'border-slate-100' ?> shadow-md overflow-hidden">
@@ -542,7 +542,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                         <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
                     </div>
                     <?php else: ?>
-                    <a href="refund_management.php?tab=queue" onclick="event.stopPropagation()" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest flex-shrink-0">View →</a>
+                    <a href="sales/refund_management.php?tab=queue" onclick="event.stopPropagation()" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest flex-shrink-0">View →</a>
                     <?php endif; ?>
                 </div>
 
@@ -580,7 +580,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                         <?php endforeach; ?>
                     </div>
                     <div class="p-4 border-t border-amber-100 text-center">
-                        <a href="refund_queue.php" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest">Open Full Queue →</a>
+                        <a href="sales/refund_queue.php" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest">Open Full Queue →</a>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -594,7 +594,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                     <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Deliveries Pending Validation</p>
                     <p class="font-black <?= $del_pend > 0 ? 'text-blue-700' : 'text-slate-800' ?> text-lg"><?= $del_pend ?> <span class="text-sm text-slate-300 font-bold italic">pending</span></p>
                 </div>
-                <a href="deliveries.php?filter=pending" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a>
+                <a href="procurement/deliveries.php?filter=pending" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a>
             </div>
         </div>
     </div>
@@ -614,7 +614,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                     <p class="text-rose-500 text-[10px] font-bold mt-0.5"><?= $supervised_count ?> staff account<?= $supervised_count > 1 ? 's' : '' ?> flagged after double recount failure. Super Admin review required.</p>
                 </div>
             </div>
-            <a href="users.php" class="text-[10px] font-black text-rose-500 hover:underline uppercase tracking-widest flex-shrink-0">Manage →</a>
+            <a href="users/users.php" class="text-[10px] font-black text-rose-500 hover:underline uppercase tracking-widest flex-shrink-0">Manage →</a>
         </div>
         <div class="flex flex-col gap-2">
             <?php foreach ($supervised_users as $su): ?>
@@ -755,7 +755,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                     <p class="text-orange-600 text-[10px] font-bold mt-0.5">Products expiring within 7 days or already expired. Review and consider disposal.</p>
                 </div>
             </div>
-            <a href="stock_management.php" class="text-[9px] font-black text-orange-600 border border-orange-200 px-4 py-2 rounded-xl hover:bg-orange-500 hover:text-white transition-all uppercase tracking-widest">View Inventory →</a>
+            <a href="inventory/stock_management.php" class="text-[9px] font-black text-orange-600 border border-orange-200 px-4 py-2 rounded-xl hover:bg-orange-500 hover:text-white transition-all uppercase tracking-widest">View Inventory →</a>
         </div>
         <div class="overflow-x-auto">
             <table class="w-full text-left text-xs">
@@ -797,11 +797,11 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <!-- Stock Status Cards -->
         <div class="space-y-4">
-            <a href="stock_management.php?filter=low_stock" class="block bg-white rounded-[2rem] border <?= $inv_low > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-6 hover:shadow-lg transition-all">
+            <a href="inventory/stock_management.php?filter=low_stock" class="block bg-white rounded-[2rem] border <?= $inv_low > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-6 hover:shadow-lg transition-all">
                 <p class="text-[9px] font-black <?= $inv_low > 0 ? 'text-red-500' : 'text-slate-400' ?> uppercase tracking-widest mb-1">Low Stock Items</p>
                 <p class="text-3xl font-black <?= $inv_low > 0 ? 'text-red-700' : 'text-slate-700' ?>"><?= $inv_low ?> <span class="text-sm font-bold opacity-30 italic">items</span></p>
             </a>
-            <a href="stock_management.php?filter=out_of_stock" class="block bg-white rounded-[2rem] border border-slate-100 shadow-md p-6 hover:shadow-lg transition-all">
+            <a href="inventory/stock_management.php?filter=out_of_stock" class="block bg-white rounded-[2rem] border border-slate-100 shadow-md p-6 hover:shadow-lg transition-all">
                 <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Zero Stock</p>
                 <p class="text-3xl font-black text-slate-700"><?= $inv_out ?> <span class="text-sm font-bold opacity-30 italic">items</span></p>
             </a>
@@ -821,7 +821,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
         <div class="lg:col-span-2 bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
             <div class="p-6 border-b border-slate-50 flex justify-between items-center">
                 <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">Recent Price Changes</h4>
-                <a href="price_maintenance.php" class="text-[9px] font-black text-purple-500 hover:underline uppercase tracking-widest">Manage →</a>
+                <a href="inventory/price_maintenance.php" class="text-[9px] font-black text-purple-500 hover:underline uppercase tracking-widest">Manage →</a>
             </div>
             <div class="divide-y divide-slate-50">
                 <?php if ($price_chg && $price_chg->num_rows > 0): while ($pc = $price_chg->fetch_assoc()): ?>
@@ -846,7 +846,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
 <div class="space-y-4">
     <div class="flex items-center justify-between">
         <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Delivery Monitoring</p>
-        <a href="deliveries.php" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">All Deliveries →</a>
+        <a href="procurement/deliveries.php" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">All Deliveries →</a>
     </div>
     <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
         <div class="overflow-x-auto">
@@ -869,7 +869,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                         <td class="px-7 py-5 font-bold text-slate-700 text-sm"><?= date("M d, Y", strtotime($d['delivery_date'])) ?></td>
                         <td class="px-4 py-5 text-slate-600 font-bold text-sm"><?= htmlspecialchars($d['supplier']) ?></td>
                         <td class="px-4 py-5 text-center"><span class="text-[9px] font-black px-3 py-1 rounded-full <?= $del_status_cfg ?>"><?= $d['status'] ?></span></td>
-                        <td class="px-7 py-5 text-right"><a href="delivery_view.php?id=<?= $d['id'] ?>" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a></td>
+                        <td class="px-7 py-5 text-right"><a href="procurement/delivery_view.php?id=<?= $d['id'] ?>" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a></td>
                     </tr>
                     <?php endwhile; else: ?>
                     <tr><td colspan="4" class="px-7 py-12 text-center text-slate-300 font-black italic text-sm">No deliveries found.</td></tr>
@@ -929,7 +929,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
 </div>
 
 <!-- ── Dashboard refund action form ───────────────────────────────────────── -->
-<form id="dash-refund-form" method="POST" action="refund_approve.php" class="hidden">
+<form id="dash-refund-form" method="POST" action="sales/refund_approve.php" class="hidden">
     <input type="hidden" name="action"    id="drf-action">
     <input type="hidden" name="refund_id" id="drf-refund-id">
     <input type="hidden" name="note"      id="drf-note">
@@ -957,12 +957,12 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
 async function procApprove(id, username) {
     const ok = await customConfirm(`Grant procurement access to @${username}?`, 'Approve Access?');
     if (!ok) return;
-    navigate('users_process.php', new FormData(document.getElementById('proc_approve_' + id)));
+    navigate('users/users_process.php', new FormData(document.getElementById('proc_approve_' + id)));
 }
 async function procDeny(id, username) {
     const ok = await customConfirm(`Deny procurement access for @${username}?`, 'Deny Access?');
     if (!ok) return;
-    navigate('users_process.php', new FormData(document.getElementById('proc_deny_' + id)));
+    navigate('users/users_process.php', new FormData(document.getElementById('proc_deny_' + id)));
 }
 
 let _dashRefundOpen = false;
@@ -983,7 +983,7 @@ async function dashApproveRefund(id, name, amount) {
     document.getElementById('drf-action').value    = 'approve';
     document.getElementById('drf-refund-id').value = id;
     document.getElementById('drf-note').value      = '';
-    navigate('refund_approve.php', new FormData(document.getElementById('dash-refund-form')));
+    navigate('sales/refund_approve.php', new FormData(document.getElementById('dash-refund-form')));
 }
 
 function dashOpenReject(id, name) {
@@ -1008,7 +1008,7 @@ async function submitDashReject() {
     document.getElementById('drf-action').value    = 'reject';
     document.getElementById('drf-refund-id').value = _dashRejectId;
     document.getElementById('drf-note').value      = reason;
-    navigate('refund_approve.php', new FormData(document.getElementById('dash-refund-form')));
+    navigate('sales/refund_approve.php', new FormData(document.getElementById('dash-refund-form')));
     closeDashReject();
 }
 

@@ -82,6 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     echo json_encode([
                         'success'    => true,
                         'new_status' => $new_status,
+                        'message_id' => $msg_id,
                         'message'    => [
                             'message'  => $msg,
                             'time'     => date("M d, Y · g:i A"),
@@ -136,6 +137,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     header("Location: help.php");
+    exit();
+}
+
+// ── POLL ENDPOINT (GET ?action=poll) ─────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'poll') {
+    header('Content-Type: application/json');
+    $tid     = intval($_GET['ticket_id'] ?? 0);
+    $last_id = intval($_GET['last_id']   ?? 0);
+    if ($tid > 0) {
+        if ($role === ROLE_STAFF) {
+            $mq = $conn->prepare("SELECT sm.* FROM support_messages sm JOIN support_tickets st ON st.id = sm.ticket_id WHERE sm.ticket_id = ? AND sm.id > ? AND st.user_id = ? ORDER BY sm.created_at ASC");
+            $mq->bind_param("iii", $tid, $last_id, $user_id);
+        } else {
+            $mq = $conn->prepare("SELECT * FROM support_messages WHERE ticket_id = ? AND id > ? ORDER BY created_at ASC");
+            $mq->bind_param("ii", $tid, $last_id);
+        }
+        $mq->execute();
+        $rows = $mq->get_result()->fetch_all(MYSQLI_ASSOC);
+        foreach ($rows as &$r) {
+            $r['time'] = date("M d, Y · g:i A", strtotime($r['created_at']));
+        }
+        unset($r);
+        echo json_encode(['messages' => $rows]);
+    } else {
+        echo json_encode(['messages' => []]);
+    }
     exit();
 }
 
@@ -391,6 +418,10 @@ function support_label(string $s): string {
 
             <!-- Message Thread -->
             <div id="message-thread"
+                 data-last-id="<?= !empty($msgs) ? (int)$msgs[array_key_last($msgs)]['id'] : 0 ?>"
+                 data-ticket-id="<?= intval($sel['id']) ?>"
+                 data-my-id="<?= $user_id ?>"
+                 data-my-role="<?= htmlspecialchars($role) ?>"
                  class="flex-1 bg-white rounded-[1.5rem] border border-slate-100 shadow-sm p-6 overflow-y-auto space-y-5"
                  style="max-height: 48vh;">
                 <?php if (empty($msgs)): ?>
@@ -450,7 +481,7 @@ function support_label(string $s): string {
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
                     </svg>
-                    Send
+                    <span>Send</span>
                 </button>
             </form>
             <?php else: ?>
@@ -543,6 +574,7 @@ function support_label(string $s): string {
 .bubble-new { animation: bubbleIn 0.18s cubic-bezier(.4,0,.2,1) forwards; }
 </style>
 <script>
+// ── modal helpers ─────────────────────────────────────────────────────────────
 function openNewTicket() {
     document.getElementById('new-ticket-modal').classList.remove('hidden');
     setTimeout(() => document.getElementById('nt-subject')?.focus(), 50);
@@ -554,36 +586,84 @@ document.getElementById('new-ticket-modal')?.addEventListener('click', function(
     if (e.target === this) closeNewTicket();
 });
 
+// ── initial scroll ────────────────────────────────────────────────────────────
 const _thread = document.getElementById('message-thread');
 if (_thread) _thread.scrollTop = _thread.scrollHeight;
 
+// ── utilities ─────────────────────────────────────────────────────────────────
 function _esc(s) {
     return String(s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
         .replace(/\n/g,'<br>');
 }
+function _isNearBottom(el, threshold = 80) {
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) <= threshold;
+}
 
+// ── bubble builders ───────────────────────────────────────────────────────────
 function _buildBubble(msg) {
     const outer = document.createElement('div');
     outer.className = 'flex justify-end bubble-new';
-
     const inner = document.createElement('div');
     inner.className = 'max-w-[72%] flex flex-col items-end';
-
     const bubble = document.createElement('div');
     bubble.className = 'px-4 py-3 rounded-2xl text-[13px] leading-relaxed bg-slate-900 text-white rounded-tr-sm';
     bubble.innerHTML = _esc(msg.message);
-
     const ts = document.createElement('p');
     ts.className = 'text-[9px] text-slate-300 font-bold mt-1.5 pr-0.5';
     ts.textContent = msg.time;
-
     inner.appendChild(bubble);
     inner.appendChild(ts);
     outer.appendChild(inner);
     return outer;
 }
 
+const _adminRoles = ['admin', 'superadmin', 'owner'];
+function _buildRemoteBubble(msg) {
+    const isAdmin = _adminRoles.includes((msg.sender_role || '').toLowerCase());
+    const outer = document.createElement('div');
+    outer.className = 'flex justify-start bubble-new';
+    const inner = document.createElement('div');
+    inner.className = 'max-w-[72%] flex flex-col items-start';
+
+    // avatar + name row
+    const avatarRow = document.createElement('div');
+    avatarRow.className = 'flex items-center gap-2 mb-1.5';
+    const av = document.createElement('div');
+    av.className = 'w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black ' +
+                   (isAdmin ? 'bg-purple-100 text-purple-600' : 'bg-slate-100 text-slate-500');
+    av.textContent = (msg.sender_username || '?').charAt(0).toUpperCase();
+    const uname = document.createElement('p');
+    uname.className = 'text-[10px] text-slate-500 font-bold';
+    uname.textContent = msg.sender_username || '';
+    avatarRow.appendChild(av);
+    avatarRow.appendChild(uname);
+    if (isAdmin) {
+        const badge = document.createElement('span');
+        badge.className = 'bg-purple-50 text-purple-500 border border-purple-100 px-1.5 py-0.5 rounded text-[8px] font-black';
+        const rl = (msg.sender_role || '').toLowerCase();
+        badge.textContent = rl === 'superadmin' ? 'Superadmin' : (rl === 'owner' ? 'Owner' : 'Admin');
+        avatarRow.appendChild(badge);
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'px-4 py-3 rounded-2xl text-[13px] leading-relaxed rounded-tl-sm ' +
+        (isAdmin ? 'bg-purple-50 text-slate-700 border border-purple-100'
+                 : 'bg-slate-50 text-slate-700 border border-slate-100');
+    bubble.innerHTML = _esc(msg.message);
+
+    const ts = document.createElement('p');
+    ts.className = 'text-[9px] text-slate-300 font-bold mt-1.5 pl-0.5';
+    ts.textContent = msg.time;
+
+    inner.appendChild(avatarRow);
+    inner.appendChild(bubble);
+    inner.appendChild(ts);
+    outer.appendChild(inner);
+    return outer;
+}
+
+// ── status badge ──────────────────────────────────────────────────────────────
 function _updateStatusBadge(newStatus) {
     const el = document.getElementById('sel-status-badge');
     if (!el) return;
@@ -597,16 +677,79 @@ function _updateStatusBadge(newStatus) {
     el.textContent = def.label;
 }
 
+// ── background polling ────────────────────────────────────────────────────────
+const _pollThread = document.getElementById('message-thread');
+let   _pollTimer  = null;
+let   _lastId     = _pollThread ? parseInt(_pollThread.dataset.lastId || '0', 10) : 0;
+
+if (_pollThread && _pollThread.dataset.ticketId) {
+    const _ticketId = _pollThread.dataset.ticketId;
+    const _myId     = parseInt(_pollThread.dataset.myId || '0', 10);
+
+    function _poll() {
+        fetch(`help.php?action=poll&ticket_id=${_ticketId}&last_id=${_lastId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.messages || !data.messages.length) return;
+                const bottom  = document.getElementById('thread-bottom');
+                const wasNear = _isNearBottom(_pollThread);
+                data.messages.forEach(msg => {
+                    const mid = parseInt(msg.id, 10);
+                    _lastId = Math.max(_lastId, mid);
+                    // skip messages I just sent (already rendered optimistically)
+                    if (parseInt(msg.sender_id, 10) === _myId) return;
+                    _pollThread.insertBefore(_buildRemoteBubble(msg), bottom);
+                });
+                if (wasNear) _pollThread.scrollTo({ top: _pollThread.scrollHeight, behavior: 'smooth' });
+            })
+            .catch(() => {}); // silent — network blip
+    }
+
+    function _startPolling() { _pollTimer = setInterval(_poll, 2500); }
+    function _stopPolling()  { clearInterval(_pollTimer); }
+
+    _startPolling();
+    document.addEventListener('visibilitychange', () => {
+        document.hidden ? _stopPolling() : (_startPolling(), _poll());
+    });
+}
+
+// ── reply textarea: auto-resize + Enter-to-send ───────────────────────────────
 const _replyForm = document.getElementById('reply-form');
+const _replyTA   = _replyForm?.querySelector('textarea[name="message"]');
+
+if (_replyTA) {
+    _replyTA.addEventListener('input', function () {
+        this.style.height = 'auto';
+        const lineH = parseFloat(getComputedStyle(this).lineHeight) || 20;
+        this.style.height = Math.min(this.scrollHeight, lineH * 5 + 24) + 'px';
+    });
+    _replyTA.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            _replyForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        }
+    });
+}
+
+// ── reply form submit (AJAX) ──────────────────────────────────────────────────
 if (_replyForm) {
-    _replyForm.addEventListener('submit', function(e) {
+    _replyForm.addEventListener('submit', function (e) {
         e.preventDefault();
         e.stopPropagation();
         const textarea = this.querySelector('textarea[name="message"]');
         const sendBtn  = this.querySelector('button[type="submit"]');
         if (!textarea.value.trim()) return;
-        sendBtn.disabled      = true;
-        sendBtn.style.opacity = '0.6';
+
+        // loading state
+        textarea.readOnly = true;
+        sendBtn.disabled  = true;
+        sendBtn.innerHTML =
+            '<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">' +
+            '<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>' +
+            '<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>' +
+            '<span>Sending</span>';
+
         fetch('help.php', {
             method:  'POST',
             body:    new FormData(this),
@@ -615,13 +758,17 @@ if (_replyForm) {
         .then(r => r.json())
         .then(data => {
             if (data.success) {
-                textarea.value = '';
+                // advance lastId so the poll skips this message
+                if (data.message_id) _lastId = Math.max(_lastId, parseInt(data.message_id, 10));
+
                 const thread = document.getElementById('message-thread');
                 const bottom = document.getElementById('thread-bottom');
-                const bubble = _buildBubble(data.message);
-                thread.insertBefore(bubble, bottom);
+                thread.insertBefore(_buildBubble(data.message), bottom);
                 thread.scrollTo({ top: thread.scrollHeight, behavior: 'smooth' });
                 if (data.new_status) _updateStatusBadge(data.new_status);
+
+                textarea.value        = '';
+                textarea.style.height = ''; // reset auto-resize
             } else {
                 if (typeof showFlash === 'function') showFlash(data.error || 'Could not send reply.', 'error');
             }
@@ -630,8 +777,13 @@ if (_replyForm) {
             if (typeof showFlash === 'function') showFlash('Network error. Please try again.', 'error');
         })
         .finally(() => {
-            sendBtn.disabled      = false;
-            sendBtn.style.opacity = '';
+            textarea.readOnly = false;
+            sendBtn.disabled  = false;
+            sendBtn.innerHTML =
+                '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+                '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>' +
+                '</svg><span>Send</span>';
+            textarea.focus();
         });
     });
 }
