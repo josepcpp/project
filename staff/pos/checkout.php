@@ -289,7 +289,23 @@ document.getElementById('checkoutForm').addEventListener('submit', function(e) {
     const finalTotal = parseFloat(document.getElementById('final-total-hidden').value);
     if (finalTotal < 0) {
         e.preventDefault();
-        alert('Total amount cannot be negative.');
+        showFlash('Total amount cannot be negative.', 'error');
+        return;
+    }
+
+    // Reject insufficient cash tender (POS-5)
+    const selectedMethod = document.querySelector('input[name="payment_mode"]:checked').value;
+    if (selectedMethod === PAY_CASH) {
+        const cashVal = parseFloat(document.getElementById('cash-input').value) || 0;
+        if (cashVal < finalTotal) {
+            e.preventDefault();
+            const cashEl = document.getElementById('cash-input');
+            cashEl.classList.add('!border-rose-400');
+            cashEl.focus();
+            setTimeout(() => cashEl.classList.remove('!border-rose-400'), 2500);
+            showFlash('Insufficient payment. ₱' + cashVal.toFixed(2) + ' tendered for ₱' + finalTotal.toFixed(2) + ' total.', 'error');
+            return;
+        }
     }
 });
 </script>

@@ -119,6 +119,12 @@ try {
     $net_subtotal = max(0.0, $server_subtotal - $discount_amt);
     $tax_amt      = $tax_enabled ? ($net_subtotal * TAX_RATE) : 0.0;
     $total        = round($net_subtotal + $tax_amt, 2);
+
+    // Reject insufficient cash payment (POS-5: underpayment guard)
+    if ($payment_mode === PAY_METHOD_CASH && $cash < $total) {
+        throw new Exception("Insufficient payment. ₱" . number_format($cash, 2) . " tendered for ₱" . number_format($total, 2) . " total.");
+    }
+
     $change       = $total <= 0 ? 0.0 : max(0.0, $cash - $total);
 
     // 7. Save sale header
