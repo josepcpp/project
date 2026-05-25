@@ -29,34 +29,45 @@ $conn->begin_transaction();
 
 try {
     // 3. Identify & lock discount INSIDE transaction (POS-3: prevents race condition on usage limit)
+    $discount_scope             = 'store';
+    $discount_target_product_id = 0;
+    $discount_target_category   = '';
+
+    $disc_fields = "id, name, type, value, usage_limit, used_count, start_date, end_date, scope, target_product_id, target_category";
+    $today_date  = date('Y-m-d');
+
     if ($discount_id > 0) {
-        $disc_q = $conn->prepare("SELECT id, name, type, value, usage_limit, used_count FROM discounts WHERE id = ? AND is_active = 1 FOR UPDATE");
+        $disc_q = $conn->prepare("SELECT {$disc_fields} FROM discounts WHERE id = ? AND is_active = 1 FOR UPDATE");
         $disc_q->bind_param("i", $discount_id);
         $disc_q->execute();
-        if ($row = $disc_q->get_result()->fetch_assoc()) {
-            if ($row['type'] === 'Percentage' && $row['value'] > 100)
-                throw new Exception("Invalid discount: percentage cannot exceed 100%.");
-            if ($row['usage_limit'] > 0 && $row['used_count'] >= $row['usage_limit'])
-                throw new Exception("Discount \"{$row['name']}\" has reached its usage limit.");
-            $discount_name      = $row['name'];
-            $target_discount_id = $discount_id;
-            $discount_type      = $row['type'];
-            $discount_value     = floatval($row['value']);
-        }
+        $row = $disc_q->get_result()->fetch_assoc();
     } elseif (!empty($promo_typed)) {
-        $promo_q = $conn->prepare("SELECT id, name, type, value, usage_limit, used_count FROM discounts WHERE promo_code = ? AND is_active = 1 LIMIT 1 FOR UPDATE");
-        $promo_q->bind_param("s", $promo_typed);
-        $promo_q->execute();
-        if ($row = $promo_q->get_result()->fetch_assoc()) {
-            if ($row['type'] === 'Percentage' && $row['value'] > 100)
-                throw new Exception("Invalid discount: percentage cannot exceed 100%.");
-            if ($row['usage_limit'] > 0 && $row['used_count'] >= $row['usage_limit'])
-                throw new Exception("Promo code \"$promo_typed\" has reached its usage limit.");
-            $discount_name      = $row['name'] . " (Code: $promo_typed)";
-            $target_discount_id = $row['id'];
-            $discount_type      = $row['type'];
-            $discount_value     = floatval($row['value']);
-        }
+        $disc_q = $conn->prepare("SELECT {$disc_fields} FROM discounts WHERE promo_code = ? AND is_active = 1 LIMIT 1 FOR UPDATE");
+        $disc_q->bind_param("s", $promo_typed);
+        $disc_q->execute();
+        $row = $disc_q->get_result()->fetch_assoc();
+    } else {
+        $row = null;
+    }
+
+    if ($row) {
+        if ($row['type'] === 'Percentage' && $row['value'] > 100)
+            throw new Exception("Invalid discount: percentage cannot exceed 100%.");
+        if ($row['usage_limit'] > 0 && $row['used_count'] >= $row['usage_limit'])
+            throw new Exception("Discount \"{$row['name']}\" has reached its usage limit.");
+        // Schedule validation
+        if (!empty($row['start_date']) && $today_date < $row['start_date'])
+            throw new Exception("Promo \"{$row['name']}\" has not started yet (starts " . date('M d, Y', strtotime($row['start_date'])) . ").");
+        if (!empty($row['end_date']) && $today_date > $row['end_date'])
+            throw new Exception("Promo \"{$row['name']}\" has already expired.");
+
+        $discount_name              = !empty($promo_typed) ? $row['name'] . " (Code: $promo_typed)" : $row['name'];
+        $target_discount_id         = $row['id'];
+        $discount_type              = $row['type'];
+        $discount_value             = floatval($row['value']);
+        $discount_scope             = $row['scope'] ?? 'store';
+        $discount_target_product_id = intval($row['target_product_id'] ?? 0);
+        $discount_target_category   = $row['target_category'] ?? '';
     }
 
     // 4. Generate receipt number
@@ -122,19 +133,35 @@ try {
         $server_subtotal += $line_total;
 
         $items_to_insert[] = [
-            'pid'   => intval($pid),
-            'qty'   => $cart_qty,
-            'price' => $effective_unit,
-            'data'  => $product_data,
+            'pid'        => intval($pid),
+            'qty'        => $cart_qty,
+            'price'      => $effective_unit,
+            'line_total' => $line_total,
+            'data'       => $product_data,
         ];
     }
 
-    // 6. Server-side total calculation (POS-1)
+    // 6. Server-side total calculation with scope-aware discount (POS-1)
     $discount_amt = 0.0;
     if ($target_discount_id > 0) {
+        // Calculate the discountable subtotal based on scope
+        if ($discount_scope === 'product' && $discount_target_product_id > 0) {
+            $discountable = 0.0;
+            foreach ($items_to_insert as $e) {
+                if ($e['pid'] === $discount_target_product_id) $discountable += $e['line_total'];
+            }
+        } elseif ($discount_scope === 'category' && $discount_target_category !== '') {
+            $discountable = 0.0;
+            foreach ($items_to_insert as $e) {
+                if (($e['data']['category'] ?? '') === $discount_target_category) $discountable += $e['line_total'];
+            }
+        } else {
+            $discountable = $server_subtotal; // store-wide
+        }
+
         $discount_amt = ($discount_type === DISCOUNT_PERCENTAGE)
-            ? ($server_subtotal * ($discount_value / 100))
-            : $discount_value;
+            ? ($discountable * ($discount_value / 100))
+            : min($discount_value, $discountable); // Fixed discount capped at discountable amount
     }
     $net_subtotal = max(0.0, $server_subtotal - $discount_amt);
     $tax_amt      = $tax_enabled ? ($net_subtotal * TAX_RATE) : 0.0;

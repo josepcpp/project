@@ -1020,4 +1020,62 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDashRej
 
 <?php endif; ?>
 
+<?php if (in_array($role, ROLES_ADMIN_AND_UP)): ?>
+<!-- ── EXPORT PANEL ──────────────────────────────────────────────────────── -->
+<div class="max-w-[1600px] mx-auto pb-10 animate-in">
+    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl p-8">
+        <div class="flex items-center gap-4 mb-6">
+            <div class="w-10 h-10 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-500">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </div>
+            <div>
+                <h4 class="font-black text-slate-800 text-sm">Export Data</h4>
+                <p class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Download CSV for Excel / spreadsheet</p>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Sales Export -->
+            <div class="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Sales Report</p>
+                <div class="flex gap-2 mb-3">
+                    <input type="date" id="exp-sales-from" value="<?= date('Y-m-01') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
+                    <span class="text-slate-300 font-bold self-center">→</span>
+                    <input type="date" id="exp-sales-to" value="<?= date('Y-m-d') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
+                </div>
+                <a id="exp-sales-btn" href="#" onclick="exportCSV('sales','exp-sales-from','exp-sales-to')" class="block text-center bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
+                    ↓ Export Sales CSV
+                </a>
+            </div>
+            <!-- Inventory Export -->
+            <div class="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Inventory Snapshot</p>
+                <p class="text-slate-400 text-[10px] font-bold mb-3">Full product list with cost price, margin %, and stock levels as of today.</p>
+                <a href="/project/staff/reports/export.php?type=inventory" class="block text-center bg-blue-500 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
+                    ↓ Export Inventory CSV
+                </a>
+            </div>
+            <!-- Refunds Export -->
+            <div class="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Refunds Report</p>
+                <div class="flex gap-2 mb-3">
+                    <input type="date" id="exp-ref-from" value="<?= date('Y-m-01') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
+                    <span class="text-slate-300 font-bold self-center">→</span>
+                    <input type="date" id="exp-ref-to" value="<?= date('Y-m-d') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
+                </div>
+                <a href="#" onclick="exportCSV('refunds','exp-ref-from','exp-ref-to')" class="block text-center bg-rose-500 hover:bg-rose-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
+                    ↓ Export Refunds CSV
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function exportCSV(type, fromId, toId) {
+    var from = document.getElementById(fromId)?.value || '';
+    var to   = document.getElementById(toId)?.value   || '';
+    window.location.href = '/project/staff/reports/export.php?type=' + type + '&date_from=' + from + '&date_to=' + to;
+}
+</script>
+<?php endif; ?>
+
 <?php include 'layout_bottom.php'; ?>

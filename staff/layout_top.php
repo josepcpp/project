@@ -524,4 +524,62 @@ function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
     document.getElementById('main-content').classList.toggle('expanded');
 }
+
+// ── IDLE SESSION WARNING (M-01) ───────────────────────────────────────────────
+// Server timeout = 7200s (2 hrs). Warn at 1:55:00, auto-redirect at 2:00:00.
+(function() {
+    var TIMEOUT_MS = 7200000;
+    var WARN_MS    = TIMEOUT_MS - 300000; // warn 5 min before
+    var _warn, _kick;
+
+    function resetIdle() {
+        clearTimeout(_warn);
+        clearTimeout(_kick);
+        var modal = document.getElementById('idle-warning-modal');
+        if (modal) modal.classList.add('hidden');
+        _warn = setTimeout(showIdleWarning, WARN_MS);
+        _kick = setTimeout(function() {
+            window.location.href = '/project/auth/login.php?error=' + encodeURIComponent('Session expired due to inactivity.');
+        }, TIMEOUT_MS);
+    }
+
+    function showIdleWarning() {
+        var modal = document.getElementById('idle-warning-modal');
+        if (modal) modal.classList.remove('hidden');
+        // countdown in modal
+        var secs = 300;
+        var cdEl = document.getElementById('idle-countdown');
+        var iv = setInterval(function() {
+            secs--;
+            if (cdEl) {
+                var m = Math.floor(secs / 60);
+                var s = secs % 60;
+                cdEl.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+            }
+            if (secs <= 0) clearInterval(iv);
+        }, 1000);
+    }
+
+    window._resetIdleTimer = resetIdle;
+    ['click','keydown','mousemove','scroll','touchstart'].forEach(function(ev) {
+        document.addEventListener(ev, resetIdle, { passive: true });
+    });
+    resetIdle();
+})();
 </script>
+
+<!-- ── IDLE SESSION WARNING MODAL ─────────────────────────────────────────── -->
+<div id="idle-warning-modal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-white rounded-[2.5rem] p-10 max-w-sm w-full mx-4 text-center shadow-2xl animate-in">
+        <div class="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-5">
+            <svg class="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+        <h3 class="serif-title text-2xl font-black text-slate-800 mb-2">Still there?</h3>
+        <p class="text-slate-400 text-sm font-bold mb-2">Your session will expire in</p>
+        <p class="text-5xl font-black text-amber-500 tracking-tighter mb-6" id="idle-countdown">5:00</p>
+        <p class="text-slate-400 text-xs font-bold mb-8">Due to inactivity. Click below to stay logged in.</p>
+        <button onclick="window._resetIdleTimer()" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl text-sm uppercase tracking-widest transition-all shadow-lg shadow-emerald-100">
+            Keep Me Logged In
+        </button>
+    </div>
+</div>

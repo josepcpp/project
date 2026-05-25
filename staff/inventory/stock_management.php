@@ -149,6 +149,7 @@ if (!empty($batch_filter)) {
                    SUM(p.max_quantity) AS total_max,
                    MAX(p.category) AS category,
                    MAX(p.price) AS price,
+                   MAX(p.cost_price) AS cost_price,
                    p.supplier_id,
                    s.name AS supplier_display,
                    s.invoice_number,
@@ -657,6 +658,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                         <?= !empty($batch_filter) ? 'Qty in Batch' : 'Total Stock' ?>
                     </th>
                     <th class="px-6 py-7 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Price</th>
+                    <th class="px-6 py-7 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Margin</th>
                     <th class="px-6 py-7 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Expiry</th>
                 </tr>
             </thead>
@@ -720,6 +722,19 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                         <?php if ($price > 0): ?>₱<?= number_format($price, 2) ?>
                             <?php if (!empty($p['pending_price'])): ?><p class="text-[9px] font-black text-amber-500 uppercase tracking-widest mt-1">→ ₱<?= number_format(floatval($p['pending_price']), 2) ?></p><?php endif; ?>
                         <?php else: ?><span class="text-slate-200 font-black">—</span><?php endif; ?>
+                    </td>
+                    <td class="px-6 py-7 text-center">
+                        <?php
+                        $cost  = floatval($p['cost_price'] ?? 0);
+                        $margin_pct = ($cost > 0 && $price > 0) ? (($price - $cost) / $cost * 100) : null;
+                        if ($margin_pct !== null):
+                            $m_cls = $margin_pct >= 20 ? 'text-emerald-600 bg-emerald-50' : ($margin_pct >= 5 ? 'text-amber-600 bg-amber-50' : 'text-rose-500 bg-rose-50');
+                        ?>
+                            <span class="text-xs font-black px-2 py-1 rounded-full <?= $m_cls ?>"><?= number_format($margin_pct, 1) ?>%</span>
+                            <p class="text-[9px] text-slate-400 font-bold mt-1">Cost ₱<?= number_format($cost, 2) ?></p>
+                        <?php else: ?>
+                            <span class="text-slate-200 font-black text-sm">—</span>
+                        <?php endif; ?>
                     </td>
                     <td class="px-6 py-7 text-center">
                         <?php if ($expiry_raw): ?>

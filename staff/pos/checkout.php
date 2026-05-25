@@ -8,10 +8,24 @@ if (empty($_SESSION['cart'])) {
     exit();
 }
 
-$subtotal = 0;
-foreach ($_SESSION['cart'] as $i) {
-    // Math safety fallback: Sum of all items in cart
-    $subtotal += $i['line_total'] ?? ($i['price'] * $i['qty']);
+$subtotal        = 0;
+$cart_composition = []; // for scope-aware discount calculation in JS
+
+foreach ($_SESSION['cart'] as $pid => $item) {
+    $lt        = floatval($item['line_total'] ?? ($item['price'] * $item['qty']));
+    $subtotal += $lt;
+
+    // Fetch category for this item (needed for category-scoped promos)
+    $cat_q = $conn->prepare("SELECT category FROM products WHERE id = ? LIMIT 1");
+    $cat_q->bind_param("i", $pid);
+    $cat_q->execute();
+    $cat_row = $cat_q->get_result()->fetch_assoc();
+
+    $cart_composition[] = [
+        'product_id' => (int)$pid,
+        'category'   => $cat_row['category'] ?? '',
+        'line_total' => $lt,
+    ];
 }
 $tax_rate = TAX_RATE;
 
@@ -131,16 +145,30 @@ if($disc_q) {
 </div>
 
 <script>
-const rawSubtotal = <?= (float)$subtotal ?>;
-const taxRate = <?= (float)$tax_rate ?>;
-const promoDatabase = <?= json_encode($all_discounts) ?>;
+const rawSubtotal    = <?= (float)$subtotal ?>;
+const taxRate        = <?= (float)$tax_rate ?>;
+const promoDatabase  = <?= json_encode($all_discounts) ?>;
+const cartItems      = <?= json_encode($cart_composition) ?>; // for scope-aware discounts
 const PAY_CASH  = <?= json_encode(PAY_METHOD_CASH) ?>;
 const PAY_GCASH = <?= json_encode(PAY_METHOD_GCASH) ?>;
 const PAY_MAYA  = <?= json_encode(PAY_METHOD_MAYA) ?>;
 const DISC_PCT  = <?= json_encode(DISCOUNT_PERCENTAGE) ?>;
 
-let activeDiscount = { type: 'Fixed', value: 0 };
+let activeDiscount = { type: 'Fixed', value: 0, scope: 'store', target_product_id: 0, target_category: '' };
 let promoValid = false;
+
+// Returns the subtotal eligible for the active discount based on its scope
+function getDiscountableSubtotal(discount) {
+    if (discount.scope === 'product' && discount.target_product_id) {
+        return cartItems.filter(i => i.product_id == discount.target_product_id)
+                        .reduce((s, i) => s + i.line_total, 0);
+    }
+    if (discount.scope === 'category' && discount.target_category) {
+        return cartItems.filter(i => i.category === discount.target_category)
+                        .reduce((s, i) => s + i.line_total, 0);
+    }
+    return rawSubtotal; // store-wide
+}
 
 function applyTypedPromo() {
     const input      = document.getElementById('promo_input');
@@ -182,15 +210,40 @@ function applyTypedPromo() {
             feedback.className = 'text-[11px] font-bold ml-2 text-rose-500';
             feedback.classList.remove('hidden');
         } else {
-            activeDiscount.type  = match.type;
-            activeDiscount.value = parseFloat(match.value);
+            // Schedule check
+            const today = new Date().toISOString().slice(0,10);
+            if (match.start_date && today < match.start_date) {
+                activeDiscount = { type: 'Fixed', value: 0, scope: 'store', target_product_id: 0, target_category: '' };
+                promoValid = false;
+                input.style.borderColor = '#f87171';
+                feedback.textContent = `Code "${code}" hasn't started yet (starts ${match.start_date}).`;
+                feedback.className = 'text-[11px] font-bold ml-2 text-rose-500';
+                feedback.classList.remove('hidden');
+                updateTotals(); return;
+            }
+            if (match.end_date && today > match.end_date) {
+                activeDiscount = { type: 'Fixed', value: 0, scope: 'store', target_product_id: 0, target_category: '' };
+                promoValid = false;
+                input.style.borderColor = '#f87171';
+                feedback.textContent = `Code "${code}" has expired.`;
+                feedback.className = 'text-[11px] font-bold ml-2 text-rose-500';
+                feedback.classList.remove('hidden');
+                updateTotals(); return;
+            }
+            activeDiscount.type             = match.type;
+            activeDiscount.value            = parseFloat(match.value);
+            activeDiscount.scope            = match.scope || 'store';
+            activeDiscount.target_product_id = parseInt(match.target_product_id) || 0;
+            activeDiscount.target_category  = match.target_category || '';
             promoValid = true;
             input.style.borderColor = '#10b981';
             statusIcon.classList.remove('hidden');
             const discLabel = match.type === DISC_PCT
                 ? `${match.value}% off`
                 : `₱${parseFloat(match.value).toFixed(2)} off`;
-            feedback.textContent = `Code applied! ${discLabel}`;
+            const scopeLabel = activeDiscount.scope === 'category' ? ` on ${activeDiscount.target_category}`
+                             : activeDiscount.scope === 'product'  ? ` on selected item` : '';
+            feedback.textContent = `Code applied! ${discLabel}${scopeLabel}`;
             feedback.className = 'text-[11px] font-bold ml-2 text-emerald-600';
             feedback.classList.remove('hidden');
         }
@@ -206,8 +259,11 @@ function updateTotals() {
     const hiddenInput = document.getElementById('final-total-hidden');
     const cashInput = document.getElementById('cash-input');
 
-    // 1. Calc Discount
-    let discountAmt = (activeDiscount.type === DISC_PCT) ? (rawSubtotal * (activeDiscount.value / 100)) : activeDiscount.value;
+    // 1. Calc Discount (scope-aware)
+    const discountable = getDiscountableSubtotal(activeDiscount);
+    let discountAmt = (activeDiscount.type === DISC_PCT)
+        ? (discountable * (activeDiscount.value / 100))
+        : Math.min(activeDiscount.value, discountable); // Fixed discount capped at discountable
     let runningTotal = Math.max(0, rawSubtotal - discountAmt);
     
     // 2. Calc Tax
