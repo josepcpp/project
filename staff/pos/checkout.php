@@ -218,7 +218,7 @@ function updateTotals() {
     totalDisplay.innerText = "₱" + finalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
     document.getElementById('tax-label').innerText = isTaxOn ? "YES" : "NO";
     
-    let info = isTaxOn ? `Includes 12% Tax (₱${calculatedTax.toFixed(2)})` : "Non-VAT / Tax Exempt";
+    let info = isTaxOn ? `Includes ${(taxRate * 100).toFixed(0)}% Tax (₱${calculatedTax.toFixed(2)})` : "Non-VAT / Tax Exempt";
     if(discountAmt > 0) info = `<span class="text-amber-600">Saved ₱${discountAmt.toFixed(2)}</span> • ` + info;
     detailText.innerHTML = info;
 

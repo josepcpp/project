@@ -14,14 +14,21 @@ $cat_filter = $cur_cat !== 'All' ? " AND p.category = '" . $conn->real_escape_st
 
 // Inner query groups products first, then joins aggregated price_update_requests by barcode.
 // This avoids JOIN multiplication when multiple pending requests exist for the same product.
+// CALC-2: fifo JOIN fetches price/box-prices from the earliest-expiry lot — the same lot
+// that pos_process.php will pick via ORDER BY expiry_date ASC LIMIT 1, so displayed price
+// matches what is actually charged when the product is added to cart.
 $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
-        p_agg.quantity, p_agg.price, p_agg.category,
+        p_agg.quantity,
+        COALESCE(fifo.price, 0)           AS price,
+        COALESCE(fifo.price_half_box, 0)  AS price_half_box,
+        COALESCE(fifo.price_full_box, 0)  AS price_full_box,
+        p_agg.category,
         p_agg.bulk_qty_half, p_agg.bulk_qty_full, p_agg.tiers_locked,
         COALESCE(pur_agg.total_locked, 0) AS locked_qty,
         IF(pur_agg.cnt > 0, 1, 0) AS has_pending_price
         FROM (
             SELECT MIN(p.id) AS id, p.name, MIN(p.barcode) AS barcode,
-                   SUM(p.quantity) AS quantity, MAX(p.price) AS price,
+                   SUM(p.quantity) AS quantity,
                    MAX(p.category) AS category,
                    MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.bulk_qty_full) AS bulk_qty_full,
                    MAX(p.tiers_locked) AS tiers_locked
@@ -30,6 +37,13 @@ $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
               AND (p.expiry_date IS NULL OR p.expiry_date > CURDATE())" . $cat_filter . "
             GROUP BY LOWER(TRIM(p.name))
         ) AS p_agg
+        LEFT JOIN products AS fifo ON fifo.id = (
+            SELECT p_f.id FROM products p_f
+            WHERE p_f.barcode = p_agg.barcode
+              AND p_f.status = '" . PRODUCT_ACTIVE . "' AND p_f.quantity > 0
+              AND (p_f.expiry_date IS NULL OR p_f.expiry_date > CURDATE())
+            ORDER BY COALESCE(p_f.expiry_date, '9999-12-31') ASC LIMIT 1
+        )
         LEFT JOIN (
             SELECT barcode, SUM(locked_qty) AS total_locked, COUNT(*) AS cnt
             FROM price_update_requests
@@ -215,7 +229,7 @@ if(!empty($_SESSION['cart'])) {
         <!-- 💰 FOOTER: PROPORTIONATE (Reduced size) -->
         <div class="p-6 bg-slate-900 text-white rounded-t-[3.5rem] shadow-2xl">
             <div class="flex justify-between items-center mb-6 px-2">
-                <span class="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Total Payable</span>
+                <span class="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Subtotal <span class="text-slate-600 normal-case font-bold">(+tax at checkout)</span></span>
                 <h2 id="cart-total" class="text-3xl font-black text-emerald-400 tracking-tighter">₱<?= number_format($subtotal, 2) ?></h2>
             </div>
             <a href="checkout.php" class="block w-full bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black py-4 rounded-2xl text-center shadow-lg transition-all uppercase tracking-widest text-xs">

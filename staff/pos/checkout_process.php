@@ -81,6 +81,26 @@ try {
         if ($product_data['quantity'] < $cart_qty)
             throw new Exception("Not enough stock for " . $product_data['name']);
 
+        // CALC-5: Also check effective_qty (total across lots minus price-locked units)
+        // This prevents selling stock that is reserved for a pending price update.
+        $bc = $product_data['barcode'] ?? '';
+        if ($bc !== '') {
+            $eff_chk = $conn->prepare(
+                "SELECT COALESCE(SUM(quantity),0) AS tq FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "'"
+            );
+            $eff_chk->bind_param("s", $bc); $eff_chk->execute();
+            $avail_total = intval($eff_chk->get_result()->fetch_assoc()['tq']);
+
+            $lk_chk = $conn->prepare(
+                "SELECT COALESCE(SUM(locked_qty),0) AS lq FROM price_update_requests WHERE barcode = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')"
+            );
+            $lk_chk->bind_param("s", $bc); $lk_chk->execute();
+            $avail_locked = intval($lk_chk->get_result()->fetch_assoc()['lq']);
+
+            if (max(0, $avail_total - $avail_locked) < $cart_qty)
+                throw new Exception("Not enough available stock for \"" . $product_data['name'] . "\" — some units are reserved for a pending price update.");
+        }
+
         // Recalculate line_total from current DB price — same bulk logic as pos_process.php
         $retail = floatval($product_data['price']);
         $bqf    = intval($product_data['bulk_qty_full']   ?? 0);
@@ -125,7 +145,7 @@ try {
         throw new Exception("Insufficient payment. ₱" . number_format($cash, 2) . " tendered for ₱" . number_format($total, 2) . " total.");
     }
 
-    $change       = $total <= 0 ? 0.0 : max(0.0, $cash - $total);
+    $change       = max(0.0, $cash - $total); // CALC-4: max() handles ₱0 total correctly on its own
 
     // 7. Save sale header
     $stmt = $conn->prepare("INSERT INTO sales (receipt_no, total, cash, change_amt, payment_mode, reference_no, discount_name) VALUES (?, ?, ?, ?, ?, ?, ?)");

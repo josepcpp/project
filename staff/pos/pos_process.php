@@ -7,6 +7,8 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+$skip_locked = false; // CALC-6: set true when a product is found but fully locked (no usable stock)
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     $pid = intval($_POST['id'] ?? 0);
@@ -41,16 +43,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $locked_qty    = intval($lq_q->get_result()->fetch_assoc()['lq'] ?? 0);
             $effective_qty = max(0, $total_qty - $locked_qty);
 
-            // Initialize item in cart if not exists
+            // CALC-6: Only create a new cart entry when effective stock exists.
+            // Scanning a fully-locked product (quantity > 0 but all locked) would otherwise
+            // insert a ghost entry with qty=0 and line_total=₱0 that the cashier can't use.
             if (!isset($_SESSION['cart'][$pid])) {
-                $_SESSION['cart'][$pid] = [
-                    'name' => $product['name'],
-                    'qty' => 0
-                ];
+                if ($effective_qty <= 0) {
+                    $skip_locked = true; // Signal not-found to the barcode scan indicator
+                } else {
+                    $_SESSION['cart'][$pid] = [
+                        'name' => $product['name'],
+                        'qty'  => 0,
+                    ];
+                }
             }
 
             // 2. Handle Quantity Actions
-            if ($action === 'add' || $action === 'plus') {
+            if ($skip_locked) {
+                // No usable stock — skip all cart mutations
+            }
+            elseif ($action === 'add' || $action === 'plus') {
                 if ($_SESSION['cart'][$pid]['qty'] < $effective_qty) {
                     $_SESSION['cart'][$pid]['qty']++;
                 }
@@ -142,6 +153,6 @@ foreach ($_SESSION['cart'] as $id => $item) {
 echo json_encode([
     'cart'     => $cart_rows,
     'subtotal' => number_format($subtotal, 2),
-    'found'    => isset($pid) && $pid > 0,
+    'found'    => !$skip_locked && isset($pid) && $pid > 0,
 ]);
 exit();
