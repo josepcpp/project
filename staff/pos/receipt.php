@@ -3,7 +3,7 @@ include '../layout_top.php';
 $r = $_SESSION['receipt'] ?? null;
 
 if (!$r) {
-    echo "<script>window.location.href='pos.php';</script>";
+    echo "<script>window.location.href='/project/staff/pos/pos.php';</script>";
     exit();
 }
 ?>

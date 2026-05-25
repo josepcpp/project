@@ -2,6 +2,11 @@
 include '../../config/db.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
+if (!isset($_SESSION['user_id'])) {
+    header("Location: /project/auth/login.php");
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     $pid = intval($_POST['id'] ?? 0);
@@ -51,7 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             elseif ($action === 'bulk_set') {
-                $qty_to_set = intval($_POST['qty_override'] ?? 1);
+                $qty_to_set = max(0, intval($_POST['qty_override'] ?? 1));
                 $_SESSION['cart'][$pid]['qty'] = min($qty_to_set, $effective_qty);
             }
             elseif ($action === 'bulk_add') {

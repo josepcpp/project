@@ -95,7 +95,7 @@ try {
 
     // 6. Process Items
     foreach ($_SESSION['cart'] as $pid => $item) {
-        $p_query = $conn->prepare("SELECT name, quantity FROM products WHERE id = ?");
+        $p_query = $conn->prepare("SELECT name, quantity, barcode FROM products WHERE id = ?");
         $p_query->bind_param("i", $pid);
         $p_query->execute();
         $product_data = $p_query->get_result()->fetch_assoc();

@@ -27,8 +27,8 @@ if (isset($_POST['barcode'])) {
 
         $_SESSION['delivery_cart'][$pid] = [
             'name'  => $p['name'],
-            'qty'   => $_POST['qty'],
-            'price' => $_POST['price']
+            'qty'   => intval($_POST['qty']      ?? 0),
+            'price' => floatval($_POST['price']  ?? 0)
         ];
     }
 }

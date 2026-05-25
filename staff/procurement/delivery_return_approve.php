@@ -8,7 +8,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 if (empty($_POST['csrf_token']) || $_POST['csrf_token'] !== ($_SESSION['csrf_token'] ?? '')) {
-    header("Location: refund_management.php?tab=queue&error=" . urlencode("Security token mismatch. Please try again."));
+    header("Location: ../sales/refund_management.php?tab=queue&error=" . urlencode("Security token mismatch. Please try again."));
     exit();
 }
 
@@ -56,7 +56,7 @@ if ($action === 'reject') {
         exit();
     }
 
-    header("Location: refund_management.php?tab=queue&success=" . urlencode("Return request #{$request_id} has been rejected."));
+    header("Location: ../sales/refund_management.php?tab=queue&success=" . urlencode("Return request #{$request_id} has been rejected."));
     exit();
 }
 
@@ -141,7 +141,7 @@ try {
         $log->execute();
     }
 
-    header("Location: refund_management.php?tab=queue&success=" . urlencode("Ticket {$ticket_no} generated. Return processed successfully.") . "&ticket=" . urlencode($ticket_no) . "&view_id={$request_id}");
+    header("Location: ../sales/refund_management.php?tab=queue&success=" . urlencode("Ticket {$ticket_no} generated. Return processed successfully.") . "&ticket=" . urlencode($ticket_no) . "&view_id={$request_id}");
 } catch (\Throwable $e) {
     $conn->rollback();
     header("Location: {$back_url}&error=" . urlencode($e->getMessage()));

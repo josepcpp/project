@@ -6,7 +6,7 @@ $user_id = $_SESSION['user_id'] ?? null;
 $role    = strtolower($_SESSION['role'] ?? '');
 
 if (!$user_id) {
-    header("Location: ../../index.php");
+    header("Location: /project/auth/login.php");
     exit();
 }
 

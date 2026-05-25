@@ -4,7 +4,7 @@ include '../../config/settings.php';
 include '../layout_top.php';
 
 if (empty($_SESSION['cart'])) {
-    echo "<script>window.location.href='pos.php';</script>";
+    echo "<script>window.location.href='/project/staff/pos/pos.php';</script>";
     exit();
 }
 

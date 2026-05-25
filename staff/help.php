@@ -98,8 +98,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($ajax) { header('Content-Type: application/json'); echo json_encode(['success'=>false,'error'=>'Could not send reply.']); exit(); }
         // B2: correct redirect when tid may be 0
-        $ep = $tid > 0 ? "help.php?ticket_id={$tid}" : "help.php";
-        header("Location: {$ep}&error=" . urlencode("Could not send reply."));
+        $ep = $tid > 0 ? "help.php?ticket_id={$tid}&error=" : "help.php?error=";
+        header("Location: {$ep}" . urlencode("Could not send reply."));
         exit();
     }
 

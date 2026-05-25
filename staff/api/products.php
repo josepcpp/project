@@ -1,5 +1,5 @@
 <?php
-include '../config/db.php';
+include '../../config/db.php';
 
 $result = $conn->query("
     SELECT id, name, barcode, price, quantity

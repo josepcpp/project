@@ -218,7 +218,7 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo $page_title; ?> | Business ERP</title>
-    <link rel="stylesheet" href="../assets/css/style.css?v=<?= $sys_version ?>">
+    <link rel="stylesheet" href="/project/assets/css/style.css?v=<?= $sys_version ?>">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=Playfair+Display:wght@700;900&display=swap" rel="stylesheet">
     <style>

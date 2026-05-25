@@ -2,10 +2,10 @@
 include '../../includes/auth_check.php';
 include '../../config/db.php';
 
-$barcode  = trim($_POST['barcode']);
-$name     = trim($_POST['name']);
-$price    = floatval($_POST['price']);
-$quantity = intval($_POST['quantity']);
+$barcode  = trim($_POST['barcode']  ?? '');
+$name     = trim($_POST['name']     ?? '');
+$price    = floatval($_POST['price']    ?? 0);
+$quantity = intval($_POST['quantity']   ?? 0);
 
 $stmt = $conn->prepare("SELECT id FROM products WHERE barcode = ?");
 $stmt->bind_param("s", $barcode);
