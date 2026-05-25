@@ -138,7 +138,14 @@ if ($action === 'approve' || $action === 'override') {
 
         // Restock if applicable
         if ($disposition === DISP_RESTOCK) {
-            $up_p = $conn->prepare("UPDATE products SET quantity = quantity + ?, status = '" . PRODUCT_ACTIVE . "' WHERE id = ?");
+            // RR-4: only restore status to ACTIVE when qty was 0 (auto-archived); don't touch deliberately-archived products
+            $up_p = $conn->prepare(
+                "UPDATE products
+                 SET quantity = quantity + ?,
+                     status   = IF(quantity = 0, '" . PRODUCT_ACTIVE . "', status),
+                     archived_at = IF(quantity = 0, NULL, archived_at)
+                 WHERE id = ?"
+            );
             $up_p->bind_param("ii", $refund_qty, $product_id);
             $up_p->execute();
         }

@@ -69,7 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($new_qty === 0) {
                     unset($_SESSION['cart'][$pid]);
                 } else {
-                    $_SESSION['cart'][$pid]['qty'] = min($new_qty, $effective_qty);
+                    $capped = min($new_qty, $effective_qty);
+                    if ($capped === 0) { unset($_SESSION['cart'][$pid]); }
+                    else { $_SESSION['cart'][$pid]['qty'] = $capped; }
                 }
             }
             elseif ($action === 'minus') {

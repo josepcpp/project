@@ -52,6 +52,7 @@ if($disc_q) {
                 </div>
                 <!-- Hidden inputs for backend processing -->
                 <input type="hidden" name="total" id="final-total-hidden" value="<?= $subtotal ?>">
+                <input type="hidden" name="tax_enabled" id="tax-enabled-hidden" value="1">
             </div>
 
             <!-- ⚙️ TAX SWITCH (Feature 10) -->
@@ -222,6 +223,7 @@ function updateTotals() {
     detailText.innerHTML = info;
 
     hiddenInput.value = finalTotal.toFixed(2);
+    document.getElementById('tax-enabled-hidden').value = isTaxOn ? '1' : '0';
 
     // Sync amount if digital
     if(document.querySelector('input[name="payment_mode"]:checked').value !== PAY_CASH) {

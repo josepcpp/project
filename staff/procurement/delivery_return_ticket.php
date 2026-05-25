@@ -10,7 +10,7 @@ $rq->bind_param("i", $id); $rq->execute();
 $req = $rq->get_result()->fetch_assoc();
 
 if (!$req) {
-    header("Location: ../sales/refund_management.php?tab=dr_queue");
+    header("Location: ../sales/refund_management.php?tab=queue");
     exit();
 }
 
@@ -38,7 +38,7 @@ include '../layout_top.php';
 
     <!-- Action bar -->
     <div class="flex items-center justify-between mb-6 no-print">
-        <button onclick="navigate('../sales/refund_management.php?tab=dr_queue')"
+        <button onclick="navigate('../sales/refund_management.php?tab=queue')"
             class="flex items-center gap-2 text-slate-400 hover:text-slate-700 font-black text-sm uppercase transition-all">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/></svg>
             Back to Queue

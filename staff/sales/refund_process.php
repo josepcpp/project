@@ -69,12 +69,18 @@ try {
     $items_q->execute();
     $rows = $items_q->get_result()->fetch_all(MYSQLI_ASSOC);
 
+    // RR-1: account for already-processed refunds to block double-refunding
+    $already_q = $conn->prepare("SELECT COALESCE(SUM(qty), 0) AS already FROM refunds WHERE sale_id = ? AND product_id = ? AND status != '" . REFUND_REJECTED . "'");
+    $already_q->bind_param("ii", $sale_id, $product_id);
+    $already_q->execute();
+    $already_refunded = intval($already_q->get_result()->fetch_assoc()['already'] ?? 0);
+
     $new_raw_subtotal = 0;
     foreach ($rows as $row) {
         $qty = intval($row['qty']);
         if (intval($row['product_id']) === $product_id) {
-            $qty -= $refund_qty;
-            if ($qty < 0) throw new Exception("Cannot refund more units than purchased.");
+            $qty -= ($refund_qty + $already_refunded);
+            if ($qty < 0) throw new Exception("Cannot refund more units than were purchased or have already been refunded.");
         }
         if ($row['bulk_qty_full'] > 0 && $qty >= $row['bulk_qty_full']) {
             $extra = $qty - $row['bulk_qty_full'];
@@ -130,7 +136,14 @@ try {
 
     // Restock if applicable
     if ($disposition === 'restock') {
-        $up_p = $conn->prepare("UPDATE products SET quantity = quantity + ?, status = '" . PRODUCT_ACTIVE . "' WHERE id = ?");
+        // RR-4: only restore status to ACTIVE when qty was 0 (auto-archived); don't touch deliberately-archived products
+        $up_p = $conn->prepare(
+            "UPDATE products
+             SET quantity = quantity + ?,
+                 status   = IF(quantity = 0, '" . PRODUCT_ACTIVE . "', status),
+                 archived_at = IF(quantity = 0, NULL, archived_at)
+             WHERE id = ?"
+        );
         $up_p->bind_param("ii", $refund_qty, $product_id);
         $up_p->execute();
     }

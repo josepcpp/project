@@ -84,7 +84,7 @@ try {
         $return_qty = intval($item['qty']);
 
         // Validate stock
-        $pq = $conn->prepare("SELECT name, quantity, price FROM products WHERE id = ? AND supplier_id = ?");
+        $pq = $conn->prepare("SELECT name, quantity, price FROM products WHERE id = ? AND supplier_id = ? FOR UPDATE");
         $pq->bind_param("ii", $product_id, $req['supplier_id']); $pq->execute();
         $product = $pq->get_result()->fetch_assoc();
 

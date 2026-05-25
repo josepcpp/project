@@ -160,7 +160,7 @@ if ($active_tab === 'sales' && $receipt_query) {
                    COALESCE((SELECT SUM(r.qty) FROM refunds r
                              WHERE r.sale_id = si.sale_id
                                AND r.product_id = si.product_id
-                               AND r.status = '" . REFUND_PENDING . "'), 0) AS total_refunded
+                               AND r.status != '" . REFUND_REJECTED . "'), 0) AS total_refunded
             FROM sales_items si
             JOIN products p ON si.product_id = p.id
             WHERE si.sale_id = ?

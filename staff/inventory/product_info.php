@@ -61,6 +61,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $name        = trim($_POST['name']);
     $barcode     = trim($_POST['barcode']);
     $qty         = intval($_POST['quantity']);
+    if (empty($_SESSION['active_batch_id'])) {
+        header("Location: product_info.php?error=" . urlencode("Session expired. Please select a batch again."));
+        exit();
+    }
     $sup_id      = intval($_SESSION['active_batch_id']);
     $category    = $_POST['category'] ?? 'General';
     $no_expiry   = ($_POST['no_expiry'] ?? '0') === '1';
@@ -251,8 +255,8 @@ $shipments = $conn->query("SELECT id, name, invoice_number, created_at FROM supp
                     <div class="bg-emerald-500 p-4 rounded-3xl shadow-lg"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg></div>
                     <div>
                         <p class="text-[10px] font-black text-emerald-400 uppercase tracking-widest opacity-80 mb-1">RECORDING ENTRIES FOR</p>
-                        <h4 class="text-3xl font-black leading-none"><?= $_SESSION['active_batch_name'] ?></h4>
-                        <code class="text-slate-500 font-mono text-xs mt-3 block uppercase tracking-widest">ID: <?= $_SESSION['active_invoice'] ?></code>
+                        <h4 class="text-3xl font-black leading-none"><?= htmlspecialchars($_SESSION['active_batch_name'] ?? '') ?></h4>
+                        <code class="text-slate-500 font-mono text-xs mt-3 block uppercase tracking-widest">ID: <?= htmlspecialchars($_SESSION['active_invoice'] ?? '') ?></code>
                     </div>
                 </div>
             </div>
@@ -399,7 +403,7 @@ async function onBarcodeKeydown(e) {
     const val = (document.getElementById('p_barcode').value || '').trim();
     if (!val) { document.getElementById('p_name').focus(); return; }
     try {
-        const res  = await fetch(`api/get_product_suggestion.php?barcode=${encodeURIComponent(val)}`);
+        const res  = await fetch(`/project/staff/api/get_product_suggestion.php?barcode=${encodeURIComponent(val)}`);
         const item = await res.json();
         if (item) {
             document.getElementById('p_name').value = item.name;
@@ -421,18 +425,22 @@ async function showSuggestions(val) {
     const box = document.getElementById('suggestionsBox');
     if (val.length < 2) { box.classList.add('hidden'); return; }
     try {
-        const res  = await fetch(`api/get_product_suggestion.php?q=${encodeURIComponent(val)}`);
+        const res  = await fetch(`/project/staff/api/get_product_suggestion.php?q=${encodeURIComponent(val)}`);
         const data = await res.json();
         if (data.length > 0) {
+            function _esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
             box.innerHTML = data.map(item => {
                 const badge  = item.status === 'archived'
                     ? `<span class="text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-400 px-2 py-0.5 rounded ml-1">archived</span>` : '';
-                const expiry = item.expiry_date ? ` · exp ${item.expiry_date}` : '';
-                return `<div class="suggestion-item" onclick='selectItem(${JSON.stringify(item)})'>
-                    <span class="name">${item.name}${badge}</span>
-                    <span class="meta">${item.barcode} | ${item.category}${expiry}</span>
+                const expiry = item.expiry_date ? ` · exp ${_esc(item.expiry_date)}` : '';
+                return `<div class="suggestion-item">
+                    <span class="name">${_esc(item.name)}${badge}</span>
+                    <span class="meta">${_esc(item.barcode)} | ${_esc(item.category)}${expiry}</span>
                 </div>`;
             }).join('');
+            box.querySelectorAll('.suggestion-item').forEach((el, idx) => {
+                el.addEventListener('click', () => selectItem(data[idx]));
+            });
             box.classList.remove('hidden');
         } else { box.classList.add('hidden'); }
     } catch(_) { box.classList.add('hidden'); }
@@ -447,13 +455,21 @@ function selectItem(item) {
     showSyncNotice();
 }
 
+document.addEventListener('click', function(e) {
+    const box   = document.getElementById('suggestionsBox');
+    const input = document.getElementById('p_name');
+    if (box && input && !box.contains(e.target) && e.target !== input) {
+        box.classList.add('hidden');
+    }
+});
+
 async function triggerAutoSync() {
     setTimeout(async () => {
         const name   = document.getElementById('p_name').value;
         const barBox = document.getElementById('p_barcode');
         if (!name || barBox.value) return;
         try {
-            const res  = await fetch(`api/check_duplicate.php?name=${encodeURIComponent(name)}&barcode=FETCH`);
+            const res  = await fetch(`/project/staff/api/check_duplicate.php?name=${encodeURIComponent(name)}&barcode=FETCH`);
             const data = await res.json();
             if (data.exists) {
                 barBox.value = data.old_barcode;
