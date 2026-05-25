@@ -679,15 +679,17 @@ function _updateStatusBadge(newStatus) {
 
 // ── background polling ────────────────────────────────────────────────────────
 const _pollThread = document.getElementById('message-thread');
-let   _pollTimer  = null;
 let   _lastId     = _pollThread ? parseInt(_pollThread.dataset.lastId || '0', 10) : 0;
+
+// Kill any zombie interval from a previous render of this page
+if (window._helpPollTimer) { clearInterval(window._helpPollTimer); window._helpPollTimer = null; }
 
 if (_pollThread && _pollThread.dataset.ticketId) {
     const _ticketId = _pollThread.dataset.ticketId;
     const _myId     = parseInt(_pollThread.dataset.myId || '0', 10);
 
     function _poll() {
-        fetch(`help.php?action=poll&ticket_id=${_ticketId}&last_id=${_lastId}`)
+        fetch(`/project/staff/help.php?action=poll&ticket_id=${_ticketId}&last_id=${_lastId}`)
             .then(r => r.json())
             .then(data => {
                 if (!data.messages || !data.messages.length) return;
@@ -705,13 +707,15 @@ if (_pollThread && _pollThread.dataset.ticketId) {
             .catch(() => {}); // silent — network blip
     }
 
-    function _startPolling() { _pollTimer = setInterval(_poll, 2500); }
-    function _stopPolling()  { clearInterval(_pollTimer); }
+    function _startPolling() { window._helpPollTimer = setInterval(_poll, 2500); }
+    function _stopPolling()  { clearInterval(window._helpPollTimer); window._helpPollTimer = null; }
 
     _startPolling();
-    document.addEventListener('visibilitychange', () => {
-        document.hidden ? _stopPolling() : (_startPolling(), _poll());
-    });
+
+    // Remove any stale visibilitychange handler from a previous render before adding a fresh one
+    if (window._helpVisHandler) document.removeEventListener('visibilitychange', window._helpVisHandler);
+    window._helpVisHandler = () => { document.hidden ? _stopPolling() : (_startPolling(), _poll()); };
+    document.addEventListener('visibilitychange', window._helpVisHandler);
 }
 
 // ── reply textarea: auto-resize + Enter-to-send ───────────────────────────────
@@ -736,7 +740,7 @@ if (_replyTA) {
 if (_replyForm) {
     _replyForm.addEventListener('submit', function (e) {
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation(); // prevent SPA global handler from also intercepting this
         const textarea = this.querySelector('textarea[name="message"]');
         const sendBtn  = this.querySelector('button[type="submit"]');
         if (!textarea.value.trim()) return;
@@ -750,7 +754,7 @@ if (_replyForm) {
             '<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>' +
             '<span>Sending</span>';
 
-        fetch('help.php', {
+        fetch('/project/staff/help.php', {
             method:  'POST',
             body:    new FormData(this),
             headers: { 'X-Support-Ajax': '1' }
