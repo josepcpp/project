@@ -8,6 +8,24 @@ $_SESSION['cart'] = $_SESSION['cart'] ?? [];
  * 1. LOGIC: FETCH DATA
  */
 $categories = $conn->query("SELECT DISTINCT category FROM products WHERE status = '" . PRODUCT_ACTIVE . "'");
+
+// F-14: Tax display mode (exclusive = default, inclusive = VAT already embedded)
+$tdm_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='tax_display_mode' LIMIT 1");
+$tax_display_mode = $tdm_q ? ($tdm_q->fetch_assoc()['setting_value'] ?? 'exclusive') : 'exclusive';
+
+// F-13: Active bundles with a quick item summary for the POS panel
+$bundles_q = $conn->query("
+    SELECT b.id, b.name, b.bundle_price, b.description,
+           GROUP_CONCAT(CONCAT(bi.qty,'× ',p.name) ORDER BY bi.id SEPARATOR ', ') AS items_summary,
+           ROUND(SUM(p.price * bi.qty) - b.bundle_price, 2) AS savings
+    FROM bundles b
+    JOIN bundle_items bi ON bi.bundle_id = b.id
+    JOIN products p ON p.id = bi.product_id AND p.status = '" . PRODUCT_ACTIVE . "'
+    WHERE b.is_active = 1
+    GROUP BY b.id, b.name, b.bundle_price, b.description
+    HAVING COUNT(bi.id) >= 2
+    ORDER BY b.name ASC
+");
 $cur_cat = $_GET['category'] ?? 'All';
 
 $cat_filter = $cur_cat !== 'All' ? " AND p.category = '" . $conn->real_escape_string($cur_cat) . "'" : "";
@@ -53,13 +71,18 @@ $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
         ORDER BY p_agg.name ASC";
 $products = $conn->query($sql);
 
-// Calculate Subtotal (No VAT Tax as requested)
+// Calculate Subtotal and bundle discount (bundle savings shown in cart sidebar)
 $subtotal = 0;
 if(!empty($_SESSION['cart'])) {
     foreach($_SESSION['cart'] as $item) {
         $subtotal += $item['line_total'] ?? ($item['price'] * $item['qty']);
     }
 }
+$bundle_discount_display = 0.0;
+foreach (($_SESSION['bundle_discounts'] ?? []) as $bd) {
+    $bundle_discount_display += floatval($bd['amount']);
+}
+$bundle_discount_display = min($bundle_discount_display, $subtotal); // can't exceed subtotal
 ?>
 
 <div class="flex flex-col lg:flex-row gap-6 h-[calc(100vh-120px)] w-full animate-in">
@@ -88,6 +111,39 @@ if(!empty($_SESSION['cart'])) {
             </div>
         </div>
 
+        <?php if ($bundles_q && $bundles_q->num_rows > 0): ?>
+        <!-- F-13: Bundle Deals Panel -->
+        <div class="bg-white rounded-[2rem] border border-slate-100 shadow-sm shrink-0">
+            <button onclick="toggleBundlePanel()" class="w-full flex items-center justify-between px-5 py-3 text-left">
+                <div class="flex items-center gap-2">
+                    <span class="text-[9px] font-black text-violet-600 bg-violet-50 border border-violet-200 px-2.5 py-1 rounded-full uppercase tracking-widest">🎁 Bundle Deals</span>
+                    <span id="bundle-panel-count" class="text-[9px] font-black text-slate-400"><?= $bundles_q->num_rows ?> available</span>
+                </div>
+                <svg id="bundle-chevron" class="w-4 h-4 text-slate-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            <div id="bundle-panel" class="hidden border-t border-slate-100 px-5 py-3 flex flex-col gap-2 max-h-52 overflow-y-auto no-scrollbar">
+                <?php $bundles_q->data_seek(0); while ($bun = $bundles_q->fetch_assoc()): ?>
+                <div class="flex items-center gap-3 py-2 border-b border-slate-50 last:border-0">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($bun['name']) ?></span>
+                            <?php if (floatval($bun['savings']) > 0): ?>
+                                <span class="text-[8px] font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">Save ₱<?= number_format($bun['savings'], 2) ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <p class="text-[10px] text-slate-400 truncate mt-0.5"><?= htmlspecialchars($bun['items_summary']) ?></p>
+                    </div>
+                    <span class="font-black text-slate-900 text-base shrink-0">₱<?= number_format($bun['bundle_price'], 2) ?></span>
+                    <button onclick="addBundle(<?= $bun['id'] ?>, <?= htmlspecialchars(json_encode($bun['name'])) ?>)"
+                            class="shrink-0 px-3 py-1.5 bg-violet-500 text-white rounded-xl font-black text-[9px] uppercase tracking-wider hover:bg-violet-600 active:scale-95 transition-all shadow-sm">
+                        Add
+                    </button>
+                </div>
+                <?php endwhile; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <!-- Product List -->
         <div class="flex-1 flex flex-col overflow-hidden bg-white rounded-[2rem] border border-slate-100 shadow-sm">
 
@@ -95,7 +151,12 @@ if(!empty($_SESSION['cart'])) {
             <div class="flex items-center gap-3 px-5 py-2.5 border-b border-slate-100 bg-slate-50/60 shrink-0">
                 <span class="flex-1 text-[9px] font-black text-slate-300 uppercase tracking-widest">Product</span>
                 <span class="w-20 text-center text-[9px] font-black text-slate-300 uppercase tracking-widest">Stock</span>
-                <span class="w-24 text-right text-[9px] font-black text-slate-300 uppercase tracking-widest">Price</span>
+                <span class="w-24 text-right text-[9px] font-black text-slate-300 uppercase tracking-widest">
+                    Price
+                    <?php if ($tax_display_mode === 'inclusive'): ?>
+                        <span class="block text-[7px] text-violet-400 font-bold normal-case tracking-normal mt-0.5">incl. VAT</span>
+                    <?php endif; ?>
+                </span>
                 <span class="w-[88px] text-center text-[9px] font-black text-slate-300 uppercase tracking-widest">Bulk</span>
                 <span class="w-9"></span>
             </div>
@@ -228,9 +289,18 @@ if(!empty($_SESSION['cart'])) {
 
         <!-- 💰 FOOTER: PROPORTIONATE (Reduced size) -->
         <div class="p-6 bg-slate-900 text-white rounded-t-[3.5rem] shadow-2xl">
+            <!-- Bundle savings row — hidden when no bundles in cart -->
+            <div id="bundle-savings-row" class="<?= $bundle_discount_display > 0 ? '' : 'hidden' ?> flex justify-between items-center px-2 mb-2">
+                <span class="text-violet-400 text-[9px] font-black uppercase tracking-widest">🎁 Bundle Savings</span>
+                <span id="bundle-savings-amt" class="text-violet-400 font-black text-sm">−₱<?= number_format($bundle_discount_display, 2) ?></span>
+            </div>
             <div class="flex justify-between items-center mb-6 px-2">
-                <span class="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Subtotal <span class="text-slate-600 normal-case font-bold">(+tax at checkout)</span></span>
-                <h2 id="cart-total" class="text-3xl font-black text-emerald-400 tracking-tighter">₱<?= number_format($subtotal, 2) ?></h2>
+                <?php if ($tax_display_mode === 'inclusive'): ?>
+                    <span class="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Subtotal <span class="text-violet-400 normal-case font-bold">(VAT incl.)</span></span>
+                <?php else: ?>
+                    <span class="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Subtotal <span class="text-slate-600 normal-case font-bold">(+tax at checkout)</span></span>
+                <?php endif; ?>
+                <h2 id="cart-total" class="text-3xl font-black text-emerald-400 tracking-tighter">₱<?= number_format($subtotal - $bundle_discount_display, 2) ?></h2>
             </div>
             <a href="checkout.php" class="block w-full bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black py-4 rounded-2xl text-center shadow-lg transition-all uppercase tracking-widest text-xs">
                 PROCEED TO CHECKOUT
@@ -259,8 +329,10 @@ function cartAction(fd) {
 }
 
 function renderCart(data) {
-    var cartEl   = document.getElementById('cart-items');
-    var totalEl  = document.getElementById('cart-total');
+    var cartEl      = document.getElementById('cart-items');
+    var totalEl     = document.getElementById('cart-total');
+    var savingsRow  = document.getElementById('bundle-savings-row');
+    var savingsAmt  = document.getElementById('bundle-savings-amt');
 
     if (!data.cart || data.cart.length === 0) {
         cartEl.innerHTML =
@@ -290,7 +362,12 @@ function renderCart(data) {
         }).join('');
     }
 
-    if (totalEl) totalEl.textContent = '₱' + data.subtotal;
+    // Show/hide bundle savings row and update displayed subtotal
+    var bd = parseFloat((data.bundle_discount || '0').replace(/,/g, ''));
+    if (savingsRow) savingsRow.classList.toggle('hidden', bd <= 0);
+    if (savingsAmt) savingsAmt.textContent = '−₱' + (data.bundle_discount || '0.00');
+    if (totalEl)    totalEl.textContent = '₱' + (data.display_subtotal || data.subtotal);
+
     var wasScan = _scanPending;
     _scanPending = false;
     focusScanField();
@@ -373,6 +450,44 @@ function onScanKeydown(e) {
 }
 
 focusScanField();
+
+// ── BUNDLE DEALS ──────────────────────────────────────────────────────────────
+// GAP-18: restore panel open state across category navigations
+(function() {
+    var panel   = document.getElementById('bundle-panel');
+    var chevron = document.getElementById('bundle-chevron');
+    if (!panel) return;
+    if (sessionStorage.getItem('bundle_panel_open') === '1') {
+        panel.classList.remove('hidden');
+        if (chevron) chevron.style.transform = 'rotate(180deg)';
+    }
+})();
+
+function toggleBundlePanel() {
+    var panel   = document.getElementById('bundle-panel');
+    var chevron = document.getElementById('bundle-chevron');
+    if (!panel) return;
+    var isHidden = panel.classList.toggle('hidden');
+    sessionStorage.setItem('bundle_panel_open', isHidden ? '0' : '1');
+    if (chevron) chevron.style.transform = isHidden ? '' : 'rotate(180deg)';
+}
+
+function addBundle(bundleId, bundleName) {
+    var fd = new FormData();
+    fd.append('action', 'bundle_add');
+    fd.append('bundle_id', bundleId);
+    fetch('pos_process.php', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok === false) {
+                showFlash(data.msg || 'Could not add bundle.', 'error');
+                return;
+            }
+            renderCart(data);
+            showFlash('Bundle "' + esc(bundleName) + '" added to cart.', 'success');
+        })
+        .catch(function(e) { console.error('Bundle error:', e); showFlash('Bundle add failed.', 'error'); });
+}
 </script>
 
 <?php include '../layout_bottom.php'; ?>

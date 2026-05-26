@@ -20,9 +20,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $scope              = in_array($_POST['scope'] ?? '', ['store','product','category']) ? $_POST['scope'] : 'store';
         $target_product_id  = ($scope === 'product')  ? intval($_POST['target_product_id'] ?? 0) : null;
         $target_category    = ($scope === 'category') ? trim($_POST['target_category'] ?? '') : null;
+        // F-09: conflict resolution fields
+        $priority           = intval($_POST['priority']      ?? 0);
+        $conflict_rule      = in_array($_POST['conflict_rule'] ?? '', ['best_for_customer','priority_order','stack']) ? $_POST['conflict_rule'] : 'best_for_customer';
 
-        $stmt = $conn->prepare("INSERT INTO discounts (name, promo_code, type, value, is_active, usage_limit, start_date, end_date, scope, target_product_id, target_category) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("sssdisssis", $name, $promo_code, $type, $val, $max_uses, $start_date, $end_date, $scope, $target_product_id, $target_category);
+        $stmt = $conn->prepare("INSERT INTO discounts (name, promo_code, type, value, is_active, usage_limit, start_date, end_date, scope, target_product_id, target_category, priority, conflict_rule) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("sssdisssissis", $name, $promo_code, $type, $val, $max_uses, $start_date, $end_date, $scope, $target_product_id, $target_category, $priority, $conflict_rule);
 
         if ($stmt->execute()) {
             $limit_note  = $max_uses > 0 ? " (limit: {$max_uses} uses)" : " (unlimited uses)";
@@ -137,7 +140,21 @@ $today = date('Y-m-d');
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div class="md:col-span-3 md:col-start-10">
+                <!-- F-09: Priority & conflict rule -->
+                <div class="md:col-span-2">
+                    <label class="label-modern ml-2">Priority <span class="text-slate-300 font-normal normal-case">(higher = preferred)</span></label>
+                    <input type="number" name="priority" min="0" value="0" placeholder="0"
+                           class="input-modern font-black text-slate-700">
+                </div>
+                <div class="md:col-span-3">
+                    <label class="label-modern ml-2">Conflict Rule</label>
+                    <select name="conflict_rule" class="input-modern cursor-pointer" title="What happens when multiple promos apply">
+                        <option value="best_for_customer">Best for Customer (highest discount wins)</option>
+                        <option value="priority_order">Priority Order (use highest priority)</option>
+                        <option value="stack">Stack All (add all applicable discounts)</option>
+                    </select>
+                </div>
+                <div class="md:col-span-2 md:col-start-11">
                     <button type="submit" class="btn-pos-primary w-full shadow-lg shadow-amber-200">ADD PROMO</button>
                 </div>
             </div>

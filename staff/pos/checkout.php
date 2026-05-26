@@ -29,13 +29,38 @@ foreach ($_SESSION['cart'] as $pid => $item) {
 }
 $tax_rate = TAX_RATE;
 
+// F-11: Load price rounding rule from settings
+$rounding_rule = 'none';
+$rr_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='price_rounding_rule' LIMIT 1");
+if ($rr_q && $rr_row = $rr_q->fetch_assoc()) $rounding_rule = $rr_row['setting_value'] ?? 'none';
+
+// F-14: Load tax display mode
+$tax_display_mode = 'exclusive';
+$tdm_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='tax_display_mode' LIMIT 1");
+if ($tdm_q && $tdm_row = $tdm_q->fetch_assoc()) $tax_display_mode = $tdm_row['setting_value'] ?? 'exclusive';
+
+// F-13: Bundle discount total from session (for JS display)
+$bundle_discount_total_php = 0.0;
+$bundle_names_php = [];
+foreach ($_SESSION['bundle_discounts'] ?? [] as $bd) {
+    $bundle_discount_total_php += floatval($bd['amount']);
+    $bundle_names_php[] = htmlspecialchars($bd['name']) . ($bd['qty'] > 1 ? ' ×'.$bd['qty'] : '');
+}
+
 // Fetch all active promos/discounts (Plural table: discounts)
 $all_discounts = [];
-$disc_q = $conn->query("SELECT * FROM discounts WHERE is_active = 1");
+$disc_q = $conn->query("SELECT * FROM discounts WHERE is_active = 1 ORDER BY priority DESC");
 if($disc_q) {
     while($d = $disc_q->fetch_assoc()) {
         $all_discounts[] = $d;
     }
+}
+
+// F-06: Fetch active customer groups for group-pricing selector
+$all_groups = [];
+$grp_q = $conn->query("SELECT * FROM customer_groups WHERE is_active = 1 ORDER BY name ASC");
+if ($grp_q) {
+    while ($grp = $grp_q->fetch_assoc()) $all_groups[] = $grp;
 }
 ?>
 
@@ -67,7 +92,37 @@ if($disc_q) {
                 <!-- Hidden inputs for backend processing -->
                 <input type="hidden" name="total" id="final-total-hidden" value="<?= $subtotal ?>">
                 <input type="hidden" name="tax_enabled" id="tax-enabled-hidden" value="1">
+                <input type="hidden" name="customer_group_id" id="group-id-hidden" value="0">
+                <!-- Rounding notice (shown when rule != none) -->
+                <p id="rounding-note" class="text-[9px] text-slate-400 font-bold uppercase tracking-widest hidden mt-2"></p>
             </div>
+
+            <!-- 👥 F-06: CUSTOMER GROUP SELECTOR -->
+            <?php if (!empty($all_groups)): ?>
+            <input type="hidden" name="customer_group_id" id="group-id-post" value="0">
+            <div class="space-y-3 pt-2">
+                <label class="label-modern ml-2">Customer Type <span class="text-slate-300 font-normal normal-case">(optional)</span></label>
+                <div class="grid grid-cols-2 gap-3 sm:grid-cols-<?= min(4, count($all_groups) + 1) ?>">
+                    <label class="cursor-pointer">
+                        <input type="radio" name="_group_radio" value="0" checked class="hidden peer" onchange="selectGroup(0,0,'none',0,'')">
+                        <div class="py-3 border-2 border-slate-100 rounded-2xl text-center font-black text-slate-400 text-[10px] uppercase tracking-widest peer-checked:border-slate-900 peer-checked:text-slate-900 peer-checked:bg-slate-50 transition-all">Regular</div>
+                    </label>
+                    <?php foreach ($all_groups as $grp): ?>
+                    <label class="cursor-pointer">
+                        <input type="radio" name="_group_radio" value="<?= $grp['id'] ?>" class="hidden peer"
+                               onchange="selectGroup(<?= $grp['id'] ?>,'<?= htmlspecialchars($grp['discount_type']) ?>',<?= $grp['discount_value'] ?>,'<?= htmlspecialchars($grp['label']) ?>')">
+                        <div class="py-3 border-2 border-slate-100 rounded-2xl text-center font-black text-blue-500 text-[10px] uppercase tracking-widest peer-checked:border-blue-500 peer-checked:bg-blue-50 transition-all">
+                            <?= htmlspecialchars($grp['label'] ?: $grp['name']) ?>
+                            <p class="text-[8px] font-black text-slate-400 mt-0.5">
+                                <?= $grp['discount_type'] === 'Percentage' ? number_format($grp['discount_value'],0).'% off' : '₱'.number_format($grp['discount_value'],2).' off' ?>
+                            </p>
+                        </div>
+                    </label>
+                    <?php endforeach; ?>
+                </div>
+                <p id="group-discount-line" class="text-[11px] font-bold text-blue-600 ml-2 hidden"></p>
+            </div>
+            <?php endif; ?>
 
             <!-- ⚙️ TAX SWITCH (Feature 10) -->
             <div class="flex items-center justify-between bg-slate-50 p-6 rounded-[2rem] border border-slate-100 px-10">
@@ -153,12 +208,114 @@ const PAY_CASH  = <?= json_encode(PAY_METHOD_CASH) ?>;
 const PAY_GCASH = <?= json_encode(PAY_METHOD_GCASH) ?>;
 const PAY_MAYA  = <?= json_encode(PAY_METHOD_MAYA) ?>;
 const DISC_PCT  = <?= json_encode(DISCOUNT_PERCENTAGE) ?>;
+const ROUNDING_RULE        = <?= json_encode($rounding_rule) ?>;
+const TAX_DISPLAY_MODE     = <?= json_encode($tax_display_mode) ?>; // F-14
+const BUNDLE_DISCOUNT_AMT  = <?= (float)$bundle_discount_total_php ?>; // F-13
+const BUNDLE_NAMES         = <?= json_encode(implode(', ', $bundle_names_php)) ?>;
 
+// F-06: Active customer-group state
+let activeGroup = { id: 0, type: 'Fixed', value: 0, label: '' };
 let activeDiscount = { type: 'Fixed', value: 0, scope: 'store', target_product_id: 0, target_category: '' };
 let promoValid = false;
 
+// F-06: Called when cashier picks a customer group radio button
+function selectGroup(id, type, value, label) {
+    activeGroup = { id: parseInt(id)||0, type: type||'Fixed', value: parseFloat(value)||0, label: label||'' };
+    document.getElementById('group-id-hidden').value = activeGroup.id;
+    const post = document.getElementById('group-id-post');
+    if (post) post.value = activeGroup.id;
+    const line = document.getElementById('group-discount-line');
+    if (activeGroup.id > 0 && line) {
+        const disc = activeGroup.type === 'Percentage'
+            ? `${activeGroup.value.toFixed(1)}% off subtotal`
+            : `₱${activeGroup.value.toFixed(2)} flat off`;
+        line.textContent = `${activeGroup.label} discount: ${disc}`;
+        line.classList.remove('hidden');
+    } else if (line) {
+        line.classList.add('hidden');
+    }
+    updateTotals();
+}
+
+// F-11: Apply rounding rule to a total.
+// GAP-20: Mirrors PHP applyRounding() in checkout_process.php — keep both in sync.
+// When adding a new case here, add the identical case to the PHP function.
+function applyRounding(total, rule) {
+    switch (rule) {
+        case 'nearest_25c':   return Math.round(total * 4) / 4;
+        case 'nearest_50c':   return Math.round(total * 2) / 2;
+        case 'nearest_peso':  return Math.round(total);
+        case 'nearest_5peso': return Math.round(total / 5) * 5;
+        default:              return total; // 'none'
+    }
+}
+
+// F-09: Auto-resolve best applicable promo when no code is manually typed.
+// Called on page load to surface the best deal automatically.
+function autoResolvePromos() {
+    const today = new Date().toISOString().slice(0, 10);
+    const afterGroup = Math.max(0, rawSubtotal - (activeGroup.id > 0 && activeGroup.value > 0
+        ? (activeGroup.type === 'Percentage' ? rawSubtotal * activeGroup.value / 100 : Math.min(activeGroup.value, rawSubtotal))
+        : 0));
+
+    // Collect all applicable (active, in-schedule, within usage) promos
+    const applicable = promoDatabase.filter(p => {
+        if (!parseInt(p.is_active)) return false;
+        const limit = parseInt(p.usage_limit) || 0;
+        const used  = parseInt(p.used_count)  || 0;
+        if (limit > 0 && used >= limit) return false;
+        if (p.start_date && today < p.start_date) return false;
+        if (p.end_date   && today > p.end_date)   return false;
+        return true;
+    });
+    if (!applicable.length) return;
+
+    // Compute effective discount amount for each
+    function calcAmt(p) {
+        const discountable = getDiscountableSubtotal({
+            type: p.type, value: parseFloat(p.value),
+            scope: p.scope || 'store',
+            target_product_id: parseInt(p.target_product_id) || 0,
+            target_category: p.target_category || ''
+        }, afterGroup);
+        return p.type === DISC_PCT
+            ? discountable * (parseFloat(p.value) / 100)
+            : Math.min(parseFloat(p.value), discountable);
+    }
+
+    // Determine conflict_rule from the highest-priority applicable promo
+    const sorted  = [...applicable].sort((a,b) => parseInt(b.priority||0) - parseInt(a.priority||0));
+    const topRule = sorted[0]?.conflict_rule || 'best_for_customer';
+
+    let chosen = null;
+    if (topRule === 'priority_order') {
+        chosen = sorted[0]; // highest priority wins
+    } else if (topRule === 'stack') {
+        // Stack: synthesise a virtual discount equal to the sum of all applicable amounts
+        const totalAmt = applicable.reduce((s, p) => s + calcAmt(p), 0);
+        if (totalAmt > 0) {
+            activeDiscount = { type: 'Fixed', value: Math.min(totalAmt, afterGroup), scope: 'store', target_product_id: 0, target_category: '' };
+            promoValid = true;
+        }
+        return;
+    } else {
+        // best_for_customer (default): pick the promo that saves the customer the most
+        chosen = applicable.reduce((best, p) => calcAmt(p) > calcAmt(best) ? p : best, applicable[0]);
+    }
+
+    if (!chosen) return;
+    activeDiscount = {
+        type:              chosen.type,
+        value:             parseFloat(chosen.value),
+        scope:             chosen.scope || 'store',
+        target_product_id: parseInt(chosen.target_product_id) || 0,
+        target_category:   chosen.target_category || '',
+    };
+    promoValid = true;
+}
+
 // Returns the subtotal eligible for the active discount based on its scope
-function getDiscountableSubtotal(discount) {
+function getDiscountableSubtotal(discount, baseSubtotal) {
     if (discount.scope === 'product' && discount.target_product_id) {
         return cartItems.filter(i => i.product_id == discount.target_product_id)
                         .reduce((s, i) => s + i.line_total, 0);
@@ -167,7 +324,7 @@ function getDiscountableSubtotal(discount) {
         return cartItems.filter(i => i.category === discount.target_category)
                         .reduce((s, i) => s + i.line_total, 0);
     }
-    return rawSubtotal; // store-wide
+    return baseSubtotal; // store-wide: applied AFTER group discount
 }
 
 function applyTypedPromo() {
@@ -252,37 +409,78 @@ function applyTypedPromo() {
 }
 
 function updateTotals() {
-    const taxToggle = document.getElementById('tax-toggle');
-    const isTaxOn = taxToggle.checked;
+    const taxToggle  = document.getElementById('tax-toggle');
+    const isTaxOn    = taxToggle.checked;
     const totalDisplay = document.getElementById('display-total');
-    const detailText = document.getElementById('tax-detail-text');
-    const hiddenInput = document.getElementById('final-total-hidden');
-    const cashInput = document.getElementById('cash-input');
+    const detailText   = document.getElementById('tax-detail-text');
+    const hiddenInput  = document.getElementById('final-total-hidden');
+    const cashInput    = document.getElementById('cash-input');
+    let savings = [];
 
-    // 1. Calc Discount (scope-aware)
-    const discountable = getDiscountableSubtotal(activeDiscount);
+    // 1. F-06: Apply group discount first (on raw subtotal)
+    let groupDiscountAmt = 0;
+    if (activeGroup.id > 0 && activeGroup.value > 0) {
+        groupDiscountAmt = (activeGroup.type === 'Percentage')
+            ? rawSubtotal * (activeGroup.value / 100)
+            : Math.min(activeGroup.value, rawSubtotal);
+        savings.push(`<span class="text-blue-500">${activeGroup.label} −₱${groupDiscountAmt.toFixed(2)}</span>`);
+    }
+    let afterGroupSubtotal = Math.max(0, rawSubtotal - groupDiscountAmt);
+
+    // 2. F-13: Apply bundle discount after group discount
+    let afterBundleSubtotal = Math.max(0, afterGroupSubtotal - BUNDLE_DISCOUNT_AMT);
+    if (BUNDLE_DISCOUNT_AMT > 0) savings.push(`<span class="text-orange-500">Bundle −₱${BUNDLE_DISCOUNT_AMT.toFixed(2)}</span>`);
+
+    // 3. F-09 + Existing: Apply promo discount on post-bundle subtotal (scope-aware)
+    const discountable = getDiscountableSubtotal(activeDiscount, afterBundleSubtotal);
     let discountAmt = (activeDiscount.type === DISC_PCT)
         ? (discountable * (activeDiscount.value / 100))
-        : Math.min(activeDiscount.value, discountable); // Fixed discount capped at discountable
-    let runningTotal = Math.max(0, rawSubtotal - discountAmt);
-    
-    // 2. Calc Tax
-    let calculatedTax = isTaxOn ? (runningTotal * taxRate) : 0;
-    let finalTotal = runningTotal + calculatedTax;
+        : Math.min(activeDiscount.value, discountable);
+    if (discountAmt > 0) savings.push(`<span class="text-amber-600">Promo −₱${discountAmt.toFixed(2)}</span>`);
+    let runningTotal = Math.max(0, afterBundleSubtotal - discountAmt);
 
-    // 3. UI Update
-    totalDisplay.innerText = "₱" + finalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    document.getElementById('tax-label').innerText = isTaxOn ? "YES" : "NO";
-    
-    let info = isTaxOn ? `Includes ${(taxRate * 100).toFixed(0)}% Tax (₱${calculatedTax.toFixed(2)})` : "Non-VAT / Tax Exempt";
-    if(discountAmt > 0) info = `<span class="text-amber-600">Saved ₱${discountAmt.toFixed(2)}</span> • ` + info;
+    // 4. F-14: Tax — exclusive (add on top) or inclusive (already embedded)
+    let calculatedTax, preRoundTotal;
+    if (TAX_DISPLAY_MODE === 'inclusive') {
+        // Prices already include VAT
+        calculatedTax = isTaxOn
+            ? runningTotal * (taxRate / (1 + taxRate))   // extract embedded component
+            : 0;
+        preRoundTotal = isTaxOn ? runningTotal : runningTotal / (1 + taxRate); // exempt strips VAT
+    } else {
+        // Exclusive (default): add on top
+        calculatedTax = isTaxOn ? runningTotal * taxRate : 0;
+        preRoundTotal = runningTotal + calculatedTax;
+    }
+
+    // 4. F-11: Price rounding
+    let finalTotal    = applyRounding(preRoundTotal, ROUNDING_RULE);
+    const roundingNote = document.getElementById('rounding-note');
+    if (roundingNote) {
+        if (ROUNDING_RULE !== 'none' && Math.abs(finalTotal - preRoundTotal) > 0.001) {
+            const diff = (finalTotal - preRoundTotal).toFixed(2);
+            roundingNote.textContent = `Rounded ${diff >= 0 ? '+' : ''}${diff} (${ROUNDING_RULE.replace(/_/g,' ')})`;
+            roundingNote.classList.remove('hidden');
+        } else {
+            roundingNote.classList.add('hidden');
+        }
+    }
+
+    // 5. UI Update
+    totalDisplay.innerText = '₱' + finalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    document.getElementById('tax-label').innerText = isTaxOn ? 'YES' : 'NO';
+
+    let info = isTaxOn
+        ? `Includes ${(taxRate * 100).toFixed(0)}% Tax (₱${calculatedTax.toFixed(2)})`
+        : 'Non-VAT / Tax Exempt';
+    if (savings.length) info = savings.join(' • ') + ' • ' + info;
     detailText.innerHTML = info;
 
     hiddenInput.value = finalTotal.toFixed(2);
     document.getElementById('tax-enabled-hidden').value = isTaxOn ? '1' : '0';
 
-    // Sync amount if digital
-    if(document.querySelector('input[name="payment_mode"]:checked').value !== PAY_CASH) {
+    // Sync amount if digital payment
+    if (document.querySelector('input[name="payment_mode"]:checked').value !== PAY_CASH) {
         cashInput.value = finalTotal.toFixed(2);
     }
 }
@@ -305,7 +503,8 @@ function toggleRefField(mode) {
     updateTotals();
 }
 
-// Initial Run
+// Initial Run — F-09: auto-apply best promo before display
+autoResolvePromos();
 updateTotals();
 
 document.getElementById('checkoutForm').addEventListener('submit', function(e) {

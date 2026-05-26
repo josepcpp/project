@@ -211,6 +211,26 @@ define('DEFAULT_SPEED_ANOMALY_MINUTES',    3);    // min time to complete a batc
 define('DEFAULT_SPEED_ANOMALY_MIN_ITEMS',  3);    // min items to trigger speed check
 define('DEFAULT_REPEAT_DISCREPANCY_COUNT', 3);    // error batches before flagging
 
+// ── EXCHANGE STATUS ───────────────────────────────────────────────────────────
+define('EXCHANGE_NONE',    'none');
+define('EXCHANGE_COLLECT', 'collect');
+define('EXCHANGE_REFUND',  'refund');
+
+// ── BACKUP ────────────────────────────────────────────────────────────────────
+define('BACKUP_SUCCESS', 'success');
+define('BACKUP_FAILED',  'failed');
+
+// ── PRICE ROUNDING RULES ──────────────────────────────────────────────────────
+define('ROUND_NONE',          'none');
+define('ROUND_NEAREST_25C',   'nearest_25c');
+define('ROUND_NEAREST_50C',   'nearest_50c');
+define('ROUND_NEAREST_PESO',  'nearest_peso');
+define('ROUND_NEAREST_5PESO', 'nearest_5peso');
+
+// ── ACTIVITY LOG TYPES (Phase 2 additions) ────────────────────────────────────
+define('LOG_EXCHANGE', 'Exchange');
+define('LOG_BACKUP',   'Backup');
+
 // ── VALIDATION RULES ──────────────────────────────────────────────────────────
 define('MIN_USERNAME_LENGTH', 3);
 define('MAX_USERNAME_LENGTH', 50);

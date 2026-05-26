@@ -808,6 +808,19 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                         <?php else: ?><span class="text-slate-200 font-black">—</span><?php endif; ?>
                     </td>
                     <td class="px-6 py-6 text-center">
+                        <?php
+                        $cost = floatval($g['cost_price'] ?? 0);
+                        $margin_pct = ($cost > 0 && $price > 0) ? (($price - $cost) / $cost * 100) : null;
+                        if ($margin_pct !== null):
+                            $m_cls = $margin_pct >= 20 ? 'text-emerald-600 bg-emerald-50' : ($margin_pct >= 5 ? 'text-amber-600 bg-amber-50' : 'text-rose-500 bg-rose-50');
+                        ?>
+                            <span class="text-xs font-black px-2 py-1 rounded-full <?= $m_cls ?>"><?= number_format($margin_pct, 1) ?>%</span>
+                            <p class="text-[9px] text-slate-400 font-bold mt-1">Cost ₱<?= number_format($cost, 2) ?></p>
+                        <?php else: ?>
+                            <span class="text-slate-200 font-black text-sm">—</span>
+                        <?php endif; ?>
+                    </td>
+                    <td class="px-6 py-6 text-center">
                         <?php if ($expiry_raw): ?>
                             <span class="font-bold <?= $expiry_cls ?> text-sm whitespace-nowrap"><?= date('M j, Y', strtotime($expiry_raw)) ?></span>
                             <?php if ($expiry_badge): ?><p class="text-[9px] font-black <?= $expiry_cls ?> uppercase tracking-widest mt-1"><?= $expiry_badge ?></p><?php endif; ?>

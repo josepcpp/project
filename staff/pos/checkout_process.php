@@ -13,17 +13,36 @@ if (empty($_SESSION['cart'])) {
 }
 
 // 2. Collect payment inputs — total is NOT trusted from POST; recalculated server-side (POS-1)
-$cash         = floatval($_POST['cash'] ?? 0);
-$payment_mode = $_POST['payment_mode'] ?? 'Cash';
-$reference_no = !empty($_POST['reference_no']) ? trim($_POST['reference_no']) : null;
-$discount_id  = intval($_POST['discount_id'] ?? 0);
-$promo_typed  = trim($_POST['promo_code'] ?? '');
-$tax_enabled  = intval($_POST['tax_enabled'] ?? 1); // 1 = VAT on, 0 = exempt
+$cash              = floatval($_POST['cash'] ?? 0);
+$payment_mode      = $_POST['payment_mode'] ?? 'Cash';
+$reference_no      = !empty($_POST['reference_no']) ? trim($_POST['reference_no']) : null;
+$discount_id       = intval($_POST['discount_id'] ?? 0);
+$promo_typed       = trim($_POST['promo_code'] ?? '');
+$tax_enabled       = intval($_POST['tax_enabled'] ?? 1); // 1 = VAT on, 0 = exempt
+$customer_group_id = intval($_POST['customer_group_id'] ?? 0); // F-06
 
 $discount_name      = "None";
 $target_discount_id = 0;
 $discount_type      = 'Fixed';
 $discount_value     = 0.0;
+
+// F-11: Load price rounding rule
+$rounding_rule = 'none';
+$rr_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='price_rounding_rule' LIMIT 1");
+if ($rr_q && $rr_row = $rr_q->fetch_assoc()) $rounding_rule = $rr_row['setting_value'] ?? 'none';
+
+// F-11: Rounding helper — mirrors JS applyRounding() in checkout.php.
+// GAP-20: Both implementations MUST stay in sync. When adding a new rounding case
+// here, add the identical case to the JS applyRounding() function in checkout.php.
+function applyRounding(float $total, string $rule): float {
+    switch ($rule) {
+        case 'nearest_25c':   return round($total * 4) / 4;
+        case 'nearest_50c':   return round($total * 2) / 2;
+        case 'nearest_peso':  return round($total);
+        case 'nearest_5peso': return round($total / 5) * 5;
+        default:              return $total;
+    }
+}
 
 $conn->begin_transaction();
 
@@ -141,10 +160,45 @@ try {
         ];
     }
 
-    // 6. Server-side total calculation with scope-aware discount (POS-1)
+    // 6a. F-06: Server-side customer-group discount (applied before promo)
+    $group_discount_amt  = 0.0;
+    $group_discount_name = '';
+    if ($customer_group_id > 0) {
+        $grp_q = $conn->prepare("SELECT name, label, discount_type, discount_value FROM customer_groups WHERE id = ? AND is_active = 1");
+        $grp_q->bind_param("i", $customer_group_id);
+        $grp_q->execute();
+        $grp_row = $grp_q->get_result()->fetch_assoc();
+        if ($grp_row) {
+            $grp_type  = $grp_row['discount_type'];
+            $grp_value = floatval($grp_row['discount_value']);
+            $group_discount_amt = ($grp_type === DISCOUNT_PERCENTAGE)
+                ? ($server_subtotal * ($grp_value / 100))
+                : min($grp_value, $server_subtotal);
+            $group_discount_name = $grp_row['label'] ?: $grp_row['name'];
+        }
+    }
+    $after_group_subtotal = max(0.0, $server_subtotal - $group_discount_amt);
+
+    // 6a-bundle. F-13: Bundle discounts from session — applied after group, before promo.
+    // Each bundle's discount is already pre-computed in pos_process.php (individual_total − bundle_price).
+    // We cap each bundle's discount at the remaining subtotal to prevent negative totals.
+    $bundle_discount_total = 0.0;
+    $bundle_names          = [];
+    foreach (($_SESSION['bundle_discounts'] ?? []) as $bd) {
+        $bundle_discount_total += floatval($bd['amount']);
+        $bundle_names[]         = $bd['name'] . ($bd['qty'] > 1 ? ' ×'.$bd['qty'] : '');
+    }
+    $bundle_discount_total    = min($bundle_discount_total, $after_group_subtotal);
+    $after_bundle_subtotal    = max(0.0, $after_group_subtotal - $bundle_discount_total);
+    if (!empty($bundle_names) && $bundle_discount_total > 0) {
+        $group_discount_name = trim(($group_discount_name ? "$group_discount_name group" : '')
+            . ($group_discount_name ? ' + ' : '')
+            . 'Bundle: ' . implode(', ', $bundle_names));
+    }
+
+    // 6b. Server-side promo discount — applied on post-bundle subtotal, scope-aware (POS-1)
     $discount_amt = 0.0;
     if ($target_discount_id > 0) {
-        // Calculate the discountable subtotal based on scope
         if ($discount_scope === 'product' && $discount_target_product_id > 0) {
             $discountable = 0.0;
             foreach ($items_to_insert as $e) {
@@ -156,27 +210,54 @@ try {
                 if (($e['data']['category'] ?? '') === $discount_target_category) $discountable += $e['line_total'];
             }
         } else {
-            $discountable = $server_subtotal; // store-wide
+            $discountable = $after_bundle_subtotal; // store-wide on post-bundle subtotal
         }
-
         $discount_amt = ($discount_type === DISCOUNT_PERCENTAGE)
-            ? ($discountable * ($discount_value / 100))
-            : min($discount_value, $discountable); // Fixed discount capped at discountable amount
+            ? $discountable * ($discount_value / 100)
+            : min($discount_value, $discountable);
     }
-    $net_subtotal = max(0.0, $server_subtotal - $discount_amt);
-    $tax_amt      = $tax_enabled ? ($net_subtotal * TAX_RATE) : 0.0;
-    $total        = round($net_subtotal + $tax_amt, 2);
+
+    // 6c. Compose readable discount label for the receipt
+    $full_discount_label = trim(
+        ($group_discount_name ? $group_discount_name : '')
+        . ($group_discount_name && $discount_name !== 'None' ? ' + ' : '')
+        . ($discount_name !== 'None' ? $discount_name : '')
+    ) ?: 'None';
+
+    $net_subtotal = max(0.0, $after_bundle_subtotal - $discount_amt);
+
+    // 6d. F-14: Tax calculation — exclusive (default) or inclusive mode
+    // exclusive: tax is added on top of prices → total = net + tax
+    // inclusive: tax is already embedded in prices → total unchanged (VAT ON), or strip VAT (exempt)
+    $tax_display_mode = 'exclusive';
+    $tdm_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='tax_display_mode' LIMIT 1");
+    if ($tdm_q && $tdm_row = $tdm_q->fetch_assoc()) $tax_display_mode = $tdm_row['setting_value'] ?? 'exclusive';
+
+    if ($tax_display_mode === 'inclusive') {
+        // VAT already embedded in every price
+        $tax_amt = $tax_enabled
+            ? $net_subtotal * (TAX_RATE / (1 + TAX_RATE))   // extract embedded VAT for audit
+            : 0.0;
+        $pre_round_total = $tax_enabled ? $net_subtotal : $net_subtotal / (1 + TAX_RATE); // exempt strips it
+    } else {
+        // Exclusive (default): add VAT on top
+        $tax_amt         = $tax_enabled ? $net_subtotal * TAX_RATE : 0.0;
+        $pre_round_total = $net_subtotal + $tax_amt;
+    }
+
+    // 6e. F-11: Apply price rounding rule
+    $total = applyRounding($pre_round_total, $rounding_rule);
 
     // Reject insufficient cash payment (POS-5: underpayment guard)
     if ($payment_mode === PAY_METHOD_CASH && $cash < $total) {
         throw new Exception("Insufficient payment. ₱" . number_format($cash, 2) . " tendered for ₱" . number_format($total, 2) . " total.");
     }
 
-    $change       = max(0.0, $cash - $total); // CALC-4: max() handles ₱0 total correctly on its own
+    $change = max(0.0, $cash - $total); // CALC-4
 
-    // 7. Save sale header
-    $stmt = $conn->prepare("INSERT INTO sales (receipt_no, total, cash, change_amt, payment_mode, reference_no, discount_name) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("sdddsss", $receipt, $total, $cash, $change, $payment_mode, $reference_no, $discount_name);
+    // 7. Save sale header (with group + bundle discount columns F-06/F-13)
+    $stmt = $conn->prepare("INSERT INTO sales (receipt_no, total, cash, change_amt, payment_mode, reference_no, discount_name, customer_group_id, group_discount_amt, bundle_discount_amt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("sdddsssisd", $receipt, $total, $cash, $change, $payment_mode, $reference_no, $full_discount_label, $customer_group_id, $group_discount_amt, $bundle_discount_total);
     $stmt->execute();
     $sale_id = $conn->insert_id;
 
@@ -260,7 +341,8 @@ try {
         'discount'     => $discount_name,
         'date'         => date("M d, Y h:i A"),
     ];
-    $_SESSION['cart'] = [];
+    $_SESSION['cart']             = [];
+    $_SESSION['bundle_discounts'] = []; // F-13: clear bundle discounts with cart
     header("Location: receipt.php");
     exit();
 

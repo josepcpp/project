@@ -10,7 +10,7 @@ if ($conn->connect_error) {
 $conn->set_charset("utf8mb4");
 
 // L-01: run schema migrations only once per version — skipped on every subsequent request
-$_db_version   = '1.4.4';
+$_db_version   = '1.5.2';
 $_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
 if (!file_exists($_db_init_flag)) { try {
 
@@ -308,6 +308,143 @@ $conn->query("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS new_value VARCH
 
 // v1.4.4 — procurement denial reason so staff can see why access was denied
 $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS procurement_denial_reason TEXT DEFAULT NULL");
+
+// ── v1.5.0 — Phase 2 Growth Features ─────────────────────────────────────────
+
+// F-06: Customer-group pricing (employee, wholesale, VIP, etc.)
+$conn->query("CREATE TABLE IF NOT EXISTS customer_groups (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    name           VARCHAR(100) NOT NULL,
+    label          VARCHAR(50)  NOT NULL,
+    discount_type  ENUM('Percentage','Fixed') NOT NULL DEFAULT 'Percentage',
+    discount_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    is_active      TINYINT(1) NOT NULL DEFAULT 1,
+    created_by     INT DEFAULT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+$conn->query("INSERT IGNORE INTO customer_groups (id, name, label, discount_type, discount_value) VALUES
+    (1, 'Employee',  'EMPLOYEE',  'Percentage', 10.00),
+    (2, 'Wholesale', 'WHOLESALE', 'Percentage', 5.00)
+");
+$conn->query("ALTER TABLE sales
+    ADD COLUMN IF NOT EXISTS customer_group_id  INT           DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS group_discount_amt DECIMAL(10,2) DEFAULT 0.00
+");
+
+// F-07: Exchange workflow (even swap + collect/refund delta)
+$conn->query("CREATE TABLE IF NOT EXISTS exchanges (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    exchange_no         VARCHAR(50) NOT NULL,
+    original_sale_id    INT NOT NULL,
+    original_receipt_no VARCHAR(50) DEFAULT NULL,
+    delta_type          ENUM('none','collect','refund') NOT NULL DEFAULT 'none',
+    delta_amount        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    payment_mode        VARCHAR(50)  DEFAULT NULL,
+    reference_no        VARCHAR(100) DEFAULT NULL,
+    processed_by        INT          DEFAULT NULL,
+    processed_username  VARCHAR(100) DEFAULT NULL,
+    notes               TEXT         DEFAULT NULL,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+$conn->query("CREATE TABLE IF NOT EXISTS exchange_items (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    exchange_id         INT NOT NULL,
+    direction           ENUM('return','outgoing') NOT NULL,
+    product_id          INT NOT NULL,
+    product_name        VARCHAR(255) DEFAULT NULL,
+    qty                 INT NOT NULL DEFAULT 1,
+    unit_price          DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    line_total          DECIMAL(10,2) NOT NULL DEFAULT 0.00
+)");
+
+// F-08: Tiered % pricing (supplements existing half-box/full-box fixed tiers)
+$conn->query("CREATE TABLE IF NOT EXISTS pricing_tiers (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    product_id  INT NOT NULL,
+    min_qty     INT NOT NULL,
+    discount_pct DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    label       VARCHAR(100) DEFAULT NULL,
+    is_active   TINYINT(1) NOT NULL DEFAULT 1,
+    created_by  INT DEFAULT NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_product_active (product_id, is_active)
+)");
+
+// F-09: Promotion conflict resolution — priority + conflict rule on discounts
+$conn->query("ALTER TABLE discounts
+    ADD COLUMN IF NOT EXISTS priority      INT  NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS conflict_rule ENUM('best_for_customer','priority_order','stack') NOT NULL DEFAULT 'best_for_customer'
+");
+
+// F-10: Automatic backup scheduling
+$conn->query("CREATE TABLE IF NOT EXISTS backup_logs (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    filename         VARCHAR(255) DEFAULT NULL,
+    size_kb          INT          DEFAULT NULL,
+    status           ENUM('success','failed') DEFAULT 'success',
+    method           ENUM('manual','auto') DEFAULT 'manual',
+    triggered_by     INT DEFAULT NULL,
+    trigger_username VARCHAR(100) DEFAULT NULL,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+$conn->query("INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES
+    ('backup_enabled',          '0'),
+    ('backup_interval_hours',   '24'),
+    ('backup_retention_days',   '30'),
+    ('backup_path',             'backups'),
+    ('backup_last_run',         NULL)
+");
+
+// F-11: Price rounding rules
+$conn->query("INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES
+    ('price_rounding_rule', 'none')
+");
+
+// F-12: IP/device access restrictions
+$conn->query("CREATE TABLE IF NOT EXISTS ip_restrictions (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    ip_cidr    VARCHAR(50) NOT NULL,
+    label      VARCHAR(100) DEFAULT NULL,
+    note       TEXT DEFAULT NULL,
+    is_active  TINYINT(1) NOT NULL DEFAULT 1,
+    created_by INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_ip (ip_cidr)
+)");
+$conn->query("INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES
+    ('ip_restriction_enabled', '0')
+");
+
+// ── v1.5.1 — Phase 3: Bundle deals + Tax-inclusive mode ──────────────────────
+
+// F-13: Bundle deals / combo pricing
+$conn->query("CREATE TABLE IF NOT EXISTS bundles (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    name         VARCHAR(255) NOT NULL,
+    description  TEXT DEFAULT NULL,
+    bundle_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    is_active    TINYINT(1) NOT NULL DEFAULT 1,
+    created_by   INT DEFAULT NULL,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+$conn->query("CREATE TABLE IF NOT EXISTS bundle_items (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    bundle_id  INT NOT NULL,
+    product_id INT NOT NULL,
+    qty        INT NOT NULL DEFAULT 1,
+    KEY idx_bundle (bundle_id)
+)");
+
+// F-14: Tax-inclusive display mode setting
+$conn->query("INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES
+    ('tax_display_mode', 'exclusive')
+");
+
+// GAP-03: store bundle discount as a numeric column on sales for audit/reporting
+$conn->query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS bundle_discount_amt DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER group_discount_amt");
+
+// GAP-15: enforce unique tier threshold per product to prevent ambiguous lookups
+$conn->query("ALTER TABLE pricing_tiers ADD UNIQUE KEY IF NOT EXISTS uq_tier_product_minqty (product_id, min_qty)");
 
 // Mark migrations as done for this version
 file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));

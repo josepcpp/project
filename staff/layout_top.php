@@ -52,6 +52,14 @@ $titles = [
     'help.php'                      => 'Support',
     'delivery_return_ticket.php'    => 'Return Ticket',
     'refund_queue.php'              => 'Refund Queue',
+    // Phase 2 additions
+    'exchange.php'                  => 'Item Exchange',
+    'customer_groups.php'           => 'Customer Groups',
+    'pricing_tiers.php'             => 'Pricing Tiers',
+    'backup.php'                    => 'Data Backup',
+    'ip_restrictions.php'           => 'IP Restrictions',
+    // Phase 3 additions
+    'bundles.php'                   => 'Bundle Deals',
 ];
 
 // 🎨 ICON MAP (Inline SVG - Zero lag, zero external calls)
@@ -71,6 +79,14 @@ $icons = [
     'users.php'             => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>',
     'settings.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>',
     'refund_queue.php'      => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
+    // Phase 2 icons
+    'exchange.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>',
+    'customer_groups.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>',
+    'pricing_tiers.php'     => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>',
+    'backup.php'            => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>',
+    'ip_restrictions.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>',
+    // Phase 3 icons
+    'bundles.php'           => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>',
 ];
 
 // ── Navigation URL map (absolute paths — safe from any page depth) ───────────
@@ -91,6 +107,14 @@ $hrefs = [
     'help.php'              => '/project/staff/help.php',
     'delivery_return_ticket.php' => '/project/staff/procurement/delivery_return_ticket.php',
     'refund_queue.php'      => '/project/staff/sales/refund_queue.php',
+    // Phase 2 hrefs
+    'exchange.php'          => '/project/staff/pos/exchange.php',
+    'customer_groups.php'   => '/project/staff/pos/customer_groups.php',
+    'pricing_tiers.php'     => '/project/staff/inventory/pricing_tiers.php',
+    'backup.php'            => '/project/staff/reports/backup.php',
+    'ip_restrictions.php'   => '/project/staff/settings/ip_restrictions.php',
+    // Phase 3 hrefs
+    'bundles.php'           => '/project/staff/pos/bundles.php',
 ];
 
 $procurement_steps       = ['suppliers.php', 'product_info.php', 'delivery_receive.php', 'payments.php'];
@@ -186,7 +210,7 @@ if ($role === ROLE_STAFF) {
 if ($role === ROLE_STAFF) {
     $nav_sections = [
         'Overview'    => ['dashboard.php'],
-        'Sales'       => ['pos.php', 'refund_management.php'],
+        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
         'Inventory'   => ['stock_management.php'],
         'Procurement' => $staff_procurement_steps,
         'Help'        => ['help.php'],
@@ -194,18 +218,18 @@ if ($role === ROLE_STAFF) {
 } elseif (in_array($role, ROLES_ADMIN_OWNER)) {
     $nav_sections = [
         'Overview'       => ['dashboard.php'],
-        'Sales'          => ['pos.php', 'refund_management.php', 'discount.php'],
-        'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
+        'Sales'          => ['pos.php', 'exchange.php', 'refund_management.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
+        'Inventory'      => ['stock_management.php', 'pricing_tiers.php', 'price_maintenance.php'],
         'Procurement'    => $procurement_steps,
-        'Administration' => ['activity_logs.php', 'users.php', 'help.php'],
+        'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
     ];
 } else { // superadmin
     $nav_sections = [
         'Overview'       => ['dashboard.php'],
-        'Sales'          => ['pos.php', 'refund_management.php', 'discount.php'],
-        'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
+        'Sales'          => ['pos.php', 'exchange.php', 'refund_management.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
+        'Inventory'      => ['stock_management.php', 'pricing_tiers.php', 'price_maintenance.php'],
         'Procurement'    => $procurement_steps,
-        'Administration' => ['activity_logs.php', 'users.php', 'help.php'],
+        'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
         'System'         => ['settings.php'],
     ];
 }
@@ -567,6 +591,24 @@ function toggleSidebar() {
     resetIdle();
 })();
 </script>
+
+<!-- ── F-10: AUTO-BACKUP CHECK (admin pages only, silently fires when due) ────── -->
+<?php if (in_array($_SESSION['role'] ?? '', ROLES_ADMIN_AND_UP)): ?>
+<script>
+(function() {
+    // Fires once per page load; the endpoint only triggers if the interval has elapsed.
+    fetch('/project/staff/reports/backup.php?auto_check=1')
+        .then(r => r.json())
+        .then(d => {
+            if (d.triggered && !d.ok) {
+                // Only surface failed auto-backups so admin knows
+                console.warn('[Backup] Auto-backup failed:', d.msg);
+            }
+        })
+        .catch(() => {}); // Never surface errors to the UI
+})();
+</script>
+<?php endif; ?>
 
 <!-- ── IDLE SESSION WARNING MODAL ─────────────────────────────────────────── -->
 <div id="idle-warning-modal" class="hidden fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
