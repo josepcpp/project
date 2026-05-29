@@ -235,3 +235,35 @@ define('LOG_BACKUP',   'Backup');
 define('MIN_USERNAME_LENGTH', 3);
 define('MAX_USERNAME_LENGTH', 50);
 define('MIN_PASSWORD_LENGTH', 8);
+
+// ── PROCUREMENT PIPELINE ROLES ────────────────────────────────────────────────
+define('ROLE_RECEIVER',      'receiver');
+define('ROLE_VALIDATOR',     'validator');
+define('ROLE_PRICE_CHECKER', 'price_checker');
+
+/** All three procurement-only specialist roles */
+define('ROLES_PROCUREMENT_STAFF', [ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER]);
+
+// ── RECEIVING BATCH STATUS ────────────────────────────────────────────────────
+define('RB_PENDING_REQUEST',    'pending_request');
+define('RB_PENDING_VALIDATION', 'pending_validation');
+define('RB_PENDING_INVENTORY',  'pending_inventory');
+define('RB_VALIDATED_TALLY',    'validated_tally');
+define('RB_VALIDATED_DISC',     'validated_discrepancy');
+define('RB_ON_HOLD',            'on_hold');
+define('RB_COMPLETED',          'completed');
+define('RB_REJECTED',           'rejected');
+
+// ── PRICE CHANGE (PIPELINE) STATUS ───────────────────────────────────────────
+define('PC_PENDING',  'pending');
+define('PC_APPROVED', 'approved');
+define('PC_REJECTED', 'rejected');
+
+// ── NOTIFICATION TYPES ────────────────────────────────────────────────────────
+define('NOTIF_DISCREPANCY',    'discrepancy');
+define('NOTIF_PRICE_CHANGE',   'price_change');
+define('NOTIF_OVERRIDE',       'override');
+define('NOTIF_BATCH_REJECTED', 'batch_rejected');
+
+// ── ACTIVITY LOG TYPES (Phase 4 — procurement pipeline) ──────────────────────
+define('LOG_PROCUREMENT', 'Procurement');

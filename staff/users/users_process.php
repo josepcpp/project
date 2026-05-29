@@ -44,8 +44,9 @@ if ($action === 'create') {
         header("Location: users.php?error=" . urlencode("Username min " . MIN_USERNAME_LENGTH . " chars, password min " . MIN_PASSWORD_LENGTH . " chars."));
         exit();
     }
-    if ($role === ROLE_ADMIN && $new_role !== ROLE_STAFF) {
-        header("Location: users.php?error=" . urlencode("Admins can only create Staff accounts."));
+    $admin_creatable = [ROLE_STAFF, ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER];
+    if ($role === ROLE_ADMIN && !in_array($new_role, $admin_creatable)) {
+        header("Location: users.php?error=" . urlencode("Admins can only create Staff and Procurement Pipeline accounts."));
         exit();
     }
     if ($role !== ROLE_SUPERADMIN && $new_role === ROLE_SUPERADMIN) {

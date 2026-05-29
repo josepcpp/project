@@ -10,7 +10,7 @@ if ($conn->connect_error) {
 $conn->set_charset("utf8mb4");
 
 // L-01: run schema migrations only once per version — skipped on every subsequent request
-$_db_version   = '1.5.2';
+$_db_version   = '1.6.0';
 $_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
 if (!file_exists($_db_init_flag)) { try {
 
@@ -445,6 +445,96 @@ $conn->query("ALTER TABLE sales ADD COLUMN IF NOT EXISTS bundle_discount_amt DEC
 
 // GAP-15: enforce unique tier threshold per product to prevent ambiguous lookups
 $conn->query("ALTER TABLE pricing_tiers ADD UNIQUE KEY IF NOT EXISTS uq_tier_product_minqty (product_id, min_qty)");
+
+// ── v1.6.0 — Procurement Pipeline (Receiver / Validator / Price Checker) ──────
+
+$conn->query("CREATE TABLE IF NOT EXISTS receiving_batches (
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    receiver_id          INT DEFAULT NULL,
+    receiver_username    VARCHAR(100) DEFAULT NULL,
+    status               ENUM('pending_request','pending_validation','pending_inventory',
+                              'validated_tally','validated_discrepancy','on_hold',
+                              'completed','rejected') DEFAULT 'pending_request',
+    supplier_name        VARCHAR(255) DEFAULT NULL,
+    supplier_contact     VARCHAR(255) DEFAULT NULL,
+    control_subtotal     DECIMAL(12,2) DEFAULT NULL,
+    computed_subtotal    DECIMAL(12,2) DEFAULT NULL,
+    tally_result         ENUM('match','discrepancy') DEFAULT NULL,
+    request_created_by   INT DEFAULT NULL,
+    request_created_at   DATETIME DEFAULT NULL,
+    validator_id         INT DEFAULT NULL,
+    validated_at         DATETIME DEFAULT NULL,
+    resolution_action    ENUM('reopen_receiver','reopen_validator','override','rejected') DEFAULT NULL,
+    resolution_by        INT DEFAULT NULL,
+    resolution_reason    TEXT DEFAULT NULL,
+    resolution_at        DATETIME DEFAULT NULL,
+    inventory_pushed_at  DATETIME DEFAULT NULL,
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS receiving_items (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    batch_id     INT NOT NULL,
+    barcode      VARCHAR(100) DEFAULT NULL,
+    description  VARCHAR(255) NOT NULL,
+    quantity     INT NOT NULL DEFAULT 1,
+    expiry_date  DATE DEFAULT NULL,
+    base_price   DECIMAL(10,2) DEFAULT NULL,
+    amount       DECIMAL(12,2) DEFAULT NULL,
+    match_flag   TINYINT(1) DEFAULT 0,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_batch (batch_id)
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS procurement_audit_log (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    batch_id       INT NOT NULL,
+    actor_id       INT DEFAULT NULL,
+    actor_username VARCHAR(100) DEFAULT NULL,
+    actor_role     VARCHAR(50) DEFAULT NULL,
+    action         VARCHAR(80) NOT NULL,
+    tally_result   VARCHAR(20) DEFAULT NULL,
+    reason         TEXT DEFAULT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_batch (batch_id)
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS pipeline_price_changes (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    batch_id            INT NOT NULL,
+    item_id             INT NOT NULL,
+    barcode             VARCHAR(100) DEFAULT NULL,
+    description         VARCHAR(255) DEFAULT NULL,
+    old_price           DECIMAL(10,2) NOT NULL,
+    new_price           DECIMAL(10,2) NOT NULL,
+    supplier_name       VARCHAR(255) DEFAULT NULL,
+    raised_by           INT DEFAULT NULL,
+    raised_by_username  VARCHAR(100) DEFAULT NULL,
+    status              ENUM('pending','approved','rejected') DEFAULT 'pending',
+    reviewed_by         INT DEFAULT NULL,
+    reviewed_at         DATETIME DEFAULT NULL,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_batch (batch_id)
+)");
+
+$conn->query("CREATE TABLE IF NOT EXISTS notifications (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    recipient_id   INT DEFAULT NULL,
+    recipient_role VARCHAR(30) DEFAULT NULL,
+    type           ENUM('discrepancy','price_change','override','batch_rejected') NOT NULL,
+    batch_id       INT DEFAULT NULL,
+    message        TEXT NOT NULL,
+    is_read        TINYINT(1) NOT NULL DEFAULT 0,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_recipient (recipient_id),
+    KEY idx_role (recipient_role)
+)");
+
+// Extend users.role ENUM to include the three new pipeline roles
+$conn->query("ALTER TABLE users MODIFY COLUMN role ENUM('superadmin','admin','staff','owner','member','receiver','validator','price_checker') DEFAULT NULL");
+
+// Allow pipeline-created products to have no legacy supplier FK
+$conn->query("ALTER TABLE products MODIFY COLUMN supplier_id INT(11) DEFAULT NULL");
 
 // Mark migrations as done for this version
 file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));

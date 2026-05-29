@@ -20,7 +20,7 @@ if ($is_superadmin) {
         SELECT id, username, full_name, role
         FROM users
         WHERE reset_requested = 1
-        ORDER BY FIELD(role,'" . ROLE_STAFF . "','" . ROLE_ADMIN . "','" . ROLE_OWNER . "','" . ROLE_SUPERADMIN . "'), full_name ASC
+        ORDER BY FIELD(role,'" . ROLE_STAFF . "','" . ROLE_RECEIVER . "','" . ROLE_VALIDATOR . "','" . ROLE_PRICE_CHECKER . "','" . ROLE_ADMIN . "','" . ROLE_OWNER . "','" . ROLE_SUPERADMIN . "'), full_name ASC
     ");
 } else {
     $pending_resets = $conn->query("
@@ -218,9 +218,16 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
                 class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all">
             <select name="role" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
                 <option value="staff">Staff Member</option>
+                <optgroup label="── Procurement Pipeline ──">
+                    <option value="receiver">Receiver</option>
+                    <option value="validator">Validator</option>
+                    <option value="price_checker">Price Checker</option>
+                </optgroup>
                 <?php if ($is_superadmin): ?>
-                <option value="admin">Administrator</option>
-                <option value="superadmin">Super Admin</option>
+                <optgroup label="── Administration ──">
+                    <option value="admin">Administrator</option>
+                    <option value="superadmin">Super Admin</option>
+                </optgroup>
                 <?php endif; ?>
             </select>
             <button type="submit" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-xl py-3 shadow-lg shadow-emerald-100 transition-all">
@@ -254,11 +261,18 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
                     $initial  = strtoupper(substr($u['full_name'] ?: $u['username'], 0, 1));
 
                     $badge = match($u_role) {
-                        ROLE_SUPERADMIN => 'bg-rose-50 text-rose-600',
+                        ROLE_SUPERADMIN    => 'bg-rose-50 text-rose-600',
                         ROLE_ADMIN, ROLE_OWNER => 'bg-purple-50 text-purple-600',
-                        default         => 'bg-blue-50 text-blue-500',
+                        ROLE_RECEIVER      => 'bg-sky-50 text-sky-600',
+                        ROLE_VALIDATOR     => 'bg-teal-50 text-teal-600',
+                        ROLE_PRICE_CHECKER => 'bg-orange-50 text-orange-600',
+                        default            => 'bg-blue-50 text-blue-500',
                     };
-                    $badge_label = $u_role === ROLE_SUPERADMIN ? '★ Super Admin' : ucfirst($u_role);
+                    $badge_label = match($u_role) {
+                        ROLE_SUPERADMIN    => '★ Super Admin',
+                        ROLE_PRICE_CHECKER => 'Price Checker',
+                        default            => ucfirst($u_role),
+                    };
 
                     $status_class = match($u_status) {
                         USER_ACTIVE     => 'bg-emerald-50 text-emerald-600 border border-emerald-100',
@@ -449,10 +463,13 @@ const SESSION_ROLE = '<?= $session_role ?>';
 
 // Role display helpers
 const ROLE_BADGES = {
-    superadmin: { cls: 'bg-rose-50 text-rose-600',   label: '★ Super Admin' },
-    admin:      { cls: 'bg-purple-50 text-purple-600', label: 'Administrator' },
-    owner:      { cls: 'bg-purple-50 text-purple-600', label: 'Owner' },
-    staff:      { cls: 'bg-blue-50 text-blue-500',   label: 'Staff' },
+    superadmin:    { cls: 'bg-rose-50 text-rose-600',     label: '★ Super Admin' },
+    admin:         { cls: 'bg-purple-50 text-purple-600',  label: 'Administrator' },
+    owner:         { cls: 'bg-purple-50 text-purple-600',  label: 'Owner' },
+    staff:         { cls: 'bg-blue-50 text-blue-500',      label: 'Staff' },
+    receiver:      { cls: 'bg-sky-50 text-sky-600',        label: 'Receiver' },
+    validator:     { cls: 'bg-teal-50 text-teal-600',      label: 'Validator' },
+    price_checker: { cls: 'bg-orange-50 text-orange-600',  label: 'Price Checker' },
 };
 
 function openResetModal(id, username, name, targetRole) {

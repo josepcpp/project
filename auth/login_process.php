@@ -53,6 +53,12 @@ if (isset($_POST['username']) && isset($_POST['password'])) {
                 header("Location: ../staff/dashboard.php");
             } elseif ($user_role === ROLE_STAFF) {
                 header("Location: ../staff/pos/pos.php");
+            } elseif ($user_role === ROLE_RECEIVER) {
+                header("Location: ../staff/procurement/receive_batch.php");
+            } elseif ($user_role === ROLE_VALIDATOR) {
+                header("Location: ../staff/procurement/validate_batch.php");
+            } elseif ($user_role === ROLE_PRICE_CHECKER) {
+                header("Location: ../staff/procurement/price_checker.php");
             } else {
                 header("Location: ../public/index.php");
             }

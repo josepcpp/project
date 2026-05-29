@@ -3,6 +3,16 @@ include '../../config/db.php';
 include '../../includes/admin_only.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
+if (!isset($conn)) {
+    if (isset($mysqli)) {
+        $conn = $mysqli;
+    } elseif (isset($db)) {
+        $conn = $db;
+    } elseif (isset($link)) {
+        $conn = $link;
+    }
+}
+
 $msg = '';
 
 // ── POST HANDLERS ─────────────────────────────────────────────────────────────

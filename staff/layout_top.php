@@ -60,6 +60,15 @@ $titles = [
     'ip_restrictions.php'           => 'IP Restrictions',
     // Phase 3 additions
     'bundles.php'                   => 'Bundle Deals',
+    // Phase 4 — Procurement Pipeline
+    'receive_batch.php'       => 'Receive Stock',
+    'receive_items.php'       => 'Encode Items',
+    'batches_pending.php'     => 'Pending Batches',
+    'validator_request.php'   => 'Validator Request',
+    'validate_batch.php'      => 'Validate Batches',
+    'validate_items.php'      => 'Price Validation',
+    'discrepancy_resolve.php' => 'Discrepancy',
+    'price_checker.php'       => 'Price Checker',
 ];
 
 // 🎨 ICON MAP (Inline SVG - Zero lag, zero external calls)
@@ -87,6 +96,15 @@ $icons = [
     'ip_restrictions.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>',
     // Phase 3 icons
     'bundles.php'           => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>',
+    // Phase 4 — Procurement Pipeline icons
+    'receive_batch.php'       => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0H4m8-9v9"/></svg>',
+    'receive_items.php'       => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>',
+    'batches_pending.php'     => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>',
+    'validator_request.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>',
+    'validate_batch.php'      => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    'validate_items.php'      => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>',
+    'discrepancy_resolve.php' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>',
+    'price_checker.php'       => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>',
 ];
 
 // ── Navigation URL map (absolute paths — safe from any page depth) ───────────
@@ -115,10 +133,19 @@ $hrefs = [
     'ip_restrictions.php'   => '/project/staff/settings/ip_restrictions.php',
     // Phase 3 hrefs
     'bundles.php'           => '/project/staff/pos/bundles.php',
+    // Phase 4 — Procurement Pipeline hrefs
+    'receive_batch.php'       => '/project/staff/procurement/receive_batch.php',
+    'receive_items.php'       => '/project/staff/procurement/receive_items.php',
+    'batches_pending.php'     => '/project/staff/procurement/batches_pending.php',
+    'validator_request.php'   => '/project/staff/procurement/validator_request.php',
+    'validate_batch.php'      => '/project/staff/procurement/validate_batch.php',
+    'validate_items.php'      => '/project/staff/procurement/validate_items.php',
+    'discrepancy_resolve.php' => '/project/staff/procurement/discrepancy_resolve.php',
+    'price_checker.php'       => '/project/staff/procurement/price_checker.php',
 ];
 
-$procurement_steps       = ['suppliers.php', 'product_info.php', 'delivery_receive.php', 'payments.php'];
 $staff_procurement_steps = ['product_info.php', 'delivery_receive.php'];
+$pipeline_steps          = ['batches_pending.php', 'discrepancy_resolve.php'];
 
 // Load procurement access for staff
 $staff_procurement = 'n/a';
@@ -173,6 +200,11 @@ if ($role === ROLE_STAFF) {
     ");
     $support_open_count = intval($soc_q ? $soc_q->fetch_assoc()['c'] ?? 0 : 0);
 
+    // Notification bell count for admin/superadmin
+    $notif_count = 0;
+    $nq = $conn->query("SELECT COUNT(*) AS c FROM notifications WHERE recipient_role IN ('admin','superadmin') AND is_read = 0");
+    if ($nq) $notif_count = intval($nq->fetch_assoc()['c'] ?? 0);
+
     // Auto-apply deferred price requests when the product stock hits zero
     $def_q = $conn->query("SELECT * FROM price_update_requests WHERE status = '" . PRICE_REQ_DEFERRED . "'");
     if ($def_q && $def_q->num_rows > 0) {
@@ -207,6 +239,15 @@ if ($role === ROLE_STAFF) {
     }
 }
 
+// Notification count for procurement specialist roles
+$notif_count = $notif_count ?? 0;
+if (in_array($role, ROLES_PROCUREMENT_STAFF)) {
+    $nq2 = $conn->prepare("SELECT COUNT(*) AS c FROM notifications WHERE (recipient_id = ? OR recipient_role = ?) AND is_read = 0");
+    $nq2->bind_param("is", $_SESSION['user_id'], $role);
+    $nq2->execute();
+    $notif_count = intval($nq2->get_result()->fetch_assoc()['c'] ?? 0);
+}
+
 if ($role === ROLE_STAFF) {
     $nav_sections = [
         'Overview'    => ['dashboard.php'],
@@ -215,12 +256,27 @@ if ($role === ROLE_STAFF) {
         'Procurement' => $staff_procurement_steps,
         'Help'        => ['help.php'],
     ];
+} elseif ($role === ROLE_RECEIVER) {
+    $nav_sections = [
+        'Procurement' => ['receive_batch.php'],
+        'Help'        => ['help.php'],
+    ];
+} elseif ($role === ROLE_VALIDATOR) {
+    $nav_sections = [
+        'Procurement' => ['validate_batch.php'],
+        'Help'        => ['help.php'],
+    ];
+} elseif ($role === ROLE_PRICE_CHECKER) {
+    $nav_sections = [
+        'Reports' => ['price_checker.php'],
+        'Help'    => ['help.php'],
+    ];
 } elseif (in_array($role, ROLES_ADMIN_OWNER)) {
     $nav_sections = [
         'Overview'       => ['dashboard.php'],
         'Sales'          => ['pos.php', 'exchange.php', 'refund_management.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
         'Inventory'      => ['stock_management.php', 'pricing_tiers.php', 'price_maintenance.php'],
-        'Procurement'    => $procurement_steps,
+        'Procurement'    => $pipeline_steps,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
     ];
 } else { // superadmin
@@ -228,7 +284,7 @@ if ($role === ROLE_STAFF) {
         'Overview'       => ['dashboard.php'],
         'Sales'          => ['pos.php', 'exchange.php', 'refund_management.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
         'Inventory'      => ['stock_management.php', 'pricing_tiers.php', 'price_maintenance.php'],
-        'Procurement'    => $procurement_steps,
+        'Procurement'    => $pipeline_steps,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
         'System'         => ['settings.php'],
     ];
@@ -288,11 +344,18 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
     <div class="px-6 mb-2 role-badge">
         <?php
         $badge_class = match($role) {
-            ROLE_SUPERADMIN => 'bg-rose-50 text-rose-600 border-rose-200',
+            ROLE_SUPERADMIN   => 'bg-rose-50 text-rose-600 border-rose-200',
             ROLE_ADMIN, ROLE_OWNER => 'bg-purple-50 text-purple-600 border-purple-100',
-            default => 'bg-blue-50 text-blue-500 border-blue-100',
+            ROLE_RECEIVER     => 'bg-sky-50 text-sky-600 border-sky-200',
+            ROLE_VALIDATOR    => 'bg-teal-50 text-teal-600 border-teal-200',
+            ROLE_PRICE_CHECKER => 'bg-orange-50 text-orange-600 border-orange-200',
+            default           => 'bg-blue-50 text-blue-500 border-blue-100',
         };
-        $badge_label = $role === ROLE_SUPERADMIN ? '★ Super Admin' : ucfirst($role);
+        $badge_label = match($role) {
+            ROLE_SUPERADMIN   => '★ Super Admin',
+            ROLE_PRICE_CHECKER => 'Price Checker',
+            default           => ucfirst($role),
+        };
         ?>
         <div class="<?= $badge_class ?> text-[9px] font-black tracking-[0.2em] py-2 px-4 rounded-xl border text-center uppercase"><?= $badge_label ?></div>
     </div>
@@ -300,19 +363,19 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
     <div class="flex-1 overflow-y-auto no-scrollbar pb-10">
         <nav class="space-y-1">
             <?php foreach($nav_sections as $section => $files):
-                $is_procurement = ($section === 'Procurement');
+                // Step counter and lock state only apply to the staff Procurement section
+                $is_staff_procurement = ($section === 'Procurement' && $role === ROLE_STAFF);
                 $step = 1;
-                // Staff procurement access state
-                $proc_locked  = $is_procurement && $role === ROLE_STAFF && !in_array($staff_procurement, [PROC_APPROVED, PROC_RECOUNT]);
-                $proc_waiting = $is_procurement && $role === ROLE_STAFF && $staff_procurement === PROC_PENDING;
-                $proc_recount = $is_procurement && $role === ROLE_STAFF && $staff_procurement === PROC_RECOUNT;
+                $proc_locked  = $is_staff_procurement && !in_array($staff_procurement, [PROC_APPROVED, PROC_RECOUNT]);
+                $proc_waiting = $is_staff_procurement && $staff_procurement === PROC_PENDING;
+                $proc_recount = $is_staff_procurement && $staff_procurement === PROC_RECOUNT;
             ?>
-                <p class="sidebar-section-label <?= ($is_procurement && !$proc_locked) ? ($proc_recount ? 'text-amber-500' : 'text-emerald-400') : '' ?>">
+                <p class="sidebar-section-label <?= $is_staff_procurement && !$proc_locked ? ($proc_recount ? 'text-amber-500' : 'text-emerald-400') : '' ?>">
                     <?= $section ?>
                     <?php if ($proc_recount): ?>
                         <span class="text-amber-400 normal-case font-bold animate-pulse"> · Recount Active</span>
-                    <?php elseif ($is_procurement && !$proc_locked): ?>
-                        <span class="opacity-50 normal-case font-bold"> · 4-step flow</span>
+                    <?php elseif ($is_staff_procurement && !$proc_locked): ?>
+                        <span class="opacity-50 normal-case font-bold"> · 2-step flow</span>
                     <?php elseif ($proc_waiting): ?>
                         <span class="text-amber-400 normal-case font-bold animate-pulse"> · Pending</span>
                     <?php elseif ($proc_locked): ?>
@@ -332,8 +395,8 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
                     }
                     // Admin badge on users.php for pending procurement requests
                     $showProcBadge  = $file === 'users.php' && $procurement_pending_count > 0;
-                    // Admin badge on delivery_receive.php for quantity discrepancy alerts
-                    $showAlertBadge = $file === 'delivery_receive.php' && ($qty_alert_count ?? 0) > 0;
+                    // Badge on delivery_receive.php for quantity discrepancy alerts (staff only)
+                    $showAlertBadge = $file === 'delivery_receive.php' && $role === ROLE_STAFF && ($qty_alert_count ?? 0) > 0;
                     // Staff badge on dashboard.php for recount tasks
                     $showRecountBadge = $file === 'dashboard.php' && $role === ROLE_STAFF && $recount_count > 0;
                     // Refund queue badge
@@ -367,7 +430,7 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
                             <span class="nav-text ml-auto bg-violet-500 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 animate-pulse">
                                 <?= in_array($role, ROLES_ADMIN_AND_UP) ? $support_open_count : $support_reply_count ?>
                             </span>
-                        <?php elseif ($is_procurement): ?>
+                        <?php elseif ($is_staff_procurement): ?>
                             <span class="nav-text ml-auto text-[9px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0
                                 <?= ($current_page == $file) ? 'bg-white/20 text-white' : ($isPending ? 'bg-amber-200 text-amber-700 animate-pulse' : ($proc_locked ? 'bg-slate-100 text-slate-300' : 'bg-slate-100 text-slate-400')) ?>">
                                 <?= $step ?>
@@ -395,7 +458,30 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
             <h2 id="page-title-display" class="serif-title text-2xl font-black text-slate-900 leading-none mb-1 uppercase tracking-tighter"><?php echo $page_title; ?></h2>
             <p class="text-[10px] text-slate-400 font-bold uppercase"><?php echo date("l, F j, Y"); ?></p>
         </div>
-        <div class="w-10 h-10 bg-emerald-500 text-white rounded-full flex items-center justify-center font-black shadow-lg shadow-emerald-200"><?php echo substr($username, 0, 1); ?></div>
+        <div class="flex items-center gap-3">
+            <?php if (in_array($role, ROLES_ADMIN_AND_UP) || in_array($role, ROLES_PROCUREMENT_STAFF)): ?>
+            <div class="relative" id="notif-bell-wrap">
+                <button id="notif-bell-btn" onclick="toggleNotifDropdown()" class="relative w-10 h-10 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full flex items-center justify-center transition-all">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+                    <?php if ($notif_count > 0): ?>
+                    <span id="notif-badge" class="absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-black w-5 h-5 flex items-center justify-center rounded-full animate-pulse"><?= min($notif_count, 99) ?></span>
+                    <?php else: ?>
+                    <span id="notif-badge" class="hidden absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-black w-5 h-5 flex items-center justify-center rounded-full"></span>
+                    <?php endif; ?>
+                </button>
+                <div id="notif-dropdown" class="hidden absolute right-0 top-12 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+                    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+                        <span class="text-xs font-black uppercase tracking-widest text-slate-500">Notifications</span>
+                        <button onclick="markAllRead()" class="text-[10px] text-emerald-600 font-bold hover:underline">Mark all read</button>
+                    </div>
+                    <div id="notif-list" class="max-h-80 overflow-y-auto divide-y divide-slate-50">
+                        <div class="px-4 py-6 text-center text-slate-400 text-xs font-bold">Loading...</div>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+            <div class="w-10 h-10 bg-emerald-500 text-white rounded-full flex items-center justify-center font-black shadow-lg shadow-emerald-200"><?php echo substr($username, 0, 1); ?></div>
+        </div>
     </header>
 
     <div id="page-content" class="p-8 animate-in"><div id="spa-state" data-batch="<?= isset($_SESSION['active_batch_id']) ? '1' : '0' ?>" data-procurement="<?= htmlspecialchars($staff_procurement) ?>" data-recount="<?= $recount_count ?>" data-sig="<?= $session_sig ?>" class="hidden"></div>
@@ -547,6 +633,75 @@ window.addEventListener('popstate', () => navigate(window.location.href));
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('collapsed');
     document.getElementById('main-content').classList.toggle('expanded');
+}
+
+// ── NOTIFICATION BELL ─────────────────────────────────────────────────────────
+let _notifOpen = false;
+function toggleNotifDropdown() {
+    _notifOpen = !_notifOpen;
+    const dd = document.getElementById('notif-dropdown');
+    dd.classList.toggle('hidden', !_notifOpen);
+    if (_notifOpen) loadNotifications();
+}
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#notif-bell-wrap')) {
+        _notifOpen = false;
+        const dd = document.getElementById('notif-dropdown');
+        if (dd) dd.classList.add('hidden');
+    }
+});
+function loadNotifications() {
+    fetch('/project/staff/api/notifications.php?action=list')
+        .then(r => r.json())
+        .then(data => {
+            const list = document.getElementById('notif-list');
+            if (!data.length) {
+                list.innerHTML = '<div class="px-4 py-6 text-center text-slate-400 text-xs font-bold">No notifications</div>';
+                return;
+            }
+            const typeIcon = { discrepancy:'🔴', price_change:'🟡', override:'🟢', batch_rejected:'⚫' };
+            list.innerHTML = data.map(n => `
+                <div class="px-4 py-3 ${n.is_read ? '' : 'bg-blue-50'} hover:bg-slate-50 cursor-pointer text-xs" onclick="markOneRead(${n.id}, this)">
+                    <div class="flex gap-2">
+                        <span class="text-base leading-none mt-0.5">${typeIcon[n.type] ?? '🔔'}</span>
+                        <div class="flex-1">
+                            <p class="font-bold text-slate-700 leading-snug">${n.message}</p>
+                            <p class="text-slate-400 mt-0.5">${n.created_at}</p>
+                        </div>
+                    </div>
+                </div>`).join('');
+        }).catch(() => {
+            document.getElementById('notif-list').innerHTML = '<div class="px-4 py-6 text-center text-red-400 text-xs font-bold">Failed to load</div>';
+        });
+}
+function markOneRead(id, el) {
+    fetch('/project/staff/api/notifications.php?action=mark_read&id=' + id);
+    el.classList.remove('bg-blue-50');
+    refreshNotifBadge();
+}
+function markAllRead() {
+    fetch('/project/staff/api/notifications.php?action=mark_all_read');
+    document.querySelectorAll('#notif-list > div').forEach(d => d.classList.remove('bg-blue-50'));
+    refreshNotifBadge(0);
+}
+function refreshNotifBadge(forceCount) {
+    if (forceCount !== undefined) {
+        updateNotifBadge(forceCount);
+        return;
+    }
+    fetch('/project/staff/api/notifications.php?action=count')
+        .then(r => r.json())
+        .then(d => updateNotifBadge(d.count ?? 0));
+}
+function updateNotifBadge(count) {
+    const badge = document.getElementById('notif-badge');
+    if (!badge) return;
+    if (count > 0) {
+        badge.textContent = Math.min(count, 99);
+        badge.classList.remove('hidden');
+    } else {
+        badge.classList.add('hidden');
+    }
 }
 
 // ── IDLE SESSION WARNING (M-01) ───────────────────────────────────────────────
