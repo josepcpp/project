@@ -274,7 +274,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $tier = $tier_q->get_result()->fetch_assoc();
                     }
                     if ($tier && floatval($tier['discount_pct']) > 0) {
-                        $disc_pct    = floatval($tier['discount_pct']);
+                        $disc_pct    = min(99.99, floatval($tier['discount_pct'])); // POS-1: cap so price never hits zero
                         $tier_price  = $retail_price * (1 - $disc_pct / 100);
                         $line_total  = round($tier_price * $qty, 4);
                         $status_note = ($tier['label'] ?: "Tiered") . " (−{$disc_pct}%)";

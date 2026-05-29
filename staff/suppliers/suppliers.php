@@ -59,6 +59,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $name     = trim($_POST['name']);
         $contact  = trim($_POST['contact'] ?? '');
         $amount   = floatval($_POST['amount']);
+        if ($amount <= 0) {
+            $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold'>Amount to Pay must be greater than ₱0.00.</div>";
+            goto render_page;
+        }
         $id_mode  = $_POST['id_mode'] ?? 'manual';
         $raw_code = trim($_POST['supplier_code'] ?? '');
 
@@ -193,6 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     }
 }
 
+render_page:
 include '../layout_top.php';
 
 if (($role ?? '') === ROLE_STAFF && !in_array(basename(__FILE__), $staff_procurement_steps ?? [])) {
@@ -304,7 +309,7 @@ $next_auto  = generate_next_code($conn);
                 </div>
                 <div class="md:col-span-6">
                     <label class="label-modern">Amount to Pay (₱)</label>
-                    <input type="number" step="0.01" name="amount" placeholder="0.00" required class="input-modern">
+                    <input type="number" step="0.01" min="0.01" name="amount" placeholder="0.00" required class="input-modern">
                 </div>
             </div>
 

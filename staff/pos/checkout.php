@@ -1,6 +1,7 @@
 <?php
 include '../../config/db.php';
 include '../../config/settings.php';
+include '../../includes/csrf.php';
 include '../layout_top.php';
 
 if (empty($_SESSION['cart'])) {
@@ -79,7 +80,8 @@ if ($grp_q) {
         </div>
 
         <form id="checkoutForm" method="POST" action="checkout_process.php" class="p-10 space-y-8 bg-white">
-            
+            <?= csrf_field() ?>
+
             <!-- 💰 DYNAMIC TOTAL DISPLAY -->
             <div class="text-center space-y-2 py-12 bg-emerald-50 rounded-[2.5rem] border border-emerald-100 relative">
                 <p class="text-emerald-600 font-black uppercase tracking-[0.3em] text-[11px]">Total Payable Amount</p>
@@ -212,6 +214,19 @@ const ROUNDING_RULE        = <?= json_encode($rounding_rule) ?>;
 const TAX_DISPLAY_MODE     = <?= json_encode($tax_display_mode) ?>; // F-14
 const BUNDLE_DISCOUNT_AMT  = <?= (float)$bundle_discount_total_php ?>; // F-13
 const BUNDLE_NAMES         = <?= json_encode(implode(', ', $bundle_names_php)) ?>;
+// GAP-4: Rounding sync probe — PHP computed known inputs; JS must produce same outputs.
+const ROUNDING_PROBE = <?= json_encode([
+    'rule'     => $rounding_rule,
+    'cases'    => array_map(function($v) use ($rounding_rule) {
+        switch ($rounding_rule) {
+            case 'nearest_25c':   return ['in' => $v, 'out' => round($v * 4) / 4];
+            case 'nearest_50c':   return ['in' => $v, 'out' => round($v * 2) / 2];
+            case 'nearest_peso':  return ['in' => $v, 'out' => round($v)];
+            case 'nearest_5peso': return ['in' => $v, 'out' => round($v / 5) * 5];
+            default:              return ['in' => $v, 'out' => $v];
+        }
+    }, [10.10, 10.25, 10.37, 10.50, 10.63, 10.75, 99.99]),
+]) ?>;
 
 // F-06: Active customer-group state
 let activeGroup = { id: 0, type: 'Fixed', value: 0, label: '' };
@@ -249,6 +264,15 @@ function applyRounding(total, rule) {
         default:              return total; // 'none'
     }
 }
+
+// GAP-4: Verify JS applyRounding() matches PHP at page load time.
+(function() {
+    const mismatch = ROUNDING_PROBE.cases.find(c => Math.abs(applyRounding(c.in, ROUNDING_PROBE.rule) - c.out) > 0.0001);
+    if (mismatch) {
+        console.error('[Rounding sync] JS/PHP mismatch on rule "' + ROUNDING_PROBE.rule + '": input ' + mismatch.in + ' → JS=' + applyRounding(mismatch.in, ROUNDING_PROBE.rule) + ', PHP=' + mismatch.out);
+        showFlash('Warning: price rounding mismatch detected. Contact your system administrator.', 'error');
+    }
+})();
 
 // F-09: Auto-resolve best applicable promo when no code is manually typed.
 // Called on page load to surface the best deal automatically.

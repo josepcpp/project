@@ -2,9 +2,13 @@
 include '../../includes/auth_check.php';
 include '../../config/db.php';
 include '../../config/settings.php';
+include '../../includes/csrf.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $user_id = $_SESSION['user_id'] ?? null;
+
+// SEC-1: Reject forged cross-origin POST requests
+csrf_verify('checkout.php');
 
 // 1. Guard: cart must exist
 if (empty($_SESSION['cart'])) {
@@ -97,9 +101,11 @@ try {
     $items_to_insert = [];
 
     foreach ($_SESSION['cart'] as $pid => $item) {
+        // POS-2: FOR UPDATE locks the row so two concurrent checkouts can't both
+        // pass the stock check and oversell the last unit(s).
         $p_query = $conn->prepare(
             "SELECT name, quantity, barcode, price, bulk_qty_full, bulk_qty_half, price_full_box, price_half_box
-             FROM products WHERE id = ?"
+             FROM products WHERE id = ? FOR UPDATE"
         );
         $p_query->bind_param("i", $pid);
         $p_query->execute();
@@ -140,10 +146,10 @@ try {
 
         if ($bqf > 0 && $cart_qty >= $bqf) {
             $extra      = $cart_qty - $bqf;
-            $line_total = $pfb + ($extra * $retail);
+            $line_total = $pfb + $extra * $retail;
         } elseif ($bqh > 0 && $cart_qty >= $bqh) {
             $extra      = $cart_qty - $bqh;
-            $line_total = $phb + ($extra * $retail);
+            $line_total = $phb + $extra * $retail;
         } else {
             $line_total = $cart_qty * $retail;
         }
@@ -307,7 +313,7 @@ try {
             $lq_s->bind_param("s", $bc_check); $lq_s->execute();
             $locked = intval($lq_s->get_result()->fetch_assoc()['lq'] ?? 0);
 
-            if ($locked > 0 && ($rem_qty - $locked) <= 0) {
+            if ($locked > 0 && $rem_qty - $locked <= 0) {
                 $def_s = $conn->prepare("SELECT * FROM price_update_requests WHERE barcode = ? AND status = '" . PRICE_REQ_DEFERRED . "' ORDER BY id ASC LIMIT 1");
                 $def_s->bind_param("s", $bc_check); $def_s->execute();
                 $def_req = $def_s->get_result()->fetch_assoc();
@@ -325,6 +331,15 @@ try {
 
                     $upd_c = $conn->prepare("UPDATE price_update_requests SET current_price = ? WHERE barcode = ? AND id != ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
                     $upd_c->bind_param("dsi", $def_req['proposed_price'], $bc_check, $def_req['id']); $upd_c->execute();
+
+                    // GAP-8: Log the auto-apply so there is a clear audit trail
+                    $ap_msg = "AUTO-APPLIED deferred price for barcode {$bc_check}: "
+                            . "₱" . number_format($def_req['current_price'], 2)
+                            . " → ₱" . number_format($def_req['proposed_price'], 2)
+                            . " (request #{$def_req['id']} triggered by sale #{$receipt} — old-price stock exhausted)";
+                    $ap_log = $conn->prepare("INSERT INTO activity_logs (user_id, log_type, item_id, message) VALUES (?, '" . LOG_PRICES . "', ?, ?)");
+                    $ap_log->bind_param("iis", $user_id, $def_req['product_id'], $ap_msg);
+                    $ap_log->execute();
                 }
             }
         }

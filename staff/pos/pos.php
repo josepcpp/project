@@ -14,10 +14,22 @@ $tdm_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_k
 $tax_display_mode = $tdm_q ? ($tdm_q->fetch_assoc()['setting_value'] ?? 'exclusive') : 'exclusive';
 
 // F-13: Active bundles with a quick item summary for the POS panel
+// GAP-1: savings compares bundle price vs. effective individual price after any
+// applicable tier discounts (at the bundle component qty), so the displayed saving
+// is not overstated when tier discounts would apply to individual purchases.
 $bundles_q = $conn->query("
     SELECT b.id, b.name, b.bundle_price, b.description,
            GROUP_CONCAT(CONCAT(bi.qty,'× ',p.name) ORDER BY bi.id SEPARATOR ', ') AS items_summary,
-           ROUND(SUM(p.price * bi.qty) - b.bundle_price, 2) AS savings
+           ROUND(SUM(
+               bi.qty * p.price * (1 - COALESCE(
+                   (SELECT LEAST(99.99, pt.discount_pct) / 100
+                    FROM pricing_tiers pt
+                    WHERE pt.product_id = p.id AND pt.is_active = 1
+                      AND pt.min_qty <= bi.qty AND p.tiers_locked = 0
+                    ORDER BY pt.min_qty DESC LIMIT 1),
+                   0
+               ))
+           ) - b.bundle_price, 2) AS savings
     FROM bundles b
     JOIN bundle_items bi ON bi.bundle_id = b.id
     JOIN products p ON p.id = bi.product_id AND p.status = '" . PRODUCT_ACTIVE . "'
@@ -28,6 +40,13 @@ $bundles_q = $conn->query("
 ");
 $cur_cat = $_GET['category'] ?? 'All';
 
+// Validate category against DB values to avoid string concatenation in SQL
+$_valid_cats = [];
+if ($categories) {
+    while ($cr = $categories->fetch_assoc()) $_valid_cats[] = $cr['category'];
+    $categories->data_seek(0); // rewind for category tab rendering below
+}
+if ($cur_cat !== 'All' && !in_array($cur_cat, $_valid_cats, true)) $cur_cat = 'All';
 $cat_filter = $cur_cat !== 'All' ? " AND p.category = '" . $conn->real_escape_string($cur_cat) . "'" : "";
 
 // Inner query groups products first, then joins aggregated price_update_requests by barcode.
@@ -42,6 +61,7 @@ $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
         COALESCE(fifo.price_full_box, 0)  AS price_full_box,
         p_agg.category,
         p_agg.bulk_qty_half, p_agg.bulk_qty_full, p_agg.tiers_locked,
+        p_agg.nearest_expiry,
         COALESCE(pur_agg.total_locked, 0) AS locked_qty,
         IF(pur_agg.cnt > 0, 1, 0) AS has_pending_price
         FROM (
@@ -49,7 +69,8 @@ $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
                    SUM(p.quantity) AS quantity,
                    MAX(p.category) AS category,
                    MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.bulk_qty_full) AS bulk_qty_full,
-                   MAX(p.tiers_locked) AS tiers_locked
+                   MAX(p.tiers_locked) AS tiers_locked,
+                   MIN(CASE WHEN p.expiry_date IS NOT NULL THEN p.expiry_date END) AS nearest_expiry
             FROM products p
             WHERE p.status = '" . PRODUCT_ACTIVE . "' AND p.quantity > 0
               AND (p.expiry_date IS NULL OR p.expiry_date > CURDATE())" . $cat_filter . "
@@ -169,6 +190,11 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                         if ($effective_qty <= 0) continue;
                         $has_pending = intval($p['has_pending_price']) === 1;
                         $tiers_warn  = intval($p['tiers_locked'])      === 1;
+                        // GAP-7: Expiry proximity — warn if nearest lot expires within 7 days
+                        $expiry_days = null;
+                        if (!empty($p['nearest_expiry'])) {
+                            $expiry_days = (int)ceil((strtotime($p['nearest_expiry']) - time()) / 86400);
+                        }
                         $accent_bar  = $tiers_warn  ? 'border-l-rose-400'
                                      : ($has_pending ? 'border-l-amber-400' : 'border-l-transparent');
                         $row_bg      = $tiers_warn  ? 'bg-rose-50/20 hover:bg-rose-50/40'
@@ -185,6 +211,11 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                                     <span class="text-[8px] font-black text-rose-500 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">⚠ Tiers Under Review</span>
                                 <?php elseif ($has_pending): ?>
                                     <span class="text-[8px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">⚡ Price Pending</span>
+                                <?php endif; ?>
+                                <?php if ($expiry_days !== null && $expiry_days <= 7): ?>
+                                    <span class="text-[8px] font-black <?= $expiry_days <= 1 ? 'text-rose-600 bg-rose-100 border-rose-300' : 'text-orange-600 bg-orange-50 border-orange-200' ?> border px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">
+                                        <?= $expiry_days <= 0 ? 'Expires Today' : 'Exp ' . $expiry_days . 'd' ?>
+                                    </span>
                                 <?php endif; ?>
                             </div>
                             <span class="product-barcode hidden"><?= $p['barcode'] ?></span>
@@ -204,8 +235,9 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                         <div class="w-[88px] flex gap-1.5 justify-center shrink-0">
                             <?php if ($p['bulk_qty_half'] > 0): ?>
                                 <?php if ($tiers_warn): ?>
-                                    <button disabled title="Tiers locked — update in Master Price Table"
-                                            class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-300 font-black text-[8px] uppercase border border-slate-100 cursor-not-allowed">½ Box</button>
+                                    <button type="button"
+                                            onclick="showFlash('Bulk pricing for &ldquo;<?= htmlspecialchars(addslashes($p['name'])) ?>&rdquo; is locked while tiers are under review. Update in the Master Price Table.', 'warning')"
+                                            class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-300 font-black text-[8px] uppercase border border-slate-100 hover:bg-rose-50 hover:text-rose-400 hover:border-rose-200 transition-all cursor-pointer">½ Box</button>
                                 <?php else: ?>
                                     <button onclick="setBulk('<?= $p['barcode'] ?>', <?= $p['bulk_qty_half'] ?>)"
                                             title="Half Box — <?= $p['bulk_qty_half'] ?> pcs @ ₱<?= number_format($p['price_half_box'] ?? 0, 2) ?>"
@@ -214,8 +246,9 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                             <?php endif; ?>
                             <?php if ($p['bulk_qty_full'] > 0): ?>
                                 <?php if ($tiers_warn): ?>
-                                    <button disabled title="Tiers locked — update in Master Price Table"
-                                            class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-300 font-black text-[8px] uppercase border border-slate-100 cursor-not-allowed">Full</button>
+                                    <button type="button"
+                                            onclick="showFlash('Bulk pricing for &ldquo;<?= htmlspecialchars(addslashes($p['name'])) ?>&rdquo; is locked while tiers are under review. Update in the Master Price Table.', 'warning')"
+                                            class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-300 font-black text-[8px] uppercase border border-slate-100 hover:bg-rose-50 hover:text-rose-400 hover:border-rose-200 transition-all cursor-pointer">Full</button>
                                 <?php else: ?>
                                     <button onclick="setBulk('<?= $p['barcode'] ?>', <?= $p['bulk_qty_full'] ?>)"
                                             title="Full Box — <?= $p['bulk_qty_full'] ?> pcs @ ₱<?= number_format($p['price_full_box'] ?? 0, 2) ?>"

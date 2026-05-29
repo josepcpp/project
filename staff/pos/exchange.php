@@ -6,7 +6,15 @@
  */
 include '../../config/db.php';
 include '../../config/settings.php';
+include '../../includes/csrf.php';
 include '../layout_top.php';
+
+// Only cashiers (staff) and above can process exchanges — members cannot
+$_exchange_role = strtolower($_SESSION['role'] ?? '');
+if (!in_array($_exchange_role, [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN])) {
+    header("Location: ../dashboard.php?error=" . urlencode("You do not have permission to process item exchanges."));
+    exit();
+}
 
 $step         = intval($_GET['step'] ?? 1);
 $receipt_no   = trim($_GET['receipt'] ?? '');
@@ -19,19 +27,45 @@ if ($step >= 1 && $receipt_no !== '') {
     $sq = $conn->prepare("SELECT * FROM sales WHERE receipt_no = ? LIMIT 1");
     $sq->bind_param("s", $receipt_no);
     $sq->execute();
-    $sale = $sq->get_result()->fetch_assoc();
+    $sq_res = $sq->get_result();   // store — must be freed before next statement
+    $sale   = $sq_res->fetch_assoc();
+    $sq_res->free();
+    $sq->close();
 
     if ($sale) {
         $iq = $conn->prepare("
-            SELECT si.*, p.name, p.price AS current_price, p.barcode, p.quantity AS stock
+            SELECT si.*, p.name, p.category, p.price AS current_price, p.barcode, p.quantity AS stock
             FROM sales_items si
             JOIN products p ON p.id = si.product_id
             WHERE si.sale_id = ?
         ");
         $iq->bind_param("i", $sale['id']);
         $iq->execute();
-        while ($row = $iq->get_result()->fetch_assoc()) $sale_items[] = $row;
+        $iq_res = $iq->get_result();
+        while ($row = $iq_res->fetch_assoc()) $sale_items[] = $row;
+        $iq_res->free();
+        $iq->close();
     }
+}
+
+// ── Tax display mode (GAP-2) ──────────────────────────────────────────────────
+$tax_display_mode = 'exclusive';
+$_tdm = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='tax_display_mode' LIMIT 1");
+if ($_tdm && $_tdm_row = $_tdm->fetch_assoc()) $tax_display_mode = $_tdm_row['setting_value'] ?? 'exclusive';
+
+// ── Fetch recent sales for the quick-pick list ────────────────────────────────
+$recent_sales = [];
+$rq = $conn->query("
+    SELECT s.receipt_no, s.total, s.created_at, s.payment_mode,
+           COUNT(si.id) AS item_count
+    FROM sales s
+    LEFT JOIN sales_items si ON si.sale_id = s.id
+    GROUP BY s.id
+    ORDER BY s.created_at DESC
+    LIMIT 30
+");
+if ($rq) {
+    while ($r = $rq->fetch_assoc()) $recent_sales[] = $r;
 }
 ?>
 
@@ -55,16 +89,47 @@ if ($step >= 1 && $receipt_no !== '') {
     <!-- ── STEP 1: RECEIPT LOOKUP ──────────────────────────────────────────── -->
     <div class="card-modern shadow-xl">
         <h4 class="font-black text-slate-700 text-sm uppercase tracking-widest mb-5">Step 1 — Find Original Receipt</h4>
-        <form method="GET" action="" class="flex gap-4">
-            <input type="hidden" name="step" value="1">
-            <input type="text" name="receipt" value="<?= htmlspecialchars($receipt_no) ?>"
-                   placeholder="RCPT-20260526-XXXX" required
-                   class="input-modern flex-1 uppercase font-black tracking-widest">
-            <button type="submit" class="btn-pos-primary px-8">Search</button>
-        </form>
+
+        <!-- Live search input -->
+        <div class="relative mb-2">
+            <input type="text" id="receipt-search-input"
+                   value="<?= htmlspecialchars($receipt_no) ?>"
+                   placeholder="Type receipt no. or date to filter…"
+                   oninput="filterReceipts(this.value)"
+                   autocomplete="off"
+                   class="input-modern w-full uppercase font-black tracking-widest pr-24">
+            <button onclick="goReceipt()"
+                    class="btn-pos-primary absolute right-2 top-1/2 -translate-y-1/2 px-5 py-2 text-xs">Search</button>
+        </div>
 
         <?php if ($receipt_no && !$sale): ?>
-            <p class="text-rose-500 font-bold text-sm mt-4">No sale found for receipt <strong><?= htmlspecialchars($receipt_no) ?></strong>.</p>
+            <p class="text-rose-500 font-bold text-sm mb-4">No sale found for receipt <strong><?= htmlspecialchars($receipt_no) ?></strong>.</p>
+        <?php endif; ?>
+
+        <!-- Recent receipts quick-pick -->
+        <?php if (!empty($recent_sales)): ?>
+        <div id="receipts-panel" class="mt-3">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Recent Receipts — click to load</p>
+            <div id="receipts-list" class="space-y-1 max-h-72 overflow-y-auto">
+                <?php foreach ($recent_sales as $rs): ?>
+                <div class="receipt-row flex items-center justify-between px-4 py-3 rounded-2xl hover:bg-violet-50 cursor-pointer border border-transparent hover:border-violet-100 transition-all group"
+                     data-receipt="<?= htmlspecialchars($rs['receipt_no']) ?>"
+                     onclick="loadReceipt('<?= htmlspecialchars($rs['receipt_no']) ?>')">
+                    <div>
+                        <p class="font-black text-slate-700 text-sm group-hover:text-violet-700 tracking-widest"><?= htmlspecialchars($rs['receipt_no']) ?></p>
+                        <p class="text-[10px] text-slate-400 font-bold">
+                            <?= date('M j, Y g:i A', strtotime($rs['created_at'])) ?>
+                            · <?= $rs['item_count'] ?> item<?= $rs['item_count'] != 1 ? 's' : '' ?>
+                            · <?= htmlspecialchars($rs['payment_mode']) ?>
+                        </p>
+                    </div>
+                    <span class="font-black text-emerald-600 text-sm">₱<?= number_format($rs['total'], 2) ?></span>
+                </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php else: ?>
+        <p class="text-slate-300 text-xs font-bold italic mt-3">No sales records found yet.</p>
         <?php endif; ?>
     </div>
 
@@ -76,6 +141,7 @@ if ($step >= 1 && $receipt_no !== '') {
         <p class="text-slate-400 text-xs font-bold mb-6">Receipt <strong class="text-slate-600"><?= htmlspecialchars($sale['receipt_no']) ?></strong> · <?= date('M j, Y g:i A', strtotime($sale['created_at'])) ?> · <strong class="text-emerald-600">₱<?= number_format($sale['total'], 2) ?></strong></p>
 
         <form method="POST" action="exchange_process.php" id="exchangeForm">
+            <?= csrf_field() ?>
             <input type="hidden" name="sale_id" value="<?= $sale['id'] ?>">
             <input type="hidden" name="receipt_no" value="<?= htmlspecialchars($sale['receipt_no']) ?>">
 
@@ -88,9 +154,15 @@ if ($step >= 1 && $receipt_no !== '') {
                            id="item_<?= $i ?>" onchange="toggleReturn(<?= $i ?>)"
                            class="w-5 h-5 accent-violet-500 flex-shrink-0">
                     <div class="flex-1">
-                        <p class="font-bold text-slate-700"><?= htmlspecialchars($item['name']) ?></p>
-                        <p class="text-[10px] text-slate-400 font-bold">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <p class="font-bold text-slate-700"><?= htmlspecialchars($item['name']) ?></p>
+                            <span class="text-[8px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded uppercase tracking-wide"><?= htmlspecialchars($item['category'] ?? '') ?></span>
+                        </div>
+                        <p class="text-[10px] text-slate-400 font-bold mt-0.5">
                             Purchased: <?= $item['qty'] ?> × ₱<?= number_format($item['price'], 2) ?> = ₱<?= number_format($item['qty'] * $item['price'], 2) ?>
+                            <?php if (abs($item['current_price'] - $item['price']) > 0.001): ?>
+                                <span class="ml-2 text-amber-500">· Current price: ₱<?= number_format($item['current_price'], 2) ?></span>
+                            <?php endif; ?>
                         </p>
                     </div>
                     <div id="return-qty-wrap-<?= $i ?>" class="hidden flex items-center gap-2">
@@ -116,6 +188,20 @@ if ($step >= 1 && $receipt_no !== '') {
                 </div>
                 <div id="replacements-list" class="space-y-3"></div>
                 <p id="no-replacements-hint" class="text-slate-300 text-xs font-bold italic">Click "Add Item" to pick replacement products.</p>
+
+                <!-- Product search panel — inline inside replacement section so it's always in view -->
+                <div id="product-search-panel" class="hidden mt-4 bg-violet-50 border border-violet-200 rounded-2xl p-4">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Search Replacement Product</p>
+                    <div class="flex gap-3 mb-3">
+                        <input type="text" id="product-search-input" placeholder="Type name or barcode…"
+                               oninput="searchProducts()"
+                               autocomplete="off"
+                               class="input-modern flex-1 bg-white">
+                        <button type="button" onclick="closeSearch()"
+                                class="text-slate-300 hover:text-rose-400 font-black px-3 transition-colors">✕</button>
+                    </div>
+                    <div id="product-search-results" class="space-y-1 max-h-60 overflow-y-auto"></div>
+                </div>
             </div>
 
             <!-- Delta summary -->
@@ -171,20 +257,47 @@ if ($step >= 1 && $receipt_no !== '') {
         </form>
     </div>
 
-    <!-- Product search panel for replacements -->
-    <div id="product-search-panel" class="hidden card-modern shadow-xl border-2 border-violet-200">
-        <h5 class="font-black text-slate-700 text-xs uppercase tracking-widest mb-4">Search Replacement Product</h5>
-        <div class="flex gap-3 mb-4">
-            <input type="text" id="product-search-input" placeholder="Name or barcode…" oninput="searchProducts()"
-                   class="input-modern flex-1">
-        </div>
-        <div id="product-search-results" class="space-y-2 max-h-72 overflow-y-auto"></div>
-    </div>
-
     <?php endif; ?>
 </div>
 
 <script>
+// ── Receipt search helpers ────────────────────────────────────────────────────
+function filterReceipts(q) {
+    const rows = document.querySelectorAll('.receipt-row');
+    const term = q.trim().toUpperCase();
+    let visible = 0;
+    rows.forEach(row => {
+        const match = !term || row.dataset.receipt.toUpperCase().includes(term) ||
+                      row.textContent.toUpperCase().includes(term);
+        row.style.display = match ? '' : 'none';
+        if (match) visible++;
+    });
+}
+
+function goReceipt() {
+    const val = document.getElementById('receipt-search-input').value.trim();
+    if (!val) return;
+    loadReceipt(val);
+}
+
+function loadReceipt(receiptNo) {
+    window.location.href = 'exchange.php?step=1&receipt=' + encodeURIComponent(receiptNo);
+}
+
+// Allow Enter key to trigger search
+document.getElementById('receipt-search-input')?.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); goReceipt(); }
+});
+
+// Pre-filter list if a receipt value is already in the box (e.g. "not found" state)
+(function() {
+    const inp = document.getElementById('receipt-search-input');
+    if (inp && inp.value.trim()) filterReceipts(inp.value);
+})();
+
+// ── Replacement / exchange helpers ───────────────────────────────────────────
+const TAX_MODE = <?= json_encode($tax_display_mode) ?>; // GAP-2
+
 let replacements     = [];  // [{ product_id, name, price, qty }]
 let pendingSlotIndex = null;
 
@@ -215,6 +328,9 @@ function getNewTotal() {
 }
 
 function recalcDelta() {
+    // Guard: these elements only exist in step 2 (when a sale is loaded)
+    if (!document.getElementById('return-total-display')) return;
+
     const returnTotal = getReturnTotal();
     const newTotal    = getNewTotal();
     const delta       = newTotal - returnTotal;
@@ -226,6 +342,9 @@ function recalcDelta() {
     const label   = document.getElementById('delta-label');
     const paySection = document.getElementById('delta-payment-section');
 
+    // GAP-2: note whether displayed prices include or exclude VAT
+    const taxNote = TAX_MODE === 'inclusive' ? ' (incl. VAT)' : ' (excl. VAT)';
+
     if (Math.abs(delta) < 0.01) {
         display.textContent = '₱0.00';
         display.className   = 'text-2xl font-black text-emerald-400';
@@ -236,27 +355,37 @@ function recalcDelta() {
     } else if (delta > 0) {
         display.textContent = '+ ₱' + delta.toFixed(2);
         display.className   = 'text-2xl font-black text-amber-400';
-        label.textContent   = 'Customer pays the difference';
+        label.textContent   = 'Customer pays the difference' + taxNote;
         paySection.classList.remove('hidden');
         document.getElementById('delta-type-hidden').value   = 'collect';
         document.getElementById('delta-amount-hidden').value = delta.toFixed(2);
     } else {
         display.textContent = '− ₱' + Math.abs(delta).toFixed(2);
         display.className   = 'text-2xl font-black text-blue-400';
-        label.textContent   = 'Refund the difference to customer';
+        label.textContent   = 'Refund the difference to customer' + taxNote;
         paySection.classList.add('hidden');
         document.getElementById('delta-type-hidden').value   = 'refund';
         document.getElementById('delta-amount-hidden').value = Math.abs(delta).toFixed(2);
     }
 }
 
-// Add a replacement row
+// Add a replacement row — opens inline search panel
 function addReplacement() {
     pendingSlotIndex = replacements.length;
-    document.getElementById('product-search-panel').classList.remove('hidden');
-    document.getElementById('product-search-input').value = '';
-    document.getElementById('product-search-results').innerHTML = '';
-    document.getElementById('product-search-input').focus();
+    var panel = document.getElementById('product-search-panel');
+    var input = document.getElementById('product-search-input');
+    var results = document.getElementById('product-search-results');
+    if (!panel) return;
+    panel.classList.remove('hidden');
+    if (input)   { input.value = ''; input.focus(); }
+    if (results) results.innerHTML = '';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeSearch() {
+    var panel = document.getElementById('product-search-panel');
+    if (panel) panel.classList.add('hidden');
+    pendingSlotIndex = null;
 }
 
 // Pick a product from search results into a replacement slot
@@ -271,7 +400,7 @@ function pickReplacement(pid, name, price) {
         replacements.push({ product_id: pid, name, price, qty: 1 });
     }
     pendingSlotIndex = null;
-    document.getElementById('product-search-panel').classList.add('hidden');
+    closeSearch();
     renderReplacements();
     recalcDelta();
 }
@@ -322,7 +451,7 @@ function searchProducts() {
         .then(data => {
             if (!data.length) { results.innerHTML = '<p class="text-slate-300 text-xs font-bold p-4">No products found.</p>'; return; }
             results.innerHTML = data.map(p => `
-                <div onclick="pickReplacement(${p.id}, ${JSON.stringify(p.name)}, ${p.price})"
+                <div onclick='pickReplacement(${p.id}, ${JSON.stringify(p.name)}, ${parseFloat(p.price)})'
                      class="flex items-center justify-between p-4 hover:bg-violet-50 rounded-2xl cursor-pointer transition-colors border border-transparent hover:border-violet-100">
                     <div>
                         <p class="font-bold text-slate-700 text-sm">${p.name}</p>
