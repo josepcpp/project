@@ -543,3 +543,25 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
     // so the next request skips the broken migration entirely
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end migration block
+
+// ── v1.6.1 — Legacy staff procurement cleanup ────────────────────────────────
+$_db_version   = '1.6.1';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+
+$conn->query("DROP TABLE IF EXISTS procurement_batches");
+$conn->query("DROP TABLE IF EXISTS delivery_items");
+$conn->query("DROP TABLE IF EXISTS quantity_alerts");
+$conn->query("DROP TABLE IF EXISTS recount_mismatch_log");
+$conn->query("DROP TABLE IF EXISTS procurement_access_log");
+
+$conn->query("ALTER TABLE users DROP COLUMN IF EXISTS procurement_access");
+$conn->query("ALTER TABLE users DROP COLUMN IF EXISTS procurement_denial_reason");
+$conn->query("ALTER TABLE users DROP COLUMN IF EXISTS locked_supplier_id");
+$conn->query("ALTER TABLE users DROP COLUMN IF EXISTS supervision_flag");
+$conn->query("ALTER TABLE users DROP COLUMN IF EXISTS supervision_flagged_at");
+
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.1

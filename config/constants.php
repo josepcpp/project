@@ -71,32 +71,6 @@ define('APPROVAL_DENIED',        'denied');
 
 define('APPROVAL_ACTIVE_STATUSES', [APPROVAL_PENDING_STEP1, APPROVAL_PENDING_STEP2]);
 
-// ── PROCUREMENT ACCESS ────────────────────────────────────────────────────────
-define('PROC_NONE',     'none');
-define('PROC_PENDING',  'pending');
-define('PROC_APPROVED', 'approved');
-define('PROC_RECOUNT',  'recount');
-define('PROC_DENIED',   'denied');
-
-// ── PROCUREMENT BATCH STATUS ──────────────────────────────────────────────────
-define('BATCH_APPROVED',        'approved');
-define('BATCH_ENCODING',        'encoding');
-define('BATCH_RECEIVING',       'receiving');
-define('BATCH_COMPLETE_CLEAN',  'complete_clean');
-define('BATCH_COMPLETE_ERRORS', 'complete_errors');
-
-define('BATCH_COMPLETE_STATUSES', [BATCH_COMPLETE_CLEAN, BATCH_COMPLETE_ERRORS]);
-define('BATCH_ACTIVE_STATUSES',   [BATCH_APPROVED, BATCH_ENCODING, BATCH_RECEIVING]);
-
-// ── QUANTITY ALERT (RECOUNT) STATUS ──────────────────────────────────────────
-define('ALERT_PENDING',    'pending');
-define('ALERT_RECOUNTING', 'recounting');
-define('ALERT_SUBMITTED',  'submitted');
-define('ALERT_APPROVED',   'approved');
-define('ALERT_REJECTED',   'rejected');
-define('ALERT_RESOLVED',   'resolved');
-
-define('ALERT_OPEN_STATUSES', [ALERT_PENDING, ALERT_RECOUNTING, ALERT_SUBMITTED]);
 
 // ── PRICE UPDATE REQUEST STATUS ───────────────────────────────────────────────
 define('PRICE_REQ_PENDING',        'pending');
@@ -176,9 +150,6 @@ define('TICKET_RESOLVED',    'resolved');
 
 define('TICKET_STATUSES', [TICKET_OPEN, TICKET_IN_PROGRESS, TICKET_RESOLVED]);
 
-// ── SUPERVISION FLAG ──────────────────────────────────────────────────────────
-define('SUPERVISION_NONE',       'none');
-define('SUPERVISION_SUPERVISED', 'supervised');
 
 // ── DISCOUNT TYPES ────────────────────────────────────────────────────────────
 define('DISCOUNT_PERCENTAGE', 'Percentage');

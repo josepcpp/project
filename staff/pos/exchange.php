@@ -11,7 +11,7 @@ include '../layout_top.php';
 
 // Only cashiers (staff) and above can process exchanges — members cannot
 $_exchange_role = strtolower($_SESSION['role'] ?? '');
-if (!in_array($_exchange_role, [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN])) {
+if (!in_array($_exchange_role, [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN, ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER])) {
     header("Location: ../dashboard.php?error=" . urlencode("You do not have permission to process item exchanges."));
     exit();
 }

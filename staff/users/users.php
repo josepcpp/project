@@ -31,17 +31,6 @@ if ($is_superadmin) {
     ");
 }
 
-$pending_proc_reqs = $conn->query("SELECT id, username, full_name FROM users WHERE role='" . ROLE_STAFF . "' AND procurement_access='" . PROC_PENDING . "'");
-
-$active_proc_rows = [];
-$all_suppliers    = [];
-if ($is_superadmin) {
-    $ap_q = $conn->query("SELECT u.id, u.username, u.full_name, s.name AS supplier_name, s.invoice_number FROM users u LEFT JOIN suppliers s ON s.id = u.locked_supplier_id WHERE u.role = '" . ROLE_STAFF . "' AND u.procurement_access = '" . PROC_APPROVED . "'");
-    $active_proc_rows = $ap_q ? $ap_q->fetch_all(MYSQLI_ASSOC) : [];
-    $sup_q = $conn->query("SELECT id, name, invoice_number FROM suppliers ORDER BY created_at DESC");
-    $all_suppliers = $sup_q ? $sup_q->fetch_all(MYSQLI_ASSOC) : [];
-}
-
 $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
 ?>
 
@@ -130,70 +119,6 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
             <?php endif; ?>
         </div>
         <?php endforeach; ?>
-        </div>
-    </div>
-    <?php endif; ?>
-
-    <!-- ── PROCUREMENT ACCESS REQUESTS ──────────────────────────────────────── -->
-    <?php if ($pending_proc_reqs && $pending_proc_reqs->num_rows > 0): ?>
-    <div class="bg-blue-50 border border-blue-200 rounded-3xl p-6">
-        <div class="flex items-center gap-3 mb-4">
-            <div class="w-8 h-8 bg-blue-500 rounded-xl flex items-center justify-center">
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            </div>
-            <h4 class="font-black text-blue-800 text-sm uppercase tracking-widest">Procurement Access Requests — <?= $pending_proc_reqs->num_rows ?></h4>
-        </div>
-        <div class="flex flex-col gap-3">
-            <?php while ($pr = $pending_proc_reqs->fetch_assoc()): ?>
-            <div class="bg-white border border-blue-100 rounded-2xl px-5 py-3 flex items-center justify-between gap-4">
-                <div>
-                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($pr['full_name'] ?: $pr['username']) ?></p>
-                    <p class="text-[10px] text-slate-400 font-bold">@<?= htmlspecialchars($pr['username']) ?></p>
-                </div>
-                <div class="flex gap-2 flex-shrink-0">
-                    <form method="POST" action="users_process.php" class="inline">
-                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
-                        <input type="hidden" name="action" value="procurement_approve">
-                        <input type="hidden" name="id"     value="<?= $pr['id'] ?>">
-                        <button class="bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl hover:bg-emerald-600 transition-all">Approve</button>
-                    </form>
-                    <button onclick="openProcDenyModal(<?= $pr['id'] ?>, '<?= addslashes(htmlspecialchars($pr['full_name'] ?: $pr['username'])) ?>')"
-                            class="bg-white border border-rose-200 text-rose-500 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl hover:bg-rose-500 hover:text-white transition-all">Deny</button>
-                </div>
-            </div>
-            <?php endwhile; ?>
-        </div>
-    </div>
-    <?php endif; ?>
-
-    <!-- ── ACTIVE PROCUREMENT ASSIGNMENTS (superadmin only) ─────────────────── -->
-    <?php if ($is_superadmin && !empty($active_proc_rows)): ?>
-    <div class="bg-indigo-50 border border-indigo-200 rounded-3xl p-6">
-        <div class="flex items-center gap-3 mb-4">
-            <div class="w-8 h-8 bg-indigo-500 rounded-xl flex items-center justify-center">
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            </div>
-            <h4 class="font-black text-indigo-800 text-sm uppercase tracking-widest">Active Procurement Assignments — <?= count($active_proc_rows) ?></h4>
-        </div>
-        <div class="flex flex-col gap-3">
-            <?php foreach ($active_proc_rows as $ap): ?>
-            <div class="bg-white border border-indigo-100 rounded-2xl px-5 py-3 flex items-center justify-between gap-4">
-                <div>
-                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($ap['full_name'] ?: $ap['username']) ?></p>
-                    <p class="text-[10px] text-slate-400 font-bold">@<?= htmlspecialchars($ap['username']) ?></p>
-                </div>
-                <div class="flex items-center gap-4 flex-shrink-0">
-                    <div class="text-right">
-                        <p class="text-xs font-black text-indigo-600"><?= htmlspecialchars($ap['supplier_name'] ?? '—') ?></p>
-                        <p class="text-[10px] text-slate-400 font-mono"><?= htmlspecialchars($ap['invoice_number'] ?? '') ?></p>
-                    </div>
-                    <button onclick="openChangeVoucherModal(<?= $ap['id'] ?>, '<?= addslashes(htmlspecialchars($ap['username'])) ?>')"
-                            class="bg-indigo-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl hover:bg-indigo-600 transition-all">
-                        Change Voucher
-                    </button>
-                </div>
-            </div>
-            <?php endforeach; ?>
         </div>
     </div>
     <?php endif; ?>
@@ -299,12 +224,6 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
                                 <?php if ($u['reset_requested']): ?>
                                     <span class="text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full mt-1 inline-block">Reset Requested</span>
                                 <?php endif; ?>
-                                <?php if (($u['supervision_flag'] ?? SUPERVISION_NONE) === SUPERVISION_SUPERVISED): ?>
-                                    <span class="text-[9px] font-black text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full mt-1 inline-block">⚠ To Be Supervised</span>
-                                    <?php if ($u['supervision_flagged_at']): ?>
-                                        <p class="text-[9px] text-slate-400 font-bold">Flagged <?= date('M d, Y', strtotime($u['supervision_flagged_at'])) ?></p>
-                                    <?php endif; ?>
-                                <?php endif; ?>
                             </div>
                         </div>
                     </td>
@@ -336,16 +255,6 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
                             <?php endif; ?>
                         <?php else: ?>
                             <div class="flex items-center justify-end gap-4">
-
-                                <!-- Supervision flag clear (superadmin only) -->
-                                <?php if ($is_superadmin && ($u['supervision_flag'] ?? SUPERVISION_NONE) === SUPERVISION_SUPERVISED): ?>
-                                <form method="POST" action="users_process.php" class="inline">
-                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
-                                    <input type="hidden" name="action" value="clear_supervision">
-                                    <input type="hidden" name="id" value="<?= $u['id'] ?>">
-                                    <button class="text-[10px] font-black text-rose-500 hover:underline uppercase tracking-widest">Clear Flag</button>
-                                </form>
-                                <?php endif; ?>
 
                                 <!-- Toggle Active/Inactive -->
                                 <?php if (!$is_self): ?>
@@ -508,7 +417,7 @@ function openTerminateModal(id, name) {
 }
 
 function closeModals() {
-    ['terminate-modal', 'reset-modal', 'change-voucher-modal'].forEach(id => {
+    ['terminate-modal', 'reset-modal'].forEach(id => {
         const m = document.getElementById(id);
         if (m) { m.classList.add('hidden'); m.classList.remove('flex'); }
     });
@@ -539,90 +448,10 @@ document.getElementById('reset-confirm').addEventListener('input', function() {
 });
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModals(); });
-['terminate-modal', 'reset-modal', 'change-voucher-modal'].forEach(id => {
+['terminate-modal', 'reset-modal'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', function(e) { if (e.target === this) closeModals(); });
 });
-
-function openChangeVoucherModal(id, username) {
-    document.getElementById('change-voucher-id').value = id;
-    document.getElementById('change-voucher-name').textContent = '@' + username;
-    const modal = document.getElementById('change-voucher-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-}
 </script>
-
-<!-- ── PROCUREMENT DENY MODAL ─────────────────────────────────────────────── -->
-<div id="procDenyOverlay" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(15,23,42,.55);backdrop-filter:blur(4px);align-items:center;justify-content:center;"
-     onclick="if(event.target===this)closeProcDenyModal()">
-    <div style="background:#fff;border-radius:1.75rem;box-shadow:0 32px 64px -12px rgba(0,0,0,.35);padding:2rem;max-width:420px;width:calc(100% - 2rem);">
-        <p style="font-weight:900;font-size:1rem;color:#0f172a;margin:0 0 .4rem;">Deny Procurement Access</p>
-        <p id="procDenyName" style="font-size:.8rem;color:#64748b;margin:0 0 1.25rem;"></p>
-        <form id="procDenyForm" method="POST" action="users_process.php">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
-            <input type="hidden" name="action" value="procurement_deny">
-            <input type="hidden" name="id" id="procDenyId" value="">
-            <label style="display:block;font-size:.75rem;font-weight:700;color:#475569;margin-bottom:.4rem;">Reason for denial <span style="color:#94a3b8;font-weight:400;">(visible to staff)</span></label>
-            <textarea name="denial_reason" id="procDenyReason" required maxlength="500"
-                style="width:100%;border:1.5px solid #e2e8f0;border-radius:.75rem;padding:.75rem;font-size:.85rem;color:#0f172a;resize:vertical;min-height:90px;outline:none;box-sizing:border-box;"
-                placeholder="e.g. Insufficient reason provided. Please discuss with your supervisor before resubmitting."></textarea>
-            <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1.25rem;">
-                <button type="button" onclick="closeProcDenyModal()"
-                    style="padding:.65rem 1.5rem;border-radius:.75rem;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;font-weight:900;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;cursor:pointer;">Cancel</button>
-                <button type="submit"
-                    style="padding:.65rem 1.5rem;border-radius:.75rem;border:none;background:#ef4444;color:#fff;font-weight:900;font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;cursor:pointer;">Deny Access</button>
-            </div>
-        </form>
-    </div>
-</div>
-<script>
-function openProcDenyModal(id, name) {
-    document.getElementById('procDenyId').value = id;
-    document.getElementById('procDenyName').textContent = 'Staff: ' + name;
-    document.getElementById('procDenyReason').value = '';
-    var o = document.getElementById('procDenyOverlay');
-    o.style.display = 'flex';
-}
-function closeProcDenyModal() {
-    document.getElementById('procDenyOverlay').style.display = 'none';
-}
-var _pdm = document.getElementById('procDenyOverlay');
-if (_pdm) _pdm.addEventListener('click', function(e) { if (e.target === this) closeProcDenyModal(); });
-</script>
-
-<!-- ── CHANGE VOUCHER MODAL (superadmin only) ─────────────────────────────── -->
-<?php if ($is_superadmin): ?>
-<div id="change-voucher-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] hidden flex items-center justify-center p-6">
-    <div class="bg-white rounded-3xl shadow-2xl p-10 max-w-md w-full">
-        <div class="w-14 h-14 bg-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-5">
-            <svg class="w-7 h-7 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-        </div>
-        <h3 class="serif-title text-2xl font-bold text-slate-800 text-center mb-1">Change Supply Voucher</h3>
-        <p id="change-voucher-name" class="text-slate-400 text-sm text-center font-bold mb-6"></p>
-        <form method="POST" action="users_process.php">
-            <input type="hidden" name="csrf_token"  value="<?= htmlspecialchars($_SESSION['csrf_token'] ?? '') ?>">
-            <input type="hidden" name="action"       value="change_voucher">
-            <input type="hidden" name="id"           id="change-voucher-id">
-            <div class="mb-5">
-                <label class="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Assign Supply Voucher</label>
-                <select name="supplier_id" required
-                    class="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 font-medium text-slate-700 outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-300 transition-all">
-                    <option value="">— Select a voucher —</option>
-                    <?php foreach ($all_suppliers as $vs): ?>
-                    <option value="<?= $vs['id'] ?>">
-                        <?= htmlspecialchars($vs['name']) ?> — <?= htmlspecialchars($vs['invoice_number']) ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="flex gap-3">
-                <button type="button" onclick="closeModals()" class="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-2xl hover:bg-slate-200 transition-all">Cancel</button>
-                <button type="submit" class="flex-1 bg-indigo-500 text-white font-bold py-3 rounded-2xl hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-100">Update Voucher</button>
-            </div>
-        </form>
-    </div>
-</div>
-<?php endif; ?>
 
 <?php include '../layout_bottom.php'; ?>

@@ -32,7 +32,7 @@ $username = $_SESSION['username'] ?? "User";
 $role = strtolower($_SESSION['role'] ?? ROLE_STAFF);
 $sys_version = "1.2.8"; // Bump version to force CSS refresh
 // L-02: session signature for SPA cache invalidation on role/access change
-$session_sig  = md5(($_SESSION['user_id'] ?? '') . '|' . $role . '|' . ($_SESSION['procurement_access'] ?? ''));
+$session_sig  = md5(($_SESSION['user_id'] ?? '') . '|' . $role);
 
 // 📂 INFORMATION ARCHITECTURE
 $titles = [
@@ -144,36 +144,12 @@ $hrefs = [
     'price_checker.php'       => '/project/staff/procurement/price_checker.php',
 ];
 
-$staff_procurement_steps = ['product_info.php', 'delivery_receive.php'];
-$pipeline_steps          = ['batches_pending.php', 'discrepancy_resolve.php'];
+$pipeline_steps = ['batches_pending.php', 'discrepancy_resolve.php'];
 
-// Load procurement access for staff
-$staff_procurement = 'n/a';
-$procurement_pending_count = 0;
-$recount_count = 0;
-$qty_alert_count = 0;
 $refund_queue_count = 0;
 $support_open_count = 0;
 $support_reply_count = 0;
 if ($role === ROLE_STAFF) {
-    $pa_q = $conn->prepare("SELECT procurement_access FROM users WHERE id = ?");
-    $pa_q->bind_param("i", $_SESSION['user_id']);
-    $pa_q->execute();
-    $db_procurement = $pa_q->get_result()->fetch_assoc()['procurement_access'] ?? PROC_NONE;
-
-    // Always trust the DB value so admin can revoke access at any time mid-session
-    $staff_procurement = $db_procurement;
-    $_SESSION['procurement_access'] = $db_procurement;
-
-    // Auto-unlock procurement when owner has requested a recount
-    if ($staff_procurement !== PROC_APPROVED) {
-        $rq = $conn->query("SELECT COUNT(*) as c FROM quantity_alerts WHERE status = '" . ALERT_RECOUNTING . "'");
-        $recount_count = intval($rq->fetch_assoc()['c'] ?? 0);
-        if ($recount_count > 0) {
-            $staff_procurement = PROC_RECOUNT;
-            $_SESSION['procurement_access'] = PROC_RECOUNT;
-        }
-    }
     // Support: badge only when admin replied and staff hasn't replied back (last message is not theirs)
     $srv = $conn->prepare("
         SELECT COUNT(*) AS c FROM support_tickets st
@@ -184,10 +160,6 @@ if ($role === ROLE_STAFF) {
     $srv->execute();
     $support_reply_count = intval($srv->get_result()->fetch_assoc()['c'] ?? 0);
 } elseif (in_array($role, ROLES_ADMIN_AND_UP)) {
-    $pr_q = $conn->query("SELECT COUNT(*) AS c FROM users WHERE role='" . ROLE_STAFF . "' AND procurement_access='" . PROC_PENDING . "'");
-    $procurement_pending_count = intval($pr_q->fetch_assoc()['c'] ?? 0);
-    $qa_q = $conn->query("SELECT COUNT(*) AS c FROM quantity_alerts WHERE status IN ('" . ALERT_PENDING . "','" . ALERT_RECOUNTING . "')");
-    $qty_alert_count = intval($qa_q ? $qa_q->fetch_assoc()['c'] ?? 0 : 0);
     // Refund queue badge: pending sales refunds + pending delivery return requests
     $rq_q = $conn->query("SELECT (SELECT COUNT(*) FROM refunds WHERE status='" . REFUND_PENDING . "') + (SELECT COUNT(*) FROM delivery_return_requests WHERE status='" . DR_PENDING . "') AS c");
     $refund_queue_count = intval($rq_q ? $rq_q->fetch_assoc()['c'] ?? 0 : 0);
@@ -250,26 +222,34 @@ if (in_array($role, ROLES_PROCUREMENT_STAFF)) {
 
 if ($role === ROLE_STAFF) {
     $nav_sections = [
-        'Overview'    => ['dashboard.php'],
-        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
-        'Inventory'   => ['stock_management.php'],
-        'Procurement' => $staff_procurement_steps,
-        'Help'        => ['help.php'],
+        'Overview'  => ['dashboard.php'],
+        'Sales'     => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Inventory' => ['stock_management.php'],
+        'Help'      => ['help.php'],
     ];
 } elseif ($role === ROLE_RECEIVER) {
     $nav_sections = [
+        'Overview'    => ['dashboard.php'],
+        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Inventory'   => ['stock_management.php'],
         'Procurement' => ['receive_batch.php'],
         'Help'        => ['help.php'],
     ];
 } elseif ($role === ROLE_VALIDATOR) {
     $nav_sections = [
+        'Overview'    => ['dashboard.php'],
+        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Inventory'   => ['stock_management.php'],
         'Procurement' => ['validate_batch.php'],
         'Help'        => ['help.php'],
     ];
 } elseif ($role === ROLE_PRICE_CHECKER) {
     $nav_sections = [
-        'Reports' => ['price_checker.php'],
-        'Help'    => ['help.php'],
+        'Overview'    => ['dashboard.php'],
+        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Inventory'   => ['stock_management.php'],
+        'Reports'     => ['price_checker.php'],
+        'Help'        => ['help.php'],
     ];
 } elseif (in_array($role, ROLES_ADMIN_OWNER)) {
     $nav_sections = [
@@ -362,46 +342,11 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
 
     <div class="flex-1 overflow-y-auto no-scrollbar pb-10">
         <nav class="space-y-1">
-            <?php foreach($nav_sections as $section => $files):
-                // Step counter and lock state only apply to the staff Procurement section
-                $is_staff_procurement = ($section === 'Procurement' && $role === ROLE_STAFF);
-                $step = 1;
-                $proc_locked  = $is_staff_procurement && !in_array($staff_procurement, [PROC_APPROVED, PROC_RECOUNT]);
-                $proc_waiting = $is_staff_procurement && $staff_procurement === PROC_PENDING;
-                $proc_recount = $is_staff_procurement && $staff_procurement === PROC_RECOUNT;
-            ?>
-                <p class="sidebar-section-label <?= $is_staff_procurement && !$proc_locked ? ($proc_recount ? 'text-amber-500' : 'text-emerald-400') : '' ?>">
-                    <?= $section ?>
-                    <?php if ($proc_recount): ?>
-                        <span class="text-amber-400 normal-case font-bold animate-pulse"> · Recount Active</span>
-                    <?php elseif ($is_staff_procurement && !$proc_locked): ?>
-                        <span class="opacity-50 normal-case font-bold"> · 2-step flow</span>
-                    <?php elseif ($proc_waiting): ?>
-                        <span class="text-amber-400 normal-case font-bold animate-pulse"> · Pending</span>
-                    <?php elseif ($proc_locked): ?>
-                        <span class="text-slate-300 normal-case font-bold"> · Request Access</span>
-                    <?php endif; ?>
-                </p>
+            <?php foreach($nav_sections as $section => $files): ?>
+                <p class="sidebar-section-label"><?= $section ?></p>
                 <?php foreach($files as $file):
-                    $isPending = $file === 'product_info.php' && isset($_SESSION['active_batch_id']) && $current_page !== 'product_info.php';
-                    if ($proc_locked) {
-                        $navClass = 'locked';
-                    } elseif ($current_page == $file) {
-                        $navClass = 'active';
-                    } elseif ($isPending) {
-                        $navClass = 'pending';
-                    } else {
-                        $navClass = '';
-                    }
-                    // Admin badge on users.php for pending procurement requests
-                    $showProcBadge  = $file === 'users.php' && $procurement_pending_count > 0;
-                    // Badge on delivery_receive.php for quantity discrepancy alerts (staff only)
-                    $showAlertBadge = $file === 'delivery_receive.php' && $role === ROLE_STAFF && ($qty_alert_count ?? 0) > 0;
-                    // Staff badge on dashboard.php for recount tasks
-                    $showRecountBadge = $file === 'dashboard.php' && $role === ROLE_STAFF && $recount_count > 0;
-                    // Refund queue badge
+                    $navClass = ($current_page == $file) ? 'active' : '';
                     $showRefundQueueBadge = $file === 'refund_queue.php' && ($refund_queue_count ?? 0) > 0;
-                    // Support badge on help.php
                     $showSupportBadge = $file === 'help.php' && (
                         in_array($role, ROLES_ADMIN_AND_UP) && $support_open_count > 0 ||
                         $role === ROLE_STAFF && $support_reply_count > 0
@@ -410,19 +355,7 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
                     <a href="<?= $hrefs[$file] ?? $file ?>" class="nav-item <?= $navClass ?>">
                         <?= $icons[$file] ?? '' ?>
                         <span class="nav-text font-bold text-sm flex-1"><?= $titles[$file] ?></span>
-                        <?php if ($showRecountBadge): ?>
-                            <span class="nav-text ml-auto bg-amber-500 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 animate-pulse">
-                                <?= $recount_count ?>
-                            </span>
-                        <?php elseif ($showProcBadge): ?>
-                            <span class="nav-text ml-auto bg-amber-400 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0">
-                                <?= $procurement_pending_count ?>
-                            </span>
-                        <?php elseif ($showAlertBadge): ?>
-                            <span class="nav-text ml-auto bg-rose-500 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0">
-                                <?= $qty_alert_count ?>
-                            </span>
-                        <?php elseif ($showRefundQueueBadge): ?>
+                        <?php if ($showRefundQueueBadge): ?>
                             <span class="nav-text ml-auto bg-amber-500 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 animate-pulse">
                                 <?= $refund_queue_count ?>
                             </span>
@@ -430,14 +363,8 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
                             <span class="nav-text ml-auto bg-violet-500 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 animate-pulse">
                                 <?= in_array($role, ROLES_ADMIN_AND_UP) ? $support_open_count : $support_reply_count ?>
                             </span>
-                        <?php elseif ($is_staff_procurement): ?>
-                            <span class="nav-text ml-auto text-[9px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0
-                                <?= ($current_page == $file) ? 'bg-white/20 text-white' : ($isPending ? 'bg-amber-200 text-amber-700 animate-pulse' : ($proc_locked ? 'bg-slate-100 text-slate-300' : 'bg-slate-100 text-slate-400')) ?>">
-                                <?= $step ?>
-                            </span>
                         <?php endif; ?>
                     </a>
-                    <?php $step++; ?>
                 <?php endforeach; ?>
             <?php endforeach; ?>
         </nav>
@@ -484,7 +411,7 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
         </div>
     </header>
 
-    <div id="page-content" class="p-8 animate-in"><div id="spa-state" data-batch="<?= isset($_SESSION['active_batch_id']) ? '1' : '0' ?>" data-procurement="<?= htmlspecialchars($staff_procurement) ?>" data-recount="<?= $recount_count ?>" data-sig="<?= $session_sig ?>" class="hidden"></div>
+    <div id="page-content" class="p-8 animate-in"><div id="spa-state" data-batch="<?= isset($_SESSION['active_batch_id']) ? '1' : '0' ?>" data-sig="<?= $session_sig ?>" class="hidden"></div>
 
 <script>
 const pageCache = new Map(); 
