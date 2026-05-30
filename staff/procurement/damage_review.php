@@ -34,7 +34,8 @@ if ($exp_days > 0) {
 
 // ── Load all tickets ──────────────────────────────────────────────────────────
 $tq = $conn->query(
-    "SELECT ddt.*, rb.supplier_name, rb.computed_subtotal, rb.control_subtotal
+    "SELECT ddt.*, rb.supplier_name, rb.computed_subtotal, rb.control_subtotal,
+            COALESCE(ddt.snapshot_discrepancy, ABS(rb.control_subtotal - rb.computed_subtotal)) AS effective_discrepancy
      FROM delivery_damage_tickets ddt
      JOIN receiving_batches rb ON rb.id = ddt.batch_id
      ORDER BY FIELD(ddt.status,'pending','approved','rejected','expired'), ddt.created_at DESC
@@ -68,7 +69,7 @@ include '../layout_top.php';
                 'expired'  => ['bg-slate-100 text-slate-500',     'Expired — Counting Discrepancy'],
                 default    => ['bg-amber-100 text-amber-700',     'Pending Review'],
             };
-            $discrepancy = round(abs(floatval($t['control_subtotal']) - floatval($t['computed_subtotal'])), 2);
+            $discrepancy = round(floatval($t['effective_discrepancy']), 2);
             $delta       = round(abs($discrepancy - floatval($t['total_deduction'])), 2);
             $auto_match  = $delta <= 0.01;
         ?>
@@ -142,9 +143,9 @@ include '../layout_top.php';
                         Approve <?= $auto_match ? '& Push Inventory' : 'Deduction' ?>
                     </button>
                     <button type="submit" name="decision" value="reject"
-                            onclick="return confirm('Reject this damage ticket?')"
+                            onclick="return confirm('Reject this damage ticket and reopen the batch to the Price Checker for repricing?')"
                             class="bg-rose-500 hover:bg-rose-600 text-white font-black text-xs px-6 py-3 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap">
-                        Reject
+                        Reject &amp; Reopen to Price Checker
                     </button>
                 </form>
             </div>

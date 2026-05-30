@@ -137,4 +137,18 @@ include '../layout_top.php';
     </div>
 </div>
 
+<script>
+// Warn immediately — leaving without submitting abandons the batch in on_hold
+window.addEventListener('beforeunload', function(e) {
+    if (_submitted) return;
+    e.preventDefault();
+    e.returnValue = '';
+});
+
+let _submitted = false;
+document.querySelector('form')?.addEventListener('submit', function() {
+    _submitted = true;
+});
+</script>
+
 <?php include '../layout_bottom.php'; ?>

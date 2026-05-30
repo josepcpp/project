@@ -24,6 +24,20 @@ $batches = $conn->query(
      LIMIT 100"
 );
 
+// ── Reprice Queue — batches reopened after a rejected damage ticket ──────────
+$reprice_q = $conn->query(
+    "SELECT rb.id, rb.supplier_name, rb.resolution_reason, rb.resolution_at,
+            COUNT(ri.id) AS item_count,
+            ru.username AS resolved_by_name
+     FROM receiving_batches rb
+     LEFT JOIN receiving_items ri ON ri.batch_id = rb.id
+     LEFT JOIN users ru ON ru.id = rb.resolution_by
+     WHERE rb.status = 'pending_reprice'
+     GROUP BY rb.id
+     ORDER BY rb.resolution_at ASC"
+);
+$reprice_batches = $reprice_q ? $reprice_q->fetch_all(MYSQLI_ASSOC) : [];
+
 // ── Discrepancy Report — per-item amounts visible ─────────────────────────────
 $date_from = trim($_GET['date_from'] ?? '');
 $date_to   = trim($_GET['date_to']   ?? '');
@@ -94,17 +108,66 @@ include '../layout_top.php';
     <!-- Tab navigation -->
     <div class="flex gap-1 bg-slate-100 rounded-2xl p-1 w-fit">
         <?php
-        $tabs = ['activity' => 'Activity Records', 'discrepancy' => 'Discrepancy Report', 'price_changes' => 'Price Changes'];
+        $tabs = ['reprice' => 'Reprice Queue', 'activity' => 'Activity Records', 'discrepancy' => 'Discrepancy Report', 'price_changes' => 'Price Changes'];
         foreach ($tabs as $key => $label):
+            $is_reprice_tab = ($key === 'reprice');
+            $reprice_count  = count($reprice_batches);
         ?>
         <a href="?tab=<?= $key ?>"
-           class="px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all <?= $active_tab === $key ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700' ?>">
+           class="relative px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all <?= $active_tab === $key ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700' ?>">
             <?= $label ?>
+            <?php if ($is_reprice_tab && $reprice_count > 0): ?>
+            <span class="absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-black w-5 h-5 rounded-full flex items-center justify-center"><?= $reprice_count ?></span>
+            <?php endif; ?>
         </a>
         <?php endforeach; ?>
     </div>
 
-    <?php if ($active_tab === 'activity'): ?>
+    <?php if ($active_tab === 'reprice'): ?>
+    <!-- ── Tab 0: Reprice Queue ─────────────────────────────────────────── -->
+    <div class="card-modern p-8">
+        <h3 class="serif-title text-lg font-black text-slate-800 mb-1">Reprice Queue</h3>
+        <p class="text-slate-400 text-xs font-bold mb-6">Batches reopened by Admin after a rejected damage ticket. Re-enter the base prices — the tally will run again on submit.</p>
+        <?php if (empty($reprice_batches)): ?>
+            <p class="text-slate-400 text-sm font-bold text-center py-10">No batches awaiting repricing.</p>
+        <?php else: ?>
+        <div class="overflow-x-auto">
+            <table class="table-modern w-full text-sm">
+                <thead>
+                    <tr>
+                        <th>Batch #</th>
+                        <th>Supplier</th>
+                        <th>Items</th>
+                        <th>Reason</th>
+                        <th>Reopened By</th>
+                        <th>Reopened</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($reprice_batches as $rb): ?>
+                    <tr>
+                        <td class="font-black text-slate-500">#<?= $rb['id'] ?></td>
+                        <td class="font-bold"><?= htmlspecialchars($rb['supplier_name'] ?? '—') ?></td>
+                        <td class="text-center font-black"><?= intval($rb['item_count']) ?></td>
+                        <td class="text-xs text-slate-500 italic max-w-[220px] truncate" title="<?= htmlspecialchars($rb['resolution_reason'] ?? '') ?>"><?= htmlspecialchars($rb['resolution_reason'] ?? '—') ?></td>
+                        <td class="text-xs"><?= htmlspecialchars($rb['resolved_by_name'] ?? '—') ?></td>
+                        <td class="text-slate-400 text-xs"><?= $rb['resolution_at'] ? date('M j, Y g:i A', strtotime($rb['resolution_at'])) : '—' ?></td>
+                        <td>
+                            <a href="validate_items.php?batch_id=<?= $rb['id'] ?>"
+                               class="bg-rose-500 hover:bg-rose-600 text-white text-xs font-black px-4 py-2 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap">
+                                Reprice
+                            </a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <?php elseif ($active_tab === 'activity'): ?>
     <!-- ── Tab 1: Activity Records ──────────────────────────────────────── -->
     <div class="card-modern p-8">
         <h3 class="serif-title text-lg font-black text-slate-800 mb-6">All Batches</h3>

@@ -615,3 +615,26 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.6.4
+
+// ── v1.6.5 — Reopen-to-Price-Checker on damage ticket rejection ──────────────
+$_db_version   = '1.6.5';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE receiving_batches MODIFY COLUMN status ENUM('pending_request','pending_validation','pending_inventory','validated_tally','validated_discrepancy','on_hold','completed','rejected','pending_reprice') DEFAULT 'pending_request'");
+    $conn->query("ALTER TABLE receiving_batches MODIFY COLUMN resolution_action ENUM('reopen_receiver','reopen_validator','override','rejected','reopen_price_checker') DEFAULT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.5
+
+// ── v1.6.6 — Snapshot discrepancy on damage tickets ──────────────────────────
+$_db_version   = '1.6.6';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE delivery_damage_tickets ADD COLUMN IF NOT EXISTS snapshot_discrepancy DECIMAL(10,2) DEFAULT NULL AFTER total_deduction");
+    // Backfill existing rows: best proxy is total_deduction (ticket was raised to cover the discrepancy)
+    $conn->query("UPDATE delivery_damage_tickets SET snapshot_discrepancy = total_deduction WHERE snapshot_discrepancy IS NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.6
