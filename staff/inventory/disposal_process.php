@@ -8,11 +8,11 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header("Location: ../sales/refund_management.php?tab=disposal");
+    header("Location: stock_management.php?stock=disposed");
     exit();
 }
 if (empty($_POST['csrf_token']) || $_POST['csrf_token'] !== ($_SESSION['csrf_token'] ?? '')) {
-    header("Location: ../sales/refund_management.php?tab=disposal&error=" . urlencode("Security token mismatch. Please try again."));
+    header("Location: stock_management.php?stock=disposed&error=" . urlencode("Security token mismatch. Please try again."));
     exit();
 }
 
@@ -34,7 +34,7 @@ if (!in_array($reason, DISPOSAL_REASONS)) {
 }
 
 if ($product_id <= 0 || $qty <= 0) {
-    header("Location: ../sales/refund_management.php?tab=disposal&error=" . urlencode("Invalid product or quantity."));
+    header("Location: stock_management.php?stock=disposed&error=" . urlencode("Invalid product or quantity."));
     exit();
 }
 
@@ -45,11 +45,11 @@ $pq->execute();
 $product = $pq->get_result()->fetch_assoc();
 
 if (!$product) {
-    header("Location: ../sales/refund_management.php?tab=disposal&error=" . urlencode("Product not found."));
+    header("Location: stock_management.php?stock=disposed&error=" . urlencode("Product not found."));
     exit();
 }
 if ($qty > intval($product['quantity'])) {
-    header("Location: ../sales/refund_management.php?tab=disposal&error=" . urlencode("Disposal qty exceeds available stock ({$product['quantity']} pcs)."));
+    header("Location: stock_management.php?stock=disposed&error=" . urlencode("Disposal qty exceeds available stock ({$product['quantity']} pcs)."));
     exit();
 }
 
@@ -94,9 +94,9 @@ try {
     $redirect_msg = $is_admin
         ? "Disposal applied. {$qty} pcs of '{$product['name']}' written off."
         : "Disposal request submitted. Awaiting admin approval.";
-    header("Location: ../sales/refund_management.php?tab=disposal&success=" . urlencode($redirect_msg));
+    header("Location: stock_management.php?stock=disposed&success=" . urlencode($redirect_msg));
 } catch (\Throwable $e) {
     $conn->rollback();
-    header("Location: ../sales/refund_management.php?tab=disposal&error=" . urlencode("Failed: " . $e->getMessage()));
+    header("Location: stock_management.php?stock=disposed&error=" . urlencode("Failed: " . $e->getMessage()));
 }
 exit();

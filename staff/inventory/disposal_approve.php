@@ -5,7 +5,7 @@ if (session_status() === PHP_SESSION_NONE) session_start();
 
 // ── GUARDS ────────────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['action'], $_POST['disposal_id'])) {
-    header("Location: ../sales/refund_management.php?tab=queue");
+    header("Location: stock_management.php?stock=disposed");
     exit();
 }
 
@@ -21,7 +21,7 @@ $dq->execute();
 $disposal = $dq->get_result()->fetch_assoc();
 
 if (!$disposal) {
-    header("Location: ../sales/refund_management.php?tab=queue&error=" . urlencode("Disposal record not found or already actioned."));
+    header("Location: stock_management.php?stock=disposed&error=" . urlencode("Disposal record not found or already actioned."));
     exit();
 }
 
@@ -44,10 +44,10 @@ if ($action === 'approve') {
         $lg = $conn->prepare("INSERT INTO activity_logs (user_id, log_type, item_id, message) VALUES (?, '" . LOG_INVENTORY . "', ?, ?)");
         if ($lg) { $lg->bind_param("iis", $uid, $disposal['product_id'], $log_msg); $lg->execute(); }
 
-        header("Location: ../sales/refund_management.php?tab=queue&success=" . urlencode("Disposal approved. {$disposal['qty']} pcs of '{$disposal['product_name']}' deducted from inventory."));
+        header("Location: stock_management.php?stock=disposed&success=" . urlencode("Disposal approved. {$disposal['qty']} pcs of '{$disposal['product_name']}' deducted from inventory."));
     } catch (\Throwable $e) {
         $conn->rollback();
-        header("Location: ../sales/refund_management.php?tab=queue&error=" . urlencode("Failed: " . $e->getMessage()));
+        header("Location: stock_management.php?stock=disposed&error=" . urlencode("Failed: " . $e->getMessage()));
     }
     exit();
 }
@@ -64,9 +64,9 @@ if ($action === 'reject') {
     $lg = $conn->prepare("INSERT INTO activity_logs (user_id, log_type, item_id, message) VALUES (?, '" . LOG_INVENTORY . "', ?, ?)");
     if ($lg) { $lg->bind_param("iis", $uid, $disposal['product_id'], $log_msg); $lg->execute(); }
 
-    header("Location: ../sales/refund_management.php?tab=queue&success=" . urlencode("Disposal request rejected for '{$disposal['product_name']}'."));
+    header("Location: stock_management.php?stock=disposed&success=" . urlencode("Disposal request rejected for '{$disposal['product_name']}'."));
     exit();
 }
 
-header("Location: ../sales/refund_management.php?tab=queue");
+header("Location: stock_management.php?stock=disposed");
 exit();

@@ -476,7 +476,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                         <?php endforeach; ?>
                     </div>
                     <div class="p-4 border-t border-amber-100 text-center">
-                        <a href="sales/refund_queue.php" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest">Open Full Queue →</a>
+                        <a href="sales/returns_exchange.php" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest">Open Returns &amp; Exchange →</a>
                     </div>
                     <?php endif; ?>
                 </div>

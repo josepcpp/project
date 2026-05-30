@@ -37,7 +37,6 @@ $session_sig  = md5(($_SESSION['user_id'] ?? '') . '|' . $role);
 // 📂 INFORMATION ARCHITECTURE
 $titles = [
     'pos.php'               => 'Point of Sale',
-    'refund_management.php' => 'Refunds & Returns',
     'stock_management.php'  => 'Live Stock Levels',
     'product_info.php'      => 'Product Master',
     'suppliers.php'         => 'Supply Vouchers',
@@ -51,9 +50,7 @@ $titles = [
     'settings.php'          => 'App Settings',
     'help.php'                      => 'Support',
     'delivery_return_ticket.php'    => 'Return Ticket',
-    'refund_queue.php'              => 'Refund Queue',
     // Phase 2 additions
-    'exchange.php'                  => 'Item Exchange',
     'customer_groups.php'           => 'Customer Groups',
     'backup.php'                    => 'Data Backup',
     'ip_restrictions.php'           => 'IP Restrictions',
@@ -74,7 +71,6 @@ $titles = [
 // 🎨 ICON MAP (Inline SVG - Zero lag, zero external calls)
 $icons = [
     'pos.php'               => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>',
-    'refund_management.php' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 15v4a2 2 0 01-2 2H4a2 2 0 01-2-2V9a2 2 0 01-2-2h3m8-3l3 3m0 0l-3 3m3-3H9"/></svg>',
     'stock_management.php'  => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>',
     'help.php'              => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
     'dashboard.php'         => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>',
@@ -87,9 +83,7 @@ $icons = [
     'discount.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/></svg>',
     'users.php'             => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>',
     'settings.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>',
-    'refund_queue.php'      => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
     // Phase 2 icons
-    'exchange.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>',
     'customer_groups.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>',
     'backup.php'            => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>',
     'ip_restrictions.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>',
@@ -110,7 +104,6 @@ $icons = [
 // ── Navigation URL map (absolute paths — safe from any page depth) ───────────
 $hrefs = [
     'pos.php'               => '/project/staff/pos/pos.php',
-    'refund_management.php' => '/project/staff/sales/refund_management.php',
     'stock_management.php'  => '/project/staff/inventory/stock_management.php',
     'product_info.php'      => '/project/staff/inventory/product_info.php',
     'suppliers.php'         => '/project/staff/suppliers/suppliers.php',
@@ -124,9 +117,7 @@ $hrefs = [
     'settings.php'          => '/project/staff/settings.php',
     'help.php'              => '/project/staff/help.php',
     'delivery_return_ticket.php' => '/project/staff/procurement/delivery_return_ticket.php',
-    'refund_queue.php'      => '/project/staff/sales/refund_queue.php',
     // Phase 2 hrefs
-    'exchange.php'          => '/project/staff/pos/exchange.php',
     'customer_groups.php'   => '/project/staff/pos/customer_groups.php',
     'backup.php'            => '/project/staff/reports/backup.php',
     'ip_restrictions.php'   => '/project/staff/settings/ip_restrictions.php',
@@ -146,7 +137,6 @@ $hrefs = [
 
 $pipeline_steps = ['batches_pending.php', 'discrepancy_resolve.php', 'damage_review.php'];
 
-$refund_queue_count = 0;
 $support_open_count = 0;
 $support_reply_count = 0;
 if ($role === ROLE_STAFF) {
@@ -160,9 +150,6 @@ if ($role === ROLE_STAFF) {
     $srv->execute();
     $support_reply_count = intval($srv->get_result()->fetch_assoc()['c'] ?? 0);
 } elseif (in_array($role, ROLES_ADMIN_AND_UP)) {
-    // Refund queue badge: pending sales refunds + pending delivery return requests
-    $rq_q = $conn->query("SELECT (SELECT COUNT(*) FROM refunds WHERE status='" . REFUND_PENDING . "') + (SELECT COUNT(*) FROM delivery_return_requests WHERE status='" . DR_PENDING . "') AS c");
-    $refund_queue_count = intval($rq_q ? $rq_q->fetch_assoc()['c'] ?? 0 : 0);
     // Support: open tickets + in_progress tickets where staff last replied (admin needs to respond)
     $soc_q = $conn->query("
         SELECT COUNT(*) AS c FROM support_tickets st
@@ -223,14 +210,14 @@ if (in_array($role, ROLES_PROCUREMENT_STAFF)) {
 if ($role === ROLE_STAFF) {
     $nav_sections = [
         'Overview'  => ['dashboard.php'],
-        'Sales'     => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Sales'     => ['pos.php'],
         'Inventory' => ['stock_management.php'],
         'Help'      => ['help.php'],
     ];
 } elseif ($role === ROLE_RECEIVER) {
     $nav_sections = [
         'Overview'    => ['dashboard.php'],
-        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Sales'       => ['pos.php'],
         'Inventory'   => ['stock_management.php'],
         'Procurement' => ['receive_batch.php'],
         'Help'        => ['help.php'],
@@ -238,7 +225,7 @@ if ($role === ROLE_STAFF) {
 } elseif ($role === ROLE_VALIDATOR) {
     $nav_sections = [
         'Overview'    => ['dashboard.php'],
-        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Sales'       => ['pos.php'],
         'Inventory'   => ['stock_management.php'],
         'Procurement' => ['validate_batch.php'],
         'Help'        => ['help.php'],
@@ -246,7 +233,7 @@ if ($role === ROLE_STAFF) {
 } elseif ($role === ROLE_PRICE_CHECKER) {
     $nav_sections = [
         'Overview'    => ['dashboard.php'],
-        'Sales'       => ['pos.php', 'exchange.php', 'refund_management.php'],
+        'Sales'       => ['pos.php'],
         'Inventory'   => ['stock_management.php'],
         'Reports'     => ['price_checker.php'],
         'Help'        => ['help.php'],
@@ -254,7 +241,7 @@ if ($role === ROLE_STAFF) {
 } elseif (in_array($role, ROLES_ADMIN_OWNER)) {
     $nav_sections = [
         'Overview'       => ['dashboard.php'],
-        'Sales'          => ['pos.php', 'exchange.php', 'refund_management.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
+        'Sales'          => ['pos.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
         'Procurement'    => $pipeline_steps,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
@@ -262,7 +249,7 @@ if ($role === ROLE_STAFF) {
 } else { // superadmin
     $nav_sections = [
         'Overview'       => ['dashboard.php'],
-        'Sales'          => ['pos.php', 'exchange.php', 'refund_management.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
+        'Sales'          => ['pos.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
         'Procurement'    => $pipeline_steps,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
@@ -346,7 +333,6 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
                 <p class="sidebar-section-label"><?= $section ?></p>
                 <?php foreach($files as $file):
                     $navClass = ($current_page == $file) ? 'active' : '';
-                    $showRefundQueueBadge = $file === 'refund_queue.php' && ($refund_queue_count ?? 0) > 0;
                     $showSupportBadge = $file === 'help.php' && (
                         in_array($role, ROLES_ADMIN_AND_UP) && $support_open_count > 0 ||
                         $role === ROLE_STAFF && $support_reply_count > 0
@@ -354,12 +340,8 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
                 ?>
                     <a href="<?= $hrefs[$file] ?? $file ?>" class="nav-item <?= $navClass ?>">
                         <?= $icons[$file] ?? '' ?>
-                        <span class="nav-text font-bold text-sm flex-1"><?= $titles[$file] ?></span>
-                        <?php if ($showRefundQueueBadge): ?>
-                            <span class="nav-text ml-auto bg-amber-500 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 animate-pulse">
-                                <?= $refund_queue_count ?>
-                            </span>
-                        <?php elseif ($showSupportBadge): ?>
+                        <span class="nav-text font-bold text-sm flex-1"><?= $titles[$file] ?? $file ?></span>
+                        <?php if ($showSupportBadge): ?>
                             <span class="nav-text ml-auto bg-violet-500 text-white text-[8px] font-black w-5 h-5 flex items-center justify-center rounded-full flex-shrink-0 animate-pulse">
                                 <?= in_array($role, ROLES_ADMIN_AND_UP) ? $support_open_count : $support_reply_count ?>
                             </span>

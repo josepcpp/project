@@ -26,6 +26,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
 include '../layout_top.php';
 
+// ── AUTO-QUEUE EXPIRED ITEMS ──────────────────────────────────────────────────
+// Find active products past their expiry date with no open disposal entry,
+// and insert a pending disposal request automatically.
+$expired_q = $conn->query(
+    "SELECT id, name, barcode, quantity, expiry_date
+     FROM products
+     WHERE status = '" . PRODUCT_ACTIVE . "'
+       AND expiry_date IS NOT NULL
+       AND expiry_date < CURDATE()
+       AND quantity > 0
+       AND id NOT IN (
+           SELECT product_id FROM product_disposals
+           WHERE status IN ('" . DISPOSAL_PENDING . "','" . DISPOSAL_APPROVED . "')
+       )"
+);
+if ($expired_q && $expired_q->num_rows > 0) {
+    $auto_ins = $conn->prepare(
+        "INSERT INTO product_disposals
+             (product_id, product_name, barcode, qty, reason, expiry_date, notes,
+              requested_by, requested_username, status)
+         VALUES (?, ?, ?, ?, '" . DISPOSE_EXPIRED . "', ?, 'Auto-queued: past expiry date.', ?, 'system', '" . DISPOSAL_PENDING . "')"
+    );
+    while ($ep = $expired_q->fetch_assoc()) {
+        $auto_ins->bind_param("issisi",
+            $ep['id'], $ep['name'], $ep['barcode'],
+            $ep['quantity'], $ep['expiry_date'],
+            $user_id
+        );
+        $auto_ins->execute();
+    }
+}
+
 // ── FILTER PARAMS ────────────────────────────────────────────────────────────
 $search       = trim($_GET['search']   ?? '');
 $batch_filter = $_GET['batch_id']      ?? '';
@@ -893,5 +925,80 @@ function handleUnarchive(e, form) {
     });
 }
 </script>
+
+<?php
+// ── DISPOSAL QUEUE (admin/superadmin only) ────────────────────────────────────
+if (in_array($role, ROLES_ADMIN_AND_UP)):
+    $disposal_q = $conn->query(
+        "SELECT pd.*, u.full_name AS requester_fullname
+         FROM product_disposals pd
+         LEFT JOIN users u ON u.id = pd.requested_by
+         WHERE pd.status = '" . DISPOSAL_PENDING . "'
+         ORDER BY pd.created_at ASC"
+    );
+    $disposal_pending = $disposal_q ? $disposal_q->fetch_all(MYSQLI_ASSOC) : [];
+    if (!empty($disposal_pending)):
+?>
+<div class="max-w-7xl mx-auto mt-10 space-y-4 animate-in">
+    <div class="flex items-center justify-between">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Disposal Queue</p>
+        <span class="bg-orange-500 text-white text-[9px] font-black px-3 py-1 rounded-full"><?= count($disposal_pending) ?> pending</span>
+    </div>
+    <div class="bg-white rounded-[2.5rem] border border-orange-100 shadow-xl overflow-hidden">
+        <div class="divide-y divide-slate-50">
+        <?php foreach ($disposal_pending as $dp):
+            $reason_cfg = match($dp['reason']) {
+                'Expired'      => 'bg-orange-50 text-orange-600 border-orange-100',
+                'Contaminated' => 'bg-rose-50 text-rose-600 border-rose-100',
+                'Damaged'      => 'bg-amber-50 text-amber-600 border-amber-100',
+                'Spoiled'      => 'bg-red-50 text-red-600 border-red-100',
+                default        => 'bg-slate-100 text-slate-500 border-slate-200',
+            };
+        ?>
+        <div class="px-8 py-5 flex flex-wrap items-center gap-4">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-3 flex-wrap">
+                    <p class="font-black text-slate-800"><?= htmlspecialchars($dp['product_name']) ?></p>
+                    <span class="text-[9px] font-black px-2.5 py-1 rounded-full border <?= $reason_cfg ?> uppercase tracking-wider"><?= htmlspecialchars($dp['reason']) ?></span>
+                </div>
+                <div class="flex items-center gap-4 mt-1 text-[10px] text-slate-400 font-bold flex-wrap">
+                    <span>Qty: <span class="text-slate-700 font-black"><?= intval($dp['qty']) ?></span></span>
+                    <?php if ($dp['expiry_date']): ?><span>Expiry: <?= date('M j, Y', strtotime($dp['expiry_date'])) ?></span><?php endif; ?>
+                    <span>Requested by <?= htmlspecialchars($dp['requester_fullname'] ?: $dp['requested_username']) ?></span>
+                    <span><?= date('M j, Y g:i A', strtotime($dp['created_at'])) ?></span>
+                </div>
+                <?php if ($dp['notes']): ?>
+                <p class="text-[10px] text-slate-400 italic mt-0.5">"<?= htmlspecialchars($dp['notes']) ?>"</p>
+                <?php endif; ?>
+            </div>
+            <div class="flex gap-2 flex-shrink-0">
+                <form method="POST" action="disposal_approve.php">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="action" value="approve">
+                    <input type="hidden" name="disposal_id" value="<?= $dp['id'] ?>">
+                    <button type="submit"
+                            onclick="return confirm('Approve disposal of <?= intval($dp['qty']) ?> pcs of \'<?= htmlspecialchars(addslashes($dp['product_name'])) ?>\'?')"
+                            class="bg-orange-500 hover:bg-orange-600 text-white font-black text-xs px-5 py-2.5 rounded-xl uppercase tracking-widest transition-all">
+                        Approve
+                    </button>
+                </form>
+                <form method="POST" action="disposal_approve.php" class="flex gap-2 items-center">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="action" value="reject">
+                    <input type="hidden" name="disposal_id" value="<?= $dp['id'] ?>">
+                    <input type="text" name="reject_reason" placeholder="Reason..." required
+                           class="input-modern text-xs py-2 w-36">
+                    <button type="submit"
+                            class="bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-600 font-black text-xs px-5 py-2.5 rounded-xl uppercase tracking-widest transition-all">
+                        Reject
+                    </button>
+                </form>
+            </div>
+        </div>
+        <?php endforeach; ?>
+        </div>
+    </div>
+</div>
+<?php endif; endif; ?>
 
 <?php include '../layout_bottom.php'; ?>

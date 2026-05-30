@@ -106,6 +106,17 @@ foreach (($_SESSION['bundle_discounts'] ?? []) as $bd) {
 $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't exceed subtotal
 ?>
 
+<!-- POS Hub Tab Strip -->
+<div class="flex gap-2 mb-4 bg-white rounded-2xl border border-slate-100 shadow-sm p-1.5">
+    <span class="flex-1 py-2.5 rounded-xl text-center font-black text-xs uppercase tracking-widest bg-slate-900 text-white shadow">
+        Point of Sale
+    </span>
+    <a href="/project/staff/sales/returns_exchange.php"
+       class="flex-1 py-2.5 rounded-xl text-center font-black text-xs uppercase tracking-widest text-slate-400 hover:bg-slate-50 transition-all">
+        Returns &amp; Exchange
+    </a>
+</div>
+
 <div class="flex flex-col lg:flex-row gap-6 h-[calc(100vh-120px)] w-full animate-in">
 
     <!-- 🟢 LEFT: Product Selection Section -->

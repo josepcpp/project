@@ -84,7 +84,7 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
                 " WHERE id = ?"
             );
             if ($expiry) {
-                $upd->bind_param("iiiisi", $new_qty, $new_qty, $batch_id, $expiry, $prod['id']);
+                $upd->bind_param("iiisi", $new_qty, $new_qty, $batch_id, $expiry, $prod['id']);
             } else {
                 $upd->bind_param("iiii", $new_qty, $new_qty, $batch_id, $prod['id']);
             }
@@ -104,7 +104,7 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
                 "INSERT INTO products (supplier_id, name, barcode, price, cost_price, quantity, max_quantity, status, expiry_date, receiving_batch_id)
                  VALUES (NULL, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?)"
             );
-            $ins->bind_param("ssddiiisi", $desc, $barcode, $base_price, $base_price, $qty, $qty, $expiry, $batch_id);
+            $ins->bind_param("ssddiisi", $desc, $barcode, $base_price, $base_price, $qty, $qty, $expiry, $batch_id);
             $ins->execute();
             $new_product_id = $conn->insert_id;
 

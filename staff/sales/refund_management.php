@@ -180,34 +180,9 @@ $selected_batch        = null;
 $batch_id_param        = intval($_GET['batch_id'] ?? 0);
 
 if ($active_tab === 'delivery') {
-    // Batch receipt list — completed batches only
-    $bq = $conn->query("
-        SELECT pb.id, pb.supplier_name, pb.invoice, pb.staff_username,
-               pb.officialized_at, pb.status, pb.item_count, pb.discrepancy_count
-        FROM procurement_batches pb
-        WHERE pb.status IN ('" . BATCH_COMPLETE_CLEAN . "','" . BATCH_COMPLETE_ERRORS . "')
-        ORDER BY pb.officialized_at DESC
-        LIMIT 60
-    ");
-    if ($bq) $delivery_batches = $bq->fetch_all(MYSQLI_ASSOC);
-
-    // Load items via batch selection
-    if ($batch_id_param > 0) {
-        $bstmt = $conn->prepare("SELECT pb.*, s.id AS sup_id, s.name AS sup_name, s.invoice_number AS sup_invoice, s.amount AS sup_amount
-            FROM procurement_batches pb LEFT JOIN suppliers s ON pb.supplier_id = s.id
-            WHERE pb.id = ? AND pb.status IN ('" . BATCH_COMPLETE_CLEAN . "','" . BATCH_COMPLETE_ERRORS . "') LIMIT 1");
-        $bstmt->bind_param("i", $batch_id_param); $bstmt->execute();
-        $selected_batch = $bstmt->get_result()->fetch_assoc();
-        if ($selected_batch && $selected_batch['sup_id']) {
-            $supplier_data = [
-                'id'             => $selected_batch['sup_id'],
-                'name'           => $selected_batch['sup_name'],
-                'invoice_number' => $selected_batch['sup_invoice'],
-                'amount'         => $selected_batch['sup_amount'],
-            ];
-            $invoice_query = $selected_batch['sup_invoice'] ?? $selected_batch['invoice'];
-        }
-    }
+    // Legacy procurement_batches table has been removed — batch list is empty.
+    $delivery_batches = [];
+    $selected_batch   = null;
 
     // Load items via invoice search
     if (!$supplier_data && $invoice_query) {
@@ -241,6 +216,7 @@ if ($active_tab === 'delivery') {
 ?>
 
 <div class="max-w-7xl mx-auto space-y-8 animate-in pb-20">
+
 
     <!-- ── TABS ──────────────────────────────────────────────────────────────── -->
     <div class="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-2 flex gap-2 flex-wrap">

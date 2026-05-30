@@ -155,7 +155,7 @@ function confirmForm(e, form, message, title) {
         if (ok) {
             var fd = new FormData(form);
             var action = form.getAttribute('action') || window.location.href;
-            var silentForms = ['pos_process.php', 'refund_process.php', 'officialize_stock.php', 'api/'];
+            var silentForms = ['pos_process.php', 'refund_process.php', 'api/'];
             var isSilent = silentForms.some(function(p) { return action.includes(p); });
             navigate(action, fd, isSilent);
         }
