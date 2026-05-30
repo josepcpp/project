@@ -7,12 +7,37 @@ require_role([ROLE_ADMIN, ROLE_SUPERADMIN]);
 $success = trim($_GET['success'] ?? '');
 $error   = trim($_GET['error']   ?? '');
 
-// All pending damage tickets
+// ── AUTO-EXPIRE stale pending tickets ─────────────────────────────────────────
+$exp_q    = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='damage_ticket_expiry_days' LIMIT 1");
+$exp_days = intval($exp_q ? ($exp_q->fetch_assoc()['setting_value'] ?? 3) : 3);
+if ($exp_days > 0) {
+    $stale_q = $conn->query(
+        "SELECT ddt.id, ddt.batch_id FROM delivery_damage_tickets ddt
+         WHERE ddt.status = 'pending'
+           AND ddt.created_at <= NOW() - INTERVAL $exp_days DAY"
+    );
+    if ($stale_q && $stale_q->num_rows > 0) {
+        while ($st = $stale_q->fetch_assoc()) {
+            $upd_exp = $conn->prepare("UPDATE delivery_damage_tickets SET status = 'expired' WHERE id = ?");
+            $upd_exp->bind_param("i", $st['id']);
+            $upd_exp->execute();
+
+            $exp_msg = "Damage Return Ticket for Batch #{$st['batch_id']} expired after {$exp_days} day(s) without review — now flagged as counting discrepancy.";
+            $notif = $conn->prepare(
+                "INSERT INTO notifications (recipient_role, type, batch_id, message) VALUES ('admin', 'discrepancy', ?, ?)"
+            );
+            $notif->bind_param("is", $st['batch_id'], $exp_msg);
+            $notif->execute();
+        }
+    }
+}
+
+// ── Load all tickets ──────────────────────────────────────────────────────────
 $tq = $conn->query(
     "SELECT ddt.*, rb.supplier_name, rb.computed_subtotal, rb.control_subtotal
      FROM delivery_damage_tickets ddt
      JOIN receiving_batches rb ON rb.id = ddt.batch_id
-     ORDER BY FIELD(ddt.status,'pending','approved','rejected'), ddt.created_at DESC
+     ORDER BY FIELD(ddt.status,'pending','approved','rejected','expired'), ddt.created_at DESC
      LIMIT 50"
 );
 $tickets = $tq ? $tq->fetch_all(MYSQLI_ASSOC) : [];
@@ -40,6 +65,7 @@ include '../layout_top.php';
             $status_cfg = match($t['status']) {
                 'approved' => ['bg-emerald-100 text-emerald-700', 'Approved'],
                 'rejected' => ['bg-rose-100 text-rose-700',       'Rejected'],
+                'expired'  => ['bg-slate-100 text-slate-500',     'Expired — Counting Discrepancy'],
                 default    => ['bg-amber-100 text-amber-700',     'Pending Review'],
             };
             $discrepancy = round(abs(floatval($t['control_subtotal']) - floatval($t['computed_subtotal'])), 2);

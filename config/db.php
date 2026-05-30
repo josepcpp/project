@@ -601,3 +601,17 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.6.3
+
+// ── v1.6.4 — Damage ticket expiry + settings ─────────────────────────────────
+$_db_version   = '1.6.4';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE delivery_damage_tickets MODIFY COLUMN status ENUM('pending','approved','rejected','expired') DEFAULT 'pending'");
+    $conn->query("INSERT INTO system_settings (setting_key, setting_value) VALUES ('damage_ticket_expiry_days','3') ON DUPLICATE KEY UPDATE setting_value = setting_value");
+    $conn->query("INSERT INTO system_settings (setting_key, setting_value) VALUES ('low_stock_threshold','10') ON DUPLICATE KEY UPDATE setting_value = setting_value");
+    $conn->query("INSERT INTO system_settings (setting_key, setting_value) VALUES ('tax_display_mode','exclusive') ON DUPLICATE KEY UPDATE setting_value = setting_value");
+    $conn->query("INSERT INTO system_settings (setting_key, setting_value) VALUES ('price_rounding_rule','none') ON DUPLICATE KEY UPDATE setting_value = setting_value");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.4

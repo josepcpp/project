@@ -110,19 +110,19 @@ try {
         $dq->execute();
         $has_damage = intval($dq->get_result()->fetch_assoc()['c']) > 0;
 
-        // Notify admin/superadmin of discrepancy
-        $msg = "Batch #$batch_id has a subtotal discrepancy. Computed: ₱" . number_format($computed_subtotal, 2) . "." . ($has_damage ? " Receiver reported damaged items." : " Admin review required.");
-        $notif = $conn->prepare(
-            "INSERT INTO notifications (recipient_role, type, batch_id, message) VALUES ('admin', 'discrepancy', ?, ?)"
-        );
-        $notif->bind_param("is", $batch_id, $msg);
-        $notif->execute();
-
         $conn->commit();
 
         if ($has_damage) {
+            // Damage ticket will send its own notification — skip the generic discrepancy alert
             header("Location: damage_ticket.php?batch_id=$batch_id");
         } else {
+            // No damage reported — notify admin of counting discrepancy
+            $msg = "Batch #$batch_id has a subtotal discrepancy. Computed: ₱" . number_format($computed_subtotal, 2) . ". Admin review required.";
+            $notif = $conn->prepare(
+                "INSERT INTO notifications (recipient_role, type, batch_id, message) VALUES ('admin', 'discrepancy', ?, ?)"
+            );
+            $notif->bind_param("is", $batch_id, $msg);
+            $notif->execute();
             header("Location: validate_batch.php?success=" . urlencode("Validation submitted — discrepancy detected. Admin has been notified."));
         }
     } else {
