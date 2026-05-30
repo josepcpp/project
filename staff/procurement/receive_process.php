@@ -16,48 +16,22 @@ $username = $_SESSION['username'] ?? 'unknown';
 $role     = strtolower($_SESSION['role'] ?? '');
 $action   = $_POST['action'] ?? '';
 
-if ($action === 'create_batch') {
-    $supplier_name    = trim($_POST['supplier_name']    ?? '');
-    $supplier_contact = trim($_POST['supplier_contact'] ?? '');
-
-    if ($supplier_name === '') {
-        header("Location: receive_batch.php?error=" . urlencode("Supplier name is required."));
-        exit();
-    }
-
-    $ins = $conn->prepare(
-        "INSERT INTO receiving_batches (receiver_id, receiver_username, supplier_name, supplier_contact, status, created_at)
-         VALUES (?, ?, ?, ?, 'pending_request', NOW())"
-    );
-    $ins->bind_param("isss", $user_id, $username, $supplier_name, $supplier_contact);
-    $ins->execute();
-    $batch_id = $conn->insert_id;
-
-    // Audit log
-    $al = $conn->prepare("INSERT INTO procurement_audit_log (batch_id, actor_id, actor_username, actor_role, action) VALUES (?,?,?,?,'created')");
-    $al->bind_param("iiss", $batch_id, $user_id, $username, $role);
-    $al->execute();
-
-    header("Location: receive_items.php?batch_id=$batch_id&success=" . urlencode("Batch created. Encode items below."));
-    exit();
-}
-
 if ($action === 'save_items') {
-    $batch_id     = intval($_POST['batch_id'] ?? 0);
+    $batch_id      = intval($_POST['batch_id'] ?? 0);
     $submit_action = trim($_POST['submit_action'] ?? 'save');
-    $items_post   = $_POST['items'] ?? [];
+    $items_post    = $_POST['items'] ?? [];
 
     if (!$batch_id) {
         header("Location: receive_batch.php?error=" . urlencode("Invalid batch."));
         exit();
     }
 
-    // Verify ownership
+    // Receiver can act on their own batches OR unclaimed admin-created vouchers
     if ($role === ROLE_RECEIVER) {
-        $bq = $conn->prepare("SELECT id, status FROM receiving_batches WHERE id = ? AND receiver_id = ? LIMIT 1");
+        $bq = $conn->prepare("SELECT id, status, receiver_id FROM receiving_batches WHERE id = ? AND (receiver_id = ? OR receiver_id IS NULL) LIMIT 1");
         $bq->bind_param("ii", $batch_id, $user_id);
     } else {
-        $bq = $conn->prepare("SELECT id, status FROM receiving_batches WHERE id = ? LIMIT 1");
+        $bq = $conn->prepare("SELECT id, status, receiver_id FROM receiving_batches WHERE id = ? LIMIT 1");
         $bq->bind_param("i", $batch_id);
     }
     $bq->execute();
@@ -74,7 +48,7 @@ if ($action === 'save_items') {
         $desc = trim($row['description'] ?? '');
         $qty  = intval($row['qty'] ?? 0);
 
-        if ($desc === '') continue; // skip blank rows
+        if ($desc === '') continue;
         if ($qty < 1) {
             header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Quantity must be at least 1 for each item."));
             exit();
@@ -93,7 +67,7 @@ if ($action === 'save_items') {
 
     $conn->begin_transaction();
     try {
-        // Replace all items for this batch
+        // Replace items
         $del = $conn->prepare("DELETE FROM receiving_items WHERE batch_id = ?");
         $del->bind_param("i", $batch_id);
         $del->execute();
@@ -105,9 +79,14 @@ if ($action === 'save_items') {
         }
 
         if ($submit_action === 'submit') {
-            // Submitting batch for Admin review
-            $upd = $conn->prepare("UPDATE receiving_batches SET status = 'pending_request' WHERE id = ?");
-            $upd->bind_param("i", $batch_id);
+            // Assign receiver + promote to pending_validation in one step
+            $upd = $conn->prepare(
+                "UPDATE receiving_batches
+                 SET status = 'pending_validation',
+                     receiver_id = ?, receiver_username = ?
+                 WHERE id = ?"
+            );
+            $upd->bind_param("isi", $user_id, $username, $batch_id);
             $upd->execute();
 
             $al = $conn->prepare("INSERT INTO procurement_audit_log (batch_id, actor_id, actor_username, actor_role, action) VALUES (?,?,?,?,'items_encoded')");
@@ -115,8 +94,15 @@ if ($action === 'save_items') {
             $al->execute();
 
             $conn->commit();
-            header("Location: receive_batch.php?success=" . urlencode("Batch #$batch_id submitted for Admin review."));
+            header("Location: receive_batch.php?success=" . urlencode("Batch #$batch_id submitted. Validator will review shortly."));
         } else {
+            // Save draft — claim the voucher if it's still unclaimed
+            if (!$batch['receiver_id']) {
+                $claim = $conn->prepare("UPDATE receiving_batches SET receiver_id = ?, receiver_username = ? WHERE id = ? AND receiver_id IS NULL");
+                $claim->bind_param("isi", $user_id, $username, $batch_id);
+                $claim->execute();
+            }
+
             $conn->commit();
             header("Location: receive_items.php?batch_id=$batch_id&success=" . urlencode("Items saved."));
         }

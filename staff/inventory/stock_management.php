@@ -22,27 +22,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
     }
 
-    // Staff-initiated recount request
-    if ($action === 'request_recount' && $role === ROLE_STAFF) {
-        $barcode      = trim($_POST['barcode']       ?? '');
-        $product_name = trim($_POST['product_name']  ?? '');
-        $expected_qty = intval($_POST['expected_qty'] ?? 0);
-        $product_id   = intval($_POST['product_id']  ?? 0);
-        $uid          = intval($_SESSION['user_id']  ?? 0);
-
-        $ex = $conn->prepare("SELECT id FROM quantity_alerts WHERE barcode = ? AND status IN ('pending','recounting','submitted') LIMIT 1");
-        $ex->bind_param("s", $barcode); $ex->execute();
-        if ($ex->get_result()->num_rows === 0) {
-            $ins = $conn->prepare("INSERT INTO quantity_alerts (product_name, barcode, expected_qty, requested_by, product_id, status) VALUES (?, ?, ?, ?, ?, 'pending')");
-            $ins->bind_param("ssiis", $product_name, $barcode, $expected_qty, $uid, $product_id);
-            $ins->execute();
-            $alert_id = $conn->insert_id;
-            $lg = $conn->prepare("INSERT INTO activity_logs (user_id, log_type, item_id, message) VALUES (?, '" . LOG_INVENTORY . "', ?, ?)");
-            $lmsg = "RECOUNT REQUESTED: '{$product_name}' (#{$barcode}) — expected qty: {$expected_qty}";
-            $lg->bind_param("iis", $uid, $alert_id, $lmsg); $lg->execute();
-        }
-        header("Location: stock_management.php?recount_sent=1"); exit();
-    }
 }
 
 include '../layout_top.php';
@@ -106,8 +85,6 @@ if ($cat_filter !== '') {
     $types   .= 's';
 }
 
-// Exclude products currently under an active recount — hidden until resolved
-$wheres[] = "NOT EXISTS (SELECT 1 FROM quantity_alerts qa WHERE qa.product_id = p.id AND qa.status IN ('pending','recounting','submitted'))";
 
 $where_sql = "WHERE " . implode(" AND ", $wheres);
 
@@ -124,21 +101,18 @@ if (empty($batch_filter) && $stock_filter !== 'archived') {
 
 // Final SQL
 if (!empty($batch_filter)) {
-    $sql = "SELECT p.*, s.name AS supplier_display, s.invoice_number,
+    $sql = "SELECT p.*,
+                   COALESCE(s.name, rb.supplier_name) AS supplier_display,
+                   COALESCE(s.invoice_number, IF(rb.id IS NOT NULL, CONCAT('Batch #', rb.id), NULL)) AS invoice_number,
+                   COALESCE(s.created_at, rb.inventory_pushed_at) AS supplier_date,
                    (SELECT pur.proposed_price
                     FROM price_update_requests pur
                     WHERE pur.product_id = p.id
                       AND pur.status NOT IN ('applied','rejected')
-                    LIMIT 1) AS pending_price,
-                   COALESCE((
-                    SELECT SUM(qa.received_qty)
-                    FROM quantity_alerts qa
-                    WHERE qa.product_id = p.id
-                      AND qa.received_qty IS NOT NULL
-                      AND qa.status IN ('pending','recounting','submitted')
-                   ), 0) AS recount_pending_qty
+                    LIMIT 1) AS pending_price
             FROM products p
-            JOIN suppliers s ON p.supplier_id = s.id
+            LEFT JOIN suppliers s ON p.supplier_id = s.id
+            LEFT JOIN receiving_batches rb ON rb.id = p.receiving_batch_id
             {$where_sql}
             ORDER BY p.name ASC";
 } else {
@@ -151,22 +125,21 @@ if (!empty($batch_filter)) {
                    MAX(p.price) AS price,
                    MAX(p.cost_price) AS cost_price,
                    p.supplier_id,
-                   s.name AS supplier_display,
-                   s.invoice_number,
-                   s.created_at AS supplier_date,
+                   COALESCE(s.name,
+                       (SELECT supplier_name FROM receiving_batches WHERE id = MIN(p.receiving_batch_id) LIMIT 1)
+                   ) AS supplier_display,
+                   COALESCE(s.invoice_number,
+                       IF(MIN(p.receiving_batch_id) IS NOT NULL, CONCAT('Batch #', MIN(p.receiving_batch_id)), NULL)
+                   ) AS invoice_number,
+                   COALESCE(s.created_at,
+                       (SELECT inventory_pushed_at FROM receiving_batches WHERE id = MIN(p.receiving_batch_id) LIMIT 1)
+                   ) AS supplier_date,
                    p.expiry_date AS earliest_expiry,
                    (SELECT pur.proposed_price
                     FROM price_update_requests pur
                     WHERE pur.product_id = MIN(p.id)
                       AND pur.status NOT IN ('applied','rejected')
-                    LIMIT 1) AS pending_price,
-                   COALESCE((
-                    SELECT SUM(qa.received_qty)
-                    FROM quantity_alerts qa
-                    WHERE qa.barcode = MIN(p.barcode)
-                      AND qa.received_qty IS NOT NULL
-                      AND qa.status IN ('pending','recounting','submitted')
-                   ), 0) AS recount_pending_qty
+                    LIMIT 1) AS pending_price
             FROM products p
             LEFT JOIN suppliers s ON p.supplier_id = s.id
             {$where_sql}
@@ -183,12 +156,12 @@ if ($types === '') {
     $res = $q->get_result();
 }
 
-$inv_tab = ($stock_filter === 'archived') ? 'archived' : ($stock_filter === 'recount' ? 'recount' : ($stock_filter === 'disposed' ? 'disposed' : 'live'));
+$inv_tab = ($stock_filter === 'archived') ? 'archived' : ($stock_filter === 'disposed' ? 'disposed' : 'live');
 
 // ── Master view: group per-supplier rows by product name in PHP ───────────────
 $product_groups = [];
 $product_order  = [];
-if (empty($batch_filter) && $inv_tab !== 'recount' && $inv_tab !== 'disposed' && $res) {
+if (empty($batch_filter) && $inv_tab !== 'disposed' && $res) {
     while ($row = $res->fetch_assoc()) {
         $key = mb_strtolower(trim($row['name']));
         if (!isset($product_groups[$key])) {
@@ -210,14 +183,13 @@ if (empty($batch_filter) && $inv_tab !== 'recount' && $inv_tab !== 'disposed' &&
         $product_groups[$key]['total_stock'] += $sup_qty;
         $product_groups[$key]['total_max']   += intval($row['total_max'] ?? 0);
         $product_groups[$key]['suppliers'][]  = [
-            'id'                  => intval($row['id']),
-            'supplier_name'       => $row['supplier_display'] ?? '—',
-            'invoice'             => $row['invoice_number']   ?? '—',
-            'date'                => $row['supplier_date']    ?? null,
-            'qty'                 => $sup_qty,
-            'barcode'             => $row['barcode'],
-            'recount_pending_qty' => intval($row['recount_pending_qty'] ?? 0),
-            'expiry_date'         => $row['earliest_expiry']  ?? null,
+            'id'           => intval($row['id']),
+            'supplier_name'=> $row['supplier_display'] ?? '—',
+            'invoice'      => $row['invoice_number']   ?? '—',
+            'date'         => $row['supplier_date']    ?? null,
+            'qty'          => $sup_qty,
+            'barcode'      => $row['barcode'],
+            'expiry_date'  => $row['earliest_expiry']  ?? null,
         ];
         $sup_expiry = $row['earliest_expiry'] ?? null;
         if ($sup_expiry) {
@@ -245,24 +217,10 @@ if (empty($batch_filter) && $inv_tab !== 'recount' && $inv_tab !== 'disposed' &&
     }
 }
 
-$result_count = empty($batch_filter) && $inv_tab !== 'recount' && $inv_tab !== 'disposed'
+$result_count = empty($batch_filter) && $inv_tab !== 'disposed'
     ? count($product_groups)
     : ($res ? $res->num_rows : 0);
 $all_batches  = $conn->query("SELECT id, name, invoice_number, created_at FROM suppliers ORDER BY id DESC LIMIT 100");
-
-// Recount monitoring data
-$recount_rows = [];
-$recount_count_badge = 0;
-$rq_count = $conn->query("SELECT COUNT(*) AS c FROM quantity_alerts WHERE status IN ('pending','recounting','submitted')");
-if ($rq_count) $recount_count_badge = intval($rq_count->fetch_assoc()['c'] ?? 0);
-if ($inv_tab === 'recount') {
-    $rq = $conn->query("SELECT qa.*, u.username AS requester_name
-        FROM quantity_alerts qa
-        LEFT JOIN users u ON qa.requested_by = u.id
-        WHERE qa.status IN ('pending','recounting','submitted')
-        ORDER BY FIELD(qa.status,'submitted','recounting','pending'), qa.created_at DESC");
-    if ($rq) $recount_rows = $rq->fetch_all(MYSQLI_ASSOC);
-}
 
 // Disposal history data
 $disposed_rows = [];
@@ -281,12 +239,6 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
 ?>
 
 <div class="max-w-7xl mx-auto space-y-6 animate-in pb-20">
-
-    <?php if (!empty($_GET['recount_sent'])): ?>
-    <div class="bg-amber-500 text-white px-8 py-4 rounded-2xl font-black text-sm text-center shadow-lg animate-in">
-        Recount request submitted. An admin will review and approve it shortly.
-    </div>
-    <?php endif; ?>
 
     <!-- ── SEARCH & FILTER BAR ───────────────────────────────────────────── -->
     <div class="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-xl space-y-5">
@@ -479,10 +431,9 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
     <div class="bg-white rounded-[3rem] border border-slate-100 shadow-2xl overflow-hidden mb-20">
         <div class="p-8 border-b border-slate-100 bg-slate-50/20 flex justify-between items-center flex-wrap gap-3">
             <h4 class="font-black text-slate-800 text-sm uppercase tracking-[0.15em] flex items-center gap-2">
-                <span class="w-2.5 h-2.5 <?= $inv_tab === 'archived' ? 'bg-slate-400' : ($inv_tab === 'recount' ? 'bg-amber-500' : ($inv_tab === 'disposed' ? 'bg-orange-500' : (!empty($batch_filter) ? 'bg-blue-500' : 'bg-emerald-500'))) ?> rounded-full shadow-sm"></span>
+                <span class="w-2.5 h-2.5 <?= $inv_tab === 'archived' ? 'bg-slate-400' : ($inv_tab === 'disposed' ? 'bg-orange-500' : (!empty($batch_filter) ? 'bg-blue-500' : 'bg-emerald-500')) ?> rounded-full shadow-sm"></span>
                 <?php
-                if ($inv_tab === 'recount')        echo "Pending Recount Items";
-                elseif ($inv_tab === 'disposed')   echo "Disposed Items";
+                if ($inv_tab === 'disposed')       echo "Disposed Items";
                 elseif ($inv_tab === 'archived')   echo "Archived Products";
                 elseif (!empty($batch_filter))     echo "Voucher: " . htmlspecialchars($active_batch_name);
                 elseif ($cat_filter !== '')        echo "Category: " . htmlspecialchars($cat_filter);
@@ -506,14 +457,6 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                         Archived
                     </a>
                     <?php endif; ?>
-                    <a href="stock_management.php?stock=recount"
-                       class="px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5
-                              <?= $inv_tab === 'recount' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600' ?>">
-                        Pending Recount
-                        <?php if ($recount_count_badge > 0): ?>
-                        <span class="<?= $inv_tab === 'recount' ? 'bg-white/30 text-white' : 'bg-amber-500 text-white' ?> text-[8px] font-black px-1.5 py-0.5 rounded-full leading-none"><?= $recount_count_badge ?></span>
-                        <?php endif; ?>
-                    </a>
                     <a href="stock_management.php?stock=disposed"
                        class="px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
                               <?= $inv_tab === 'disposed' ? 'bg-orange-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600' ?>">
@@ -526,66 +469,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
             </div>
         </div>
 
-        <?php if ($inv_tab === 'recount'): ?>
-        <!-- ── RECOUNT MONITORING TABLE ────────────────────────────────────── -->
-        <table class="table-modern text-left w-full">
-            <thead>
-                <tr class="bg-amber-50/60">
-                    <th class="px-10 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest" width="30%">Product</th>
-                    <th class="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
-                    <th class="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Actual Count</th>
-                    <th class="px-6 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Variance</th>
-                    <th class="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Requested</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-50">
-            <?php if (!empty($recount_rows)): foreach ($recount_rows as $rr):
-                $status = $rr['status'];
-                $status_cfg = [
-                    'pending'    => ['label' => 'Awaiting Approval', 'cls' => 'bg-slate-100 text-slate-500'],
-                    'recounting' => ['label' => 'Counting in Progress', 'cls' => 'bg-amber-100 text-amber-700'],
-                    'submitted'  => ['label' => 'Count Submitted', 'cls' => 'bg-blue-100 text-blue-700'],
-                ][$status] ?? ['label' => $status, 'cls' => 'bg-slate-100 text-slate-400'];
-                $variance = $rr['actual_qty'] !== null ? intval($rr['variance'] ?? 0) : null;
-                $var_color = $variance === null ? 'text-slate-300' : ($variance === 0 ? 'text-emerald-600' : ($variance > 0 ? 'text-rose-600' : 'text-amber-600'));
-                $var_label = $variance === null ? '—' : ($variance === 0 ? '0 (exact)' : ($variance > 0 ? "+{$variance} short" : abs($variance) . " over"));
-            ?>
-            <tr class="hover:bg-amber-50/20 transition-all">
-                <td class="px-10 py-6">
-                    <p class="font-bold text-slate-800 leading-tight"><?= htmlspecialchars($rr['product_name']) ?></p>
-                    <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded mt-1 inline-block">#<?= htmlspecialchars($rr['barcode']) ?></code>
-                    <?php if ($rr['invoice']): ?>
-                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">INV: <?= htmlspecialchars($rr['invoice']) ?></p>
-                    <?php endif; ?>
-                </td>
-                <td class="px-6 py-6 text-center">
-                    <span class="text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest <?= $status_cfg['cls'] ?>"><?= $status_cfg['label'] ?></span>
-                </td>
-                <td class="px-6 py-6 text-center">
-                    <span class="text-xl font-black <?= $rr['actual_qty'] !== null ? 'text-blue-600' : 'text-slate-200' ?>">
-                        <?= $rr['actual_qty'] !== null ? intval($rr['actual_qty']) : '—' ?>
-                    </span>
-                    <?php if ($rr['submitted_at']): ?>
-                    <p class="text-[9px] text-slate-300 mt-0.5"><?= date('M d, g:i A', strtotime($rr['submitted_at'])) ?></p>
-                    <?php endif; ?>
-                </td>
-                <td class="px-6 py-6 text-center">
-                    <span class="text-base font-black <?= $var_color ?>"><?= $var_label ?></span>
-                </td>
-                <td class="px-8 py-6">
-                    <p class="text-xs font-bold text-slate-600"><?= htmlspecialchars($rr['requester_name'] ?? '—') ?></p>
-                    <p class="text-[10px] text-slate-300 mt-0.5"><?= date('M d, Y', strtotime($rr['created_at'])) ?></p>
-                </td>
-            </tr>
-            <?php endforeach; else: ?>
-            <tr><td colspan="5" class="p-20 text-center">
-                <p class="font-black text-slate-300 uppercase tracking-widest text-sm">No pending recounts.</p>
-            </td></tr>
-            <?php endif; ?>
-            </tbody>
-        </table>
-
-        <?php elseif ($inv_tab === 'disposed'): ?>
+        <?php if ($inv_tab === 'disposed'): ?>
         <!-- ── DISPOSED ITEMS TABLE ─────────────────────────────────────────── -->
         <table class="table-modern text-left w-full">
             <thead>
@@ -668,7 +552,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
             <?php /* ── BATCH MODE: one row per product, supplier shown inline ─── */ ?>
             <?php if ($res && $res->num_rows > 0): ?>
                 <?php while ($p = $res->fetch_assoc()):
-                    $qty         = max(0, intval($p['quantity']) - intval($p['recount_pending_qty'] ?? 0));
+                    $qty         = max(0, intval($p['quantity']));
                     $price       = floatval($p['price'] ?? 0);
                     $cat         = htmlspecialchars($p['category'] ?? '—');
                     $is_archived = $stock_filter === 'archived';
@@ -696,16 +580,6 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                         <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded shadow-sm mt-1 inline-block">#<?= htmlspecialchars($p['barcode']) ?></code>
                         <?php if (!empty($p['supplier_display'])): ?>
                         <p class="text-[10px] text-slate-400 font-bold mt-0.5"><?= htmlspecialchars($p['supplier_display']) ?></p>
-                        <?php endif; ?>
-                        <?php if ($role === ROLE_STAFF && !$is_archived): ?>
-                        <form method="POST" class="mt-2 inline-block">
-                            <input type="hidden" name="action"       value="request_recount">
-                            <input type="hidden" name="barcode"      value="<?= htmlspecialchars($p['barcode']) ?>">
-                            <input type="hidden" name="product_name" value="<?= htmlspecialchars($p['name']) ?>">
-                            <input type="hidden" name="expected_qty" value="<?= $qty ?>">
-                            <input type="hidden" name="product_id"   value="<?= intval($p['id']) ?>">
-                            <button type="submit" class="text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full uppercase tracking-widest hover:bg-amber-500 hover:text-white transition-all">Request Recount</button>
-                        </form>
                         <?php endif; ?>
                     </td>
                     <td class="px-6 py-7 text-center">
@@ -840,12 +714,11 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                                         <th class="px-5 py-2.5 font-black text-slate-400 uppercase tracking-widest text-center">Date Delivered</th>
                                         <th class="px-5 py-2.5 font-black text-slate-400 uppercase tracking-widest text-center">Remaining</th>
                                         <th class="px-5 py-2.5 font-black text-slate-400 uppercase tracking-widest text-center">Expiry</th>
-                                        <?php if ($role === ROLE_STAFF && !$is_archived): ?><th class="px-5 py-2.5"></th><?php endif; ?>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-100">
                                 <?php foreach ($g['suppliers'] as $sup):
-                                    $sup_net = max(0, $sup['qty'] - intval($sup['recount_pending_qty'] ?? 0));
+                                    $sup_net = max(0, $sup['qty']);
                                     $sup_color = $sup_net <= 0 ? 'text-rose-500' : ($sup_net <= $row_threshold ? 'text-amber-600' : 'text-slate-700');
                                     $s_exp = $sup['expiry_date'] ?? null;
                                     $s_exp_cls = 'text-slate-300'; $s_exp_badge = '';
@@ -870,18 +743,6 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                                             <?php if ($s_exp_badge): ?><span class="ml-1 text-[8px] font-black <?= $s_exp_cls ?> uppercase tracking-widest"><?= $s_exp_badge ?></span><?php endif; ?>
                                         <?php else: ?><span class="text-[9px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full uppercase tracking-widest">No Expiry Set</span><?php endif; ?>
                                     </td>
-                                    <?php if ($role === ROLE_STAFF && !$is_archived): ?>
-                                    <td class="px-5 py-3">
-                                        <form method="POST" onclick="event.stopPropagation()">
-                                            <input type="hidden" name="action"       value="request_recount">
-                                            <input type="hidden" name="barcode"      value="<?= htmlspecialchars($sup['barcode']) ?>">
-                                            <input type="hidden" name="product_name" value="<?= htmlspecialchars($g['name']) ?>">
-                                            <input type="hidden" name="expected_qty" value="<?= $sup_net ?>">
-                                            <input type="hidden" name="product_id"   value="<?= $sup['id'] ?>">
-                                            <button type="submit" class="text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full uppercase tracking-widest hover:bg-amber-500 hover:text-white transition-all whitespace-nowrap">Request Recount</button>
-                                        </form>
-                                    </td>
-                                    <?php endif; ?>
                                 </tr>
                                 <?php endforeach; ?>
                                 </tbody>

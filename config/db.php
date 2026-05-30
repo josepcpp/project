@@ -565,3 +565,13 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.6.1
+
+// ── v1.6.2 — Link products to receiving_batches ───────────────────────────────
+$_db_version   = '1.6.2';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS receiving_batch_id INT DEFAULT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.2

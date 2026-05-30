@@ -17,9 +17,9 @@ if (!$batch_id) {
     exit();
 }
 
-// Load batch — receiver can only see their own batches; admin/superadmin see all
+// Load batch — receiver can see their own batches OR unclaimed admin-created vouchers
 if ($role === ROLE_RECEIVER) {
-    $bq = $conn->prepare("SELECT * FROM receiving_batches WHERE id = ? AND receiver_id = ? LIMIT 1");
+    $bq = $conn->prepare("SELECT * FROM receiving_batches WHERE id = ? AND (receiver_id = ? OR receiver_id IS NULL) LIMIT 1");
     $bq->bind_param("ii", $batch_id, $user_id);
 } else {
     $bq = $conn->prepare("SELECT * FROM receiving_batches WHERE id = ? LIMIT 1");
@@ -49,7 +49,7 @@ $success = trim($_GET['success'] ?? '');
 include '../layout_top.php';
 ?>
 
-<div class="max-w-5xl mx-auto space-y-6">
+<div class="max-w-6xl mx-auto space-y-6">
 
     <!-- Batch Info Header -->
     <div class="card-modern p-6 flex flex-wrap gap-6 items-start">
@@ -88,7 +88,7 @@ include '../layout_top.php';
             </button>
         </div>
 
-        <form method="POST" action="receive_process.php" id="itemsForm">
+        <form method="POST" action="receive_process.php" id="itemsForm" onsubmit="syncQtys()">
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="save_items">
             <input type="hidden" name="batch_id" value="<?= $batch_id ?>">
@@ -97,29 +97,40 @@ include '../layout_top.php';
                 <table class="w-full text-sm" id="items-table">
                     <thead>
                         <tr class="text-left">
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3">Barcode</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-36">Barcode</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3">Description <span class="text-rose-500">*</span></th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-24">Qty <span class="text-rose-500">*</span></th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-20 text-center">Qty/Box</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-20 text-center">Boxes</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-24 text-center">Total Qty</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-36">Expiry Date</th>
                             <th class="pb-3 w-8"></th>
                         </tr>
                     </thead>
                     <tbody id="items-body">
                     <?php if (empty($items)): ?>
-                        <!-- default first row -->
                         <tr class="item-row">
-                            <td class="pr-3 pb-2"><input type="text" name="items[0][barcode]" class="input-modern text-sm w-full" placeholder="628..."></td>
+                            <td class="pr-3 pb-2"><input type="text" name="items[0][barcode]" class="input-modern text-sm w-full barcode-input" placeholder="628..." onblur="lookupBarcode(this)"></td>
                             <td class="pr-3 pb-2"><input type="text" name="items[0][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[0][qty]" required min="1" class="input-modern text-sm w-full" value="1"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[0][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[0][box_qty]" min="1" value="1" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2 text-center">
+                                <span class="total-display font-black text-slate-800 text-base">1</span>
+                                <input type="hidden" name="items[0][qty]" class="qty-hidden" value="1">
+                            </td>
                             <td class="pr-3 pb-2"><input type="date" name="items[0][expiry_date]" class="input-modern text-sm w-full"></td>
                             <td class="pb-2"></td>
                         </tr>
                     <?php else: ?>
                         <?php foreach ($items as $i => $item): ?>
                         <tr class="item-row">
-                            <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][barcode]" class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['barcode'] ?? '') ?>"></td>
+                            <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][barcode]" class="input-modern text-sm w-full barcode-input" value="<?= htmlspecialchars($item['barcode'] ?? '') ?>" onblur="lookupBarcode(this)"></td>
                             <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][description]" required class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['description']) ?>"></td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty]" required min="1" class="input-modern text-sm w-full" value="<?= intval($item['quantity']) ?>"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="1" value="<?= intval($item['quantity']) ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2 text-center">
+                                <span class="total-display font-black text-slate-800 text-base"><?= intval($item['quantity']) ?></span>
+                                <input type="hidden" name="items[<?= $i ?>][qty]" class="qty-hidden" value="<?= intval($item['quantity']) ?>">
+                            </td>
                             <td class="pr-3 pb-2"><input type="date" name="items[<?= $i ?>][expiry_date]" class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['expiry_date'] ?? '') ?>"></td>
                             <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>
                         </tr>
@@ -134,7 +145,7 @@ include '../layout_top.php';
                     Save Items
                 </button>
                 <button type="submit" name="submit_action" value="submit"
-                        onclick="return confirm('Submit this batch for Admin review? You will not be able to edit items after this.')"
+                        onclick="return confirm('Submit this batch? You will not be able to edit items after this.')"
                         class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100">
                     Submit Batch
                 </button>
@@ -155,7 +166,7 @@ include '../layout_top.php';
                         <th>#</th>
                         <th>Barcode</th>
                         <th>Description</th>
-                        <th>Qty</th>
+                        <th>Total Qty</th>
                         <th>Expiry</th>
                     </tr>
                 </thead>
@@ -181,19 +192,57 @@ include '../layout_top.php';
 <script>
 let _rowIdx = <?= max(count($items), 1) ?>;
 
+function updateTotal(input) {
+    const row  = input.closest('tr');
+    const perBox = parseInt(row.querySelector('.qty-per-box').value) || 1;
+    const boxes  = parseInt(row.querySelector('.box-qty').value)    || 1;
+    const total  = perBox * boxes;
+    row.querySelector('.total-display').textContent = total;
+    row.querySelector('.qty-hidden').value = total;
+}
+
+function syncQtys() {
+    document.querySelectorAll('.item-row').forEach(row => {
+        const perBox = parseInt(row.querySelector('.qty-per-box').value) || 1;
+        const boxes  = parseInt(row.querySelector('.box-qty').value)    || 1;
+        row.querySelector('.qty-hidden').value = perBox * boxes;
+    });
+}
+
+async function lookupBarcode(input) {
+    const barcode = input.value.trim();
+    if (!barcode) return;
+    const row  = input.closest('tr');
+    const desc = row.querySelector('input[name*="[description]"]');
+    const exp  = row.querySelector('input[name*="[expiry_date]"]');
+    try {
+        const res  = await fetch(`../api/product_lookup.php?barcode=${encodeURIComponent(barcode)}`);
+        const data = await res.json();
+        if (data.found) {
+            if (!desc.value.trim()) desc.value = data.name;
+            if (!exp.value && data.expiry_date) exp.value = data.expiry_date;
+        }
+    } catch (_) {}
+}
+
 function addRow() {
     const i = _rowIdx++;
     const tbody = document.getElementById('items-body');
     const tr = document.createElement('tr');
     tr.className = 'item-row';
     tr.innerHTML = `
-        <td class="pr-3 pb-2"><input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full" placeholder="628..."></td>
+        <td class="pr-3 pb-2"><input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full barcode-input" placeholder="628..." onblur="lookupBarcode(this)"></td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
-        <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty]" required min="1" class="input-modern text-sm w-full" value="1"></td>
+        <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
+        <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="1" value="1" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
+        <td class="pr-3 pb-2 text-center">
+            <span class="total-display font-black text-slate-800 text-base">1</span>
+            <input type="hidden" name="items[${i}][qty]" class="qty-hidden" value="1">
+        </td>
         <td class="pr-3 pb-2"><input type="date" name="items[${i}][expiry_date]" class="input-modern text-sm w-full"></td>
         <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>`;
     tbody.appendChild(tr);
-    tr.querySelector('input[name*="[description]"]').focus();
+    tr.querySelector('.barcode-input').focus();
 }
 
 function removeRow(btn) {

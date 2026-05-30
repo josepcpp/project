@@ -75,18 +75,18 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
                 $notif->execute();
             }
 
-            // Add qty regardless of price change; reactivate if archived
-            $new_qty    = intval($prod['quantity']) + $qty;
-            $new_status = PRODUCT_ACTIVE;
+            // Add qty regardless of price change; reactivate if archived; link to this batch.
+            // max_quantity = new total so the 10%-of-intake low-stock threshold is accurate.
+            $new_qty = intval($prod['quantity']) + $qty;
             $upd = $conn->prepare(
-                "UPDATE products SET quantity = ?, status = '" . PRODUCT_ACTIVE . "', archived_at = NULL" .
+                "UPDATE products SET quantity = ?, max_quantity = ?, status = '" . PRODUCT_ACTIVE . "', archived_at = NULL, receiving_batch_id = ?" .
                 ($expiry ? ", expiry_date = ?" : "") .
                 " WHERE id = ?"
             );
             if ($expiry) {
-                $upd->bind_param("isi", $new_qty, $expiry, $prod['id']);
+                $upd->bind_param("iiiisi", $new_qty, $new_qty, $batch_id, $expiry, $prod['id']);
             } else {
-                $upd->bind_param("ii", $new_qty, $prod['id']);
+                $upd->bind_param("iiii", $new_qty, $new_qty, $batch_id, $prod['id']);
             }
             $upd->execute();
 
@@ -97,13 +97,14 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
             $al->execute();
 
         } else {
-            // New product — INSERT with base_price as starting price
+            // New product — INSERT with base_price as starting price.
+            // max_quantity = received qty so the 10%-of-intake low-stock threshold is accurate.
             // supplier_id = NULL (pipeline flow has no legacy supplier FK)
             $ins = $conn->prepare(
-                "INSERT INTO products (supplier_id, name, barcode, price, cost_price, quantity, status, expiry_date)
-                 VALUES (NULL, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?)"
+                "INSERT INTO products (supplier_id, name, barcode, price, cost_price, quantity, max_quantity, status, expiry_date, receiving_batch_id)
+                 VALUES (NULL, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?)"
             );
-            $ins->bind_param("ssddis", $desc, $barcode, $base_price, $base_price, $qty, $expiry);
+            $ins->bind_param("ssddiiisi", $desc, $barcode, $base_price, $base_price, $qty, $qty, $expiry, $batch_id);
             $ins->execute();
             $new_product_id = $conn->insert_id;
 

@@ -52,9 +52,6 @@ include 'layout_top.php';
 // ── STAFF DASHBOARD ───────────────────────────────────────────────────────────
 if ($role === ROLE_STAFF):
     $staff_name      = $_SESSION['username'] ?? 'Staff';
-    $recount_items_q = $conn->query("SELECT * FROM quantity_alerts WHERE status = 'recounting' ORDER BY created_at DESC");
-    $recount_items   = $recount_items_q ? $recount_items_q->fetch_all(MYSQLI_ASSOC) : [];
-    $has_recounts    = count($recount_items) > 0;
     $today_sales_q   = $conn->query("SELECT COUNT(*) as cnt, COALESCE(SUM(total),0) as amt FROM sales WHERE DATE(created_at) = CURDATE()");
     $today_sales     = $today_sales_q->fetch_assoc();
     $set_q     = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'low_stock_threshold'");
@@ -81,67 +78,12 @@ if ($role === ROLE_STAFF):
             <p class="text-slate-400 text-sm font-bold"><?= date("l, F j, Y") ?></p>
         </div>
         <div class="hidden md:flex items-center gap-4">
-            <?php if ($has_recounts): ?>
-            <div class="text-center bg-amber-500/20 border border-amber-500/30 rounded-2xl px-6 py-4">
-                <p class="text-3xl font-black text-amber-400"><?= count($recount_items) ?></p>
-                <p class="text-[9px] font-black text-amber-300 uppercase tracking-widest mt-1">Recount Tasks</p>
-            </div>
-            <?php endif; ?>
             <div class="text-center bg-white/5 border border-white/10 rounded-2xl px-6 py-4">
                 <p class="text-3xl font-black text-white"><?= $today_sales['cnt'] ?></p>
                 <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Sales Today</p>
             </div>
         </div>
     </div>
-    <?php if ($has_recounts): ?>
-    <div class="bg-amber-50 border-2 border-amber-300 rounded-[2.5rem] overflow-hidden shadow-lg shadow-amber-100">
-        <div class="p-7 border-b border-amber-200 flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <div class="w-12 h-12 bg-amber-500 rounded-2xl flex items-center justify-center flex-shrink-0 animate-pulse">
-                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                </div>
-                <div>
-                    <h3 class="font-black text-amber-900 text-lg uppercase tracking-wide">Recount Required</h3>
-                    <p class="text-amber-600 text-xs font-bold">Owner flagged <?= count($recount_items) ?> item<?= count($recount_items) > 1 ? 's' : '' ?> for physical recount. Procurement section is now unlocked.</p>
-                </div>
-            </div>
-            <a href="procurement/delivery_receive.php" class="hidden sm:flex items-center gap-2 bg-amber-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-3 rounded-2xl hover:bg-amber-600 transition-all shadow-md">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>
-                Go to Receiving Station
-            </a>
-        </div>
-        <form method="POST" action="procurement/recount_submit.php" onsubmit="confirmForm(event, this, 'Submit your physical count for all flagged items?', 'Submit Recount?')">
-            <div class="divide-y divide-amber-100">
-                <?php foreach ($recount_items as $ri): ?>
-                <div class="p-6 flex flex-col sm:flex-row sm:items-center gap-5 hover:bg-amber-50/80 transition-all">
-                    <div class="flex-1 min-w-0">
-                        <p class="font-black text-slate-800 text-base leading-tight"><?= htmlspecialchars($ri['product_name']) ?></p>
-                        <div class="flex flex-wrap gap-3 mt-1.5">
-                            <code class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">#<?= htmlspecialchars($ri['barcode']) ?></code>
-                            <code class="text-[10px] text-slate-400 font-bold">Invoice: <?= htmlspecialchars($ri['invoice']) ?></code>
-                        </div>
-                        <div class="flex gap-4 mt-2">
-                            <span class="text-xs font-black text-slate-500">PM Encoded: <span class="text-slate-800"><?= $ri['batch_qty'] ?> units</span></span>
-                            <span class="text-xs font-black text-slate-500">Last Count: <span class="text-rose-600"><?= $ri['received_qty'] ?> units</span></span>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-3 flex-shrink-0">
-                        <input type="hidden" name="alert_ids[]" value="<?= $ri['id'] ?>">
-                        <div class="bg-white border-2 border-amber-300 rounded-2xl px-4 py-2 text-center shadow-inner min-w-[100px]">
-                            <p class="text-[8px] font-black text-amber-500 uppercase tracking-widest mb-1">Actual Count</p>
-                            <input type="number" name="actual_qtys[]" min="0" required placeholder="—" class="w-full bg-transparent text-center text-xl font-black text-slate-900 outline-none">
-                        </div>
-                    </div>
-                </div>
-                <?php endforeach; ?>
-            </div>
-            <div class="p-7 border-t border-amber-200 bg-amber-100/50 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <p class="text-[10px] font-black text-amber-600 uppercase tracking-widest">Enter the physical count for each item, then submit.</p>
-                <button type="submit" class="bg-amber-500 text-white font-black px-10 py-4 rounded-2xl hover:bg-amber-600 active:scale-95 transition-all text-sm uppercase tracking-widest shadow-md">Submit Recount ✔</button>
-            </div>
-        </form>
-    </div>
-    <?php endif; ?>
     <?php if ($has_expiry_soon): ?>
     <div class="bg-orange-50 border-2 border-orange-300 rounded-[2.5rem] overflow-hidden shadow-lg shadow-orange-100">
         <div class="p-7 border-b border-orange-200 flex items-center justify-between">
@@ -252,21 +194,15 @@ $rev_prev_mon = $conn->query("SELECT COALESCE(SUM(total),0) as r FROM sales WHER
 // ── Section B: Live Operations ────────────────────────────────────
 $last_sale_q   = $conn->query("SELECT * FROM sales ORDER BY id DESC LIMIT 1");
 $last_sale     = $last_sale_q?->fetch_assoc();
-$live_batches  = $conn->query("SELECT pb.*, u.full_name as staff_name, u.username as staff_uname FROM procurement_batches pb JOIN users u ON pb.staff_id=u.id WHERE pb.status IN ('" . BATCH_APPROVED . "','" . BATCH_ENCODING . "','" . BATCH_RECEIVING . "') ORDER BY pb.created_at DESC LIMIT 5");
 
 // ── Section C: Procurement Pipeline ──────────────────────────────
 $pip_suppliers = $conn->query("SELECT COUNT(*) as c FROM suppliers")->fetch_assoc()['c'] ?? 0;
 $pip_draft_q   = $conn->query("SELECT COUNT(DISTINCT supplier_id) as batches, COUNT(*) as items FROM products WHERE status='" . PRODUCT_DRAFT . "'");
 $pip_draft     = $pip_draft_q->fetch_assoc();
-$pip_receiving = $conn->query("SELECT COUNT(*) as c FROM procurement_batches WHERE status='" . BATCH_RECEIVING . "'")->fetch_assoc()['c'] ?? 0;
-$pip_alerts    = $conn->query("SELECT COUNT(*) as c FROM quantity_alerts WHERE status IN ('" . ALERT_PENDING . "','" . ALERT_RECOUNTING . "')")->fetch_assoc()['c'] ?? 0;
 $pip_archived      = $conn->query("SELECT COUNT(*) as c FROM products WHERE status='" . PRODUCT_ARCHIVED . "'")->fetch_assoc()['c'] ?? 0;
 $pip_new_archived  = $conn->query("SELECT COUNT(*) as c FROM products WHERE status='" . PRODUCT_ARCHIVED . "' AND archived_at >= NOW() - INTERVAL 24 HOUR")->fetch_assoc()['c'] ?? 0;
-$supervised_count  = $conn->query("SELECT COUNT(*) as c FROM users WHERE supervision_flag='" . SUPERVISION_SUPERVISED . "'")->fetch_assoc()['c'] ?? 0;
-$supervised_users  = $supervised_count > 0 ? $conn->query("SELECT id, username, full_name, supervision_flagged_at FROM users WHERE supervision_flag='" . SUPERVISION_SUPERVISED . "' ORDER BY supervision_flagged_at DESC LIMIT 10")->fetch_all(MYSQLI_ASSOC) : [];
 $pip_payments  = $conn->query("SELECT COUNT(*) as c, COALESCE(SUM(amount),0) as total FROM supplier_payments WHERE status='" . SUP_PAY_UNPAID . "'");
 $pip_pay       = $pip_payments ? $pip_payments->fetch_assoc() : ['c' => 0, 'total' => 0];
-$batch_history = $conn->query("SELECT pb.*, u.username as staff_uname FROM procurement_batches pb JOIN users u ON pb.staff_id=u.id ORDER BY pb.created_at DESC LIMIT 8");
 $dr_tickets_q  = $conn->query("
     SELECT drr.id, drr.invoice_no, drr.supplier_name, drr.purpose, drr.status,
            drr.ticket_no, drr.requested_username, drr.reviewed_username,
@@ -325,17 +261,13 @@ $sec_count = $conn->query("SELECT COUNT(*) as c FROM security_flags WHERE status
 // ── Section I: Staff Activity ─────────────────────────────────────
 $staff_q = $conn->query("
     SELECT u.id, u.username, u.full_name, u.status as acc_status,
-           al.message as last_msg, al.log_type as last_type, al.created_at as last_at,
-           pb.status as proc_status, pb.supplier_name as proc_supplier, pb.encoding_started_at
+           al.message as last_msg, al.log_type as last_type, al.created_at as last_at
     FROM users u
     LEFT JOIN activity_logs al ON al.id = (SELECT id FROM activity_logs WHERE user_id=u.id ORDER BY id DESC LIMIT 1)
-    LEFT JOIN procurement_batches pb ON pb.id = (SELECT id FROM procurement_batches WHERE staff_id=u.id AND status IN ('" . BATCH_APPROVED . "','" . BATCH_ENCODING . "','" . BATCH_RECEIVING . "') ORDER BY created_at DESC LIMIT 1)
     WHERE u.role='" . ROLE_STAFF . "'
     ORDER BY last_at DESC
 ");
-$flagged_staff = $conn->query("SELECT staff_id, staff_username, COUNT(*) as ec FROM procurement_batches WHERE status='" . BATCH_COMPLETE_ERRORS . "' GROUP BY staff_id HAVING ec>=" . DEFAULT_REPEAT_DISCREPANCY_COUNT);
-$flagged_ids   = [];
-if ($flagged_staff) { while ($fs = $flagged_staff->fetch_assoc()) $flagged_ids[$fs['staff_id']] = $fs['ec']; }
+$flagged_ids = [];
 
 // ── Section J: Activity Trail ─────────────────────────────────────
 // M-04: admin should not see superadmin-generated logs; superadmin sees all
@@ -474,42 +406,6 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
 <div class="space-y-4">
     <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Live Operations</p>
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <!-- Active Procurement Batches -->
-        <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
-            <div class="p-6 border-b border-slate-50 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 bg-blue-500 rounded-xl flex items-center justify-center">
-                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-                    </div>
-                    <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">Active Procurement</h4>
-                </div>
-                <a href="inventory/product_info.php" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a>
-            </div>
-            <?php if ($live_batches && $live_batches->num_rows > 0): ?>
-            <div class="divide-y divide-slate-50">
-                <?php while ($lb = $live_batches->fetch_assoc()):
-                    $stage_color = match($lb['status']) { 'encoding' => 'bg-blue-500', 'receiving' => 'bg-amber-500', default => 'bg-slate-300' };
-                    $stage_label = match($lb['status']) { 'encoding' => 'Encoding', 'receiving' => 'At Receiving', default => 'Approved' };
-                ?>
-                <div class="px-6 py-4 flex items-center gap-4">
-                    <div class="w-2 h-2 <?= $stage_color ?> rounded-full flex-shrink-0 animate-pulse"></div>
-                    <div class="flex-1 min-w-0">
-                        <p class="font-black text-slate-800 text-sm truncate">@<?= htmlspecialchars($lb['staff_uname']) ?></p>
-                        <p class="text-[10px] text-slate-500 font-bold truncate"><?= htmlspecialchars($lb['staff_name']) ?></p>
-                        <?php if (!empty($lb['approved_by_username'])): ?>
-                        <p class="text-[9px] text-slate-300 font-bold">Approved by @<?= htmlspecialchars($lb['approved_by_username']) ?></p>
-                        <?php endif; ?>
-                        <p class="text-[10px] text-slate-400 font-bold mt-0.5"><?= htmlspecialchars($lb['supplier_name'] ?? '—') ?> · <?= htmlspecialchars($lb['invoice'] ?? '—') ?></p>
-                    </div>
-                    <span class="text-[9px] font-black px-3 py-1 rounded-full <?= $stage_color ?> text-white flex-shrink-0"><?= $stage_label ?></span>
-                </div>
-                <?php endwhile; ?>
-            </div>
-            <?php else: ?>
-            <div class="p-10 text-center text-slate-300 font-black italic text-sm">No active procurement batches.</div>
-            <?php endif; ?>
-        </div>
-
         <!-- Last Sale + Refund Today -->
         <div class="space-y-4">
             <?php if ($last_sale): ?>
@@ -600,36 +496,6 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
     </div>
 </div>
 
-<!-- ═══════════════════ SECTION G2: SUPERVISED ACCOUNTS ═══════════════════ -->
-<?php if ($supervised_count > 0): ?>
-<div class="space-y-4">
-    <div class="bg-rose-50 border border-rose-200 rounded-[2rem] p-6">
-        <div class="flex items-center justify-between gap-4 mb-4">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-rose-500 text-white rounded-2xl flex items-center justify-center flex-shrink-0">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                </div>
-                <div>
-                    <h4 class="font-black text-rose-800 text-sm uppercase tracking-widest">Accounts Flagged — To Be Supervised</h4>
-                    <p class="text-rose-500 text-[10px] font-bold mt-0.5"><?= $supervised_count ?> staff account<?= $supervised_count > 1 ? 's' : '' ?> flagged after double recount failure. Super Admin review required.</p>
-                </div>
-            </div>
-            <a href="users/users.php" class="text-[10px] font-black text-rose-500 hover:underline uppercase tracking-widest flex-shrink-0">Manage →</a>
-        </div>
-        <div class="flex flex-col gap-2">
-            <?php foreach ($supervised_users as $su): ?>
-            <div class="bg-white border border-rose-100 rounded-xl px-4 py-2.5 flex items-center justify-between gap-4">
-                <div>
-                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($su['full_name'] ?: $su['username']) ?></p>
-                    <p class="text-[10px] text-slate-400 font-bold">@<?= htmlspecialchars($su['username']) ?> · Flagged <?= $su['supervision_flagged_at'] ? date('M d, Y g:i A', strtotime($su['supervision_flagged_at'])) : '—' ?></p>
-                </div>
-                <span class="text-[9px] font-black bg-rose-100 text-rose-600 border border-rose-200 px-3 py-1 rounded-full uppercase tracking-widest flex-shrink-0">⚠ Supervised</span>
-            </div>
-            <?php endforeach; ?>
-        </div>
-    </div>
-</div>
-<?php endif; ?>
 
 <!-- ═══════════════════ SECTION H: SECURITY FLAGS (high priority) ═══════════════════ -->
 <?php if ($sec_count > 0): ?>
@@ -702,41 +568,6 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
         <?php endforeach; ?>
     </div>
 
-    <!-- Batch Lifecycle History -->
-    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
-        <div class="p-6 border-b border-slate-50">
-            <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">Batch Lifecycle History</h4>
-            <p class="text-[10px] text-slate-400 font-bold mt-0.5">Last 8 procurement batches</p>
-        </div>
-        <div class="divide-y divide-slate-50">
-            <?php if ($batch_history && $batch_history->num_rows > 0): while ($bh = $batch_history->fetch_assoc()):
-                $st_cfg = match($bh['status']) {
-                    BATCH_COMPLETE_CLEAN  => ['bg-emerald-50 text-emerald-700', '✓ Clean'],
-                    BATCH_COMPLETE_ERRORS => ['bg-rose-50 text-rose-700',       '⚠ Errors'],
-                    'recount_pending' => ['bg-amber-50 text-amber-700',     '↻ Recount'],
-                    'receiving'       => ['bg-amber-50 text-amber-700',     '→ Receiving'],
-                    'encoding'        => ['bg-blue-50 text-blue-700',       '✎ Encoding'],
-                    default           => ['bg-slate-50 text-slate-500',     '◌ Approved'],
-                };
-            ?>
-            <div class="px-6 py-4 flex items-center gap-4">
-                <div class="flex-1 min-w-0">
-                    <p class="font-black text-slate-800 text-sm">@<?= htmlspecialchars($bh['staff_uname']) ?></p>
-                    <p class="text-[10px] text-slate-400 font-bold truncate"><?= htmlspecialchars($bh['supplier_name'] ?? '—') ?> · <?= htmlspecialchars($bh['invoice'] ?? '—') ?></p>
-                </div>
-                <div class="text-right flex-shrink-0">
-                    <span class="text-[9px] font-black px-2 py-0.5 rounded-full <?= $st_cfg[0] ?>"><?= $st_cfg[1] ?></span>
-                    <p class="text-[9px] text-slate-300 font-bold mt-1"><?= date('M d, h:i A', strtotime($bh['created_at'])) ?></p>
-                    <?php if ($bh['minutes_to_complete'] !== null): ?>
-                    <p class="text-[9px] text-slate-400 font-bold"><?= $bh['minutes_to_complete'] ?> min · <?= $bh['item_count'] ?> items</p>
-                    <?php endif; ?>
-                </div>
-            </div>
-            <?php endwhile; else: ?>
-            <div class="p-10 text-center text-slate-300 font-black italic text-sm">No batch history yet.</div>
-            <?php endif; ?>
-        </div>
-    </div>
 </div>
 
 <!-- ═══════════════════ SECTION D: INVENTORY HEALTH ═══════════════════ -->
@@ -885,33 +716,18 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
     <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Staff Activity Monitor</p>
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         <?php if ($staff_q && $staff_q->num_rows > 0): while ($su = $staff_q->fetch_assoc()):
-            $is_flagged = isset($flagged_ids[$su['id']]);
-            $in_proc    = in_array($su['proc_status'], ['encoding', 'receiving']);
             $tc = match($su['last_type'] ?? '') { 'Sales' => 'text-emerald-500', 'Deliveries' => 'text-blue-500', 'Disposal' => 'text-rose-500', 'Prices' => 'text-purple-500', default => 'text-slate-400' };
         ?>
-        <div class="bg-white rounded-[2rem] border <?= $is_flagged ? 'border-rose-200' : ($in_proc ? 'border-blue-100' : 'border-slate-100') ?> shadow-md p-6">
-            <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black text-sm flex-shrink-0">
-                        <?= strtoupper(substr($su['username'], 0, 1)) ?>
-                    </div>
-                    <div>
-                        <p class="font-black text-slate-800 text-sm leading-tight">@<?= htmlspecialchars($su['username']) ?></p>
-                        <p class="text-[9px] text-slate-400 font-bold"><?= htmlspecialchars($su['full_name'] ?? '') ?></p>
-                    </div>
+        <div class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-6">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="w-9 h-9 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black text-sm flex-shrink-0">
+                    <?= strtoupper(substr($su['username'], 0, 1)) ?>
                 </div>
-                <?php if ($is_flagged): ?>
-                    <span class="text-[8px] font-black bg-rose-100 text-rose-600 px-2 py-0.5 rounded-full">⚑ <?= $flagged_ids[$su['id']] ?>x errors</span>
-                <?php elseif ($in_proc): ?>
-                    <span class="text-[8px] font-black bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full animate-pulse">● Procurement</span>
-                <?php endif; ?>
+                <div>
+                    <p class="font-black text-slate-800 text-sm leading-tight">@<?= htmlspecialchars($su['username']) ?></p>
+                    <p class="text-[9px] text-slate-400 font-bold"><?= htmlspecialchars($su['full_name'] ?? '') ?></p>
+                </div>
             </div>
-            <?php if ($in_proc): ?>
-            <div class="bg-blue-50 rounded-xl px-3 py-2 mb-3">
-                <p class="text-[9px] font-black text-blue-600 uppercase tracking-widest"><?= $su['proc_status'] === 'encoding' ? '✎ Encoding' : '→ At Receiving' ?></p>
-                <p class="text-[10px] text-blue-500 font-bold"><?= htmlspecialchars($su['proc_supplier'] ?? '—') ?></p>
-            </div>
-            <?php endif; ?>
             <?php if ($su['last_msg']): ?>
             <p class="text-[10px] text-slate-500 font-bold truncate"><?= htmlspecialchars($su['last_msg']) ?></p>
             <p class="text-[9px] text-slate-300 font-bold mt-1"><?= $su['last_at'] ? date('M d, h:i A', strtotime($su['last_at'])) : 'No activity' ?></p>
@@ -953,18 +769,6 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
 </div>
 
 <script>
-// ── Procurement access actions ────────────────────────────────────────────────
-async function procApprove(id, username) {
-    const ok = await customConfirm(`Grant procurement access to @${username}?`, 'Approve Access?');
-    if (!ok) return;
-    navigate('users/users_process.php', new FormData(document.getElementById('proc_approve_' + id)));
-}
-async function procDeny(id, username) {
-    const ok = await customConfirm(`Deny procurement access for @${username}?`, 'Deny Access?');
-    if (!ok) return;
-    navigate('users/users_process.php', new FormData(document.getElementById('proc_deny_' + id)));
-}
-
 let _dashRefundOpen = false;
 let _dashRejectId   = null;
 

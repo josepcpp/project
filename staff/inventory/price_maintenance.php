@@ -189,15 +189,7 @@ $sql = "SELECT
             MAX(p.tiers_locked) as tiers_locked
         FROM products p
         LEFT JOIN suppliers s ON p.supplier_id = s.id
-        WHERE p.status = '" . PRODUCT_ACTIVE . "'
-        AND p.id NOT IN (
-            SELECT product_id FROM quantity_alerts
-            WHERE status IN ('" . ALERT_PENDING . "','" . ALERT_RECOUNTING . "','" . ALERT_SUBMITTED . "') AND product_id IS NOT NULL
-            UNION
-            SELECT p2.id FROM products p2
-            JOIN quantity_alerts qa ON qa.barcode = p2.barcode
-            WHERE qa.status IN ('" . ALERT_PENDING . "','" . ALERT_RECOUNTING . "','" . ALERT_SUBMITTED . "') AND qa.product_id IS NULL
-        )";
+        WHERE p.status = '" . PRODUCT_ACTIVE . "'";
 if (!empty($sup_filter)) $sql .= " AND p.supplier_id = " . intval($sup_filter);
 $sql .= " GROUP BY LOWER(TRIM(p.name)) ORDER BY p.name ASC";
 $result = $conn->query($sql);

@@ -294,13 +294,37 @@ try {
         $stmt_item->bind_param("iiid", $sale_id, $pid, $cart_qty, $eff_price);
         $stmt_item->execute();
 
-        // 🛠️ Automated soft-archive when stock hits zero
-        $new_qty    = $product_data['quantity'] - $cart_qty;
-        $new_status = ($new_qty <= 0) ? PRODUCT_ARCHIVED : PRODUCT_ACTIVE;
-
-        $update_stock = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
-        $update_stock->bind_param("isis", $new_qty, $new_status, $new_status, $pid);
-        $update_stock->execute();
+        // FIFO stock deduction — drain earliest-expiry lots first; null expiry goes last
+        $bc_fifo = $product_data['barcode'] ?? '';
+        if ($bc_fifo !== '') {
+            $lots_q = $conn->prepare(
+                "SELECT id, quantity FROM products
+                 WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0
+                 ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, id ASC
+                 FOR UPDATE"
+            );
+            $lots_q->bind_param("s", $bc_fifo);
+            $lots_q->execute();
+            $lots      = $lots_q->get_result()->fetch_all(MYSQLI_ASSOC);
+            $remaining = $cart_qty;
+            foreach ($lots as $lot) {
+                if ($remaining <= 0) break;
+                $take    = min($remaining, intval($lot['quantity']));
+                $new_q   = intval($lot['quantity']) - $take;
+                $new_s   = $new_q <= 0 ? PRODUCT_ARCHIVED : PRODUCT_ACTIVE;
+                $upd_lot = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
+                $upd_lot->bind_param("isis", $new_q, $new_s, $new_s, $lot['id']);
+                $upd_lot->execute();
+                $remaining -= $take;
+            }
+        } else {
+            // No barcode — deduct directly from the cart's product row
+            $new_qty    = max(0, $product_data['quantity'] - $cart_qty);
+            $new_status = ($new_qty <= 0) ? PRODUCT_ARCHIVED : PRODUCT_ACTIVE;
+            $update_stock = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
+            $update_stock->bind_param("isis", $new_qty, $new_status, $new_status, $pid);
+            $update_stock->execute();
+        }
 
         // Auto-apply deferred price when old-price stock is exhausted
         $bc_check = $product_data['barcode'] ?? '';
