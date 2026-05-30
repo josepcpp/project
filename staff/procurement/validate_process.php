@@ -104,8 +104,14 @@ try {
     $al->execute();
 
     if ($tally_result === 'discrepancy') {
+        // Check if receiver logged any damaged items on this batch
+        $dq = $conn->prepare("SELECT COUNT(*) AS c FROM receiving_items WHERE batch_id = ? AND damaged_qty > 0");
+        $dq->bind_param("i", $batch_id);
+        $dq->execute();
+        $has_damage = intval($dq->get_result()->fetch_assoc()['c']) > 0;
+
         // Notify admin/superadmin of discrepancy
-        $msg = "Batch #$batch_id ({$batch['id']}) has a subtotal discrepancy. Computed: ₱" . number_format($computed_subtotal, 2) . ". Admin review required.";
+        $msg = "Batch #$batch_id has a subtotal discrepancy. Computed: ₱" . number_format($computed_subtotal, 2) . "." . ($has_damage ? " Receiver reported damaged items." : " Admin review required.");
         $notif = $conn->prepare(
             "INSERT INTO notifications (recipient_role, type, batch_id, message) VALUES ('admin', 'discrepancy', ?, ?)"
         );
@@ -113,7 +119,12 @@ try {
         $notif->execute();
 
         $conn->commit();
-        header("Location: validate_batch.php?success=" . urlencode("Validation submitted — discrepancy detected. Admin has been notified."));
+
+        if ($has_damage) {
+            header("Location: damage_ticket.php?batch_id=$batch_id");
+        } else {
+            header("Location: validate_batch.php?success=" . urlencode("Validation submitted — discrepancy detected. Admin has been notified."));
+        }
     } else {
         $conn->commit();
         // Tally match — trigger inventory push immediately

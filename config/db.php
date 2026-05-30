@@ -575,3 +575,29 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.6.2
+
+// ── v1.6.3 — Damaged item tracking & delivery damage tickets ─────────────────
+$_db_version   = '1.6.3';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE receiving_items ADD COLUMN IF NOT EXISTS damaged_qty INT DEFAULT 0");
+    $conn->query("ALTER TABLE receiving_items ADD COLUMN IF NOT EXISTS damage_notes VARCHAR(500) DEFAULT NULL");
+    $conn->query("CREATE TABLE IF NOT EXISTS delivery_damage_tickets (
+        id                  INT AUTO_INCREMENT PRIMARY KEY,
+        batch_id            INT NOT NULL,
+        raised_by           INT NULL,
+        raised_by_username  VARCHAR(100) NOT NULL,
+        status              ENUM('pending','approved','rejected') DEFAULT 'pending',
+        damage_summary      TEXT NULL,
+        total_deduction     DECIMAL(10,2) DEFAULT 0.00,
+        reviewed_by         INT NULL,
+        reviewed_by_username VARCHAR(100) NULL,
+        reviewed_at         DATETIME NULL,
+        admin_notes         TEXT NULL,
+        created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (batch_id) REFERENCES receiving_batches(id)
+    )");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.3

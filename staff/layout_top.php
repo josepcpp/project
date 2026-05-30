@@ -67,6 +67,7 @@ $titles = [
     'validate_batch.php'      => 'Validate Batches',
     'validate_items.php'      => 'Price Validation',
     'discrepancy_resolve.php' => 'Discrepancy',
+    'damage_review.php'       => 'Damage Tickets',
     'price_checker.php'       => 'Price Checker',
 ];
 
@@ -94,6 +95,7 @@ $icons = [
     'ip_restrictions.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>',
     // Phase 3 icons
     'bundles.php'           => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>',
+    'damage_review.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>',
     // Phase 4 — Procurement Pipeline icons
     'receive_batch.php'       => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0H4m8-9v9"/></svg>',
     'receive_items.php'       => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>',
@@ -138,10 +140,11 @@ $hrefs = [
     'validate_batch.php'      => '/project/staff/procurement/validate_batch.php',
     'validate_items.php'      => '/project/staff/procurement/validate_items.php',
     'discrepancy_resolve.php' => '/project/staff/procurement/discrepancy_resolve.php',
+    'damage_review.php'       => '/project/staff/procurement/damage_review.php',
     'price_checker.php'       => '/project/staff/procurement/price_checker.php',
 ];
 
-$pipeline_steps = ['batches_pending.php', 'discrepancy_resolve.php'];
+$pipeline_steps = ['batches_pending.php', 'discrepancy_resolve.php', 'damage_review.php'];
 
 $refund_queue_count = 0;
 $support_open_count = 0;

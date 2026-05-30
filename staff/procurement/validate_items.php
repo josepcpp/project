@@ -32,7 +32,7 @@ if (!$batch) {
 // Load items: description, barcode, qty (read-only), expiry, base_price (if already set)
 // Amount column is intentionally NOT fetched here
 $iq = $conn->prepare(
-    "SELECT id, barcode, description, quantity, expiry_date, base_price
+    "SELECT id, barcode, description, quantity, expiry_date, base_price, damaged_qty, damage_notes
      FROM receiving_items WHERE batch_id = ? ORDER BY id ASC"
 );
 $iq->bind_param("i", $batch_id);
@@ -77,6 +77,7 @@ include '../layout_top.php';
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-4">Barcode</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-4">Description</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-4 w-20">Qty</th>
+                            <th class="pb-3 text-[10px] font-black text-rose-400 uppercase tracking-widest pr-4 w-20">Damaged</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-4">Expiry</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest w-36">Base Price <span class="text-rose-500">*</span></th>
                         </tr>
@@ -88,6 +89,18 @@ include '../layout_top.php';
                             <td class="py-3 pr-4 font-mono text-xs text-slate-500"><?= htmlspecialchars($item['barcode'] ?? '—') ?></td>
                             <td class="py-3 pr-4 font-bold"><?= htmlspecialchars($item['description']) ?></td>
                             <td class="py-3 pr-4 font-black text-center"><?= intval($item['quantity']) ?></td>
+                            <td class="py-3 pr-4 text-center">
+                                <?php if (intval($item['damaged_qty'] ?? 0) > 0): ?>
+                                <span class="inline-flex flex-col items-center">
+                                    <span class="font-black text-rose-500"><?= intval($item['damaged_qty']) ?></span>
+                                    <?php if ($item['damage_notes']): ?>
+                                    <span class="text-[9px] text-rose-400 font-bold max-w-[80px] truncate" title="<?= htmlspecialchars($item['damage_notes']) ?>"><?= htmlspecialchars(mb_strimwidth($item['damage_notes'], 0, 18, '…')) ?></span>
+                                    <?php endif; ?>
+                                </span>
+                                <?php else: ?>
+                                <span class="text-slate-200 font-bold">—</span>
+                                <?php endif; ?>
+                            </td>
                             <td class="py-3 pr-4 text-slate-400 text-xs"><?= $item['expiry_date'] ? date('M j, Y', strtotime($item['expiry_date'])) : '—' ?></td>
                             <td class="py-3">
                                 <input type="hidden" name="items[<?= $i ?>][item_id]" value="<?= $item['id'] ?>">

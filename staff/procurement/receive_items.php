@@ -102,7 +102,10 @@ include '../layout_top.php';
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-20 text-center">Qty/Box</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-20 text-center">Boxes</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-24 text-center">Total Qty</th>
+                            <th class="pb-3 text-[10px] font-black text-rose-400 uppercase tracking-widest pr-3 w-20 text-center">Damaged</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-24 text-center">Good Qty</th>
                             <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-36">Expiry Date</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3">Damage Notes</th>
                             <th class="pb-3 w-8"></th>
                         </tr>
                     </thead>
@@ -115,23 +118,35 @@ include '../layout_top.php';
                             <td class="pr-3 pb-2"><input type="number" name="items[0][box_qty]" min="1" value="1" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
                             <td class="pr-3 pb-2 text-center">
                                 <span class="total-display font-black text-slate-800 text-base">1</span>
+                            </td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[0][damaged_qty]" min="0" value="0" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2 text-center">
+                                <span class="good-display font-black text-emerald-600 text-base">1</span>
                                 <input type="hidden" name="items[0][qty]" class="qty-hidden" value="1">
                             </td>
                             <td class="pr-3 pb-2"><input type="date" name="items[0][expiry_date]" class="input-modern text-sm w-full"></td>
+                            <td class="pr-3 pb-2"><input type="text" name="items[0][damage_notes]" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging"></td>
                             <td class="pb-2"></td>
                         </tr>
                     <?php else: ?>
-                        <?php foreach ($items as $i => $item): ?>
+                        <?php foreach ($items as $i => $item):
+                            $total_raw = intval($item['quantity']) + intval($item['damaged_qty'] ?? 0);
+                        ?>
                         <tr class="item-row">
                             <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][barcode]" class="input-modern text-sm w-full barcode-input" value="<?= htmlspecialchars($item['barcode'] ?? '') ?>" onblur="lookupBarcode(this)"></td>
                             <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][description]" required class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['description']) ?>"></td>
                             <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="1" value="<?= intval($item['quantity']) ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="1" value="<?= $total_raw ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
                             <td class="pr-3 pb-2 text-center">
-                                <span class="total-display font-black text-slate-800 text-base"><?= intval($item['quantity']) ?></span>
+                                <span class="total-display font-black text-slate-800 text-base"><?= $total_raw ?></span>
+                            </td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][damaged_qty]" min="0" value="<?= intval($item['damaged_qty'] ?? 0) ?>" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2 text-center">
+                                <span class="good-display font-black text-emerald-600 text-base"><?= intval($item['quantity']) ?></span>
                                 <input type="hidden" name="items[<?= $i ?>][qty]" class="qty-hidden" value="<?= intval($item['quantity']) ?>">
                             </td>
                             <td class="pr-3 pb-2"><input type="date" name="items[<?= $i ?>][expiry_date]" class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['expiry_date'] ?? '') ?>"></td>
+                            <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][damage_notes]" class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['damage_notes'] ?? '') ?>" placeholder="e.g. crushed packaging"></td>
                             <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>
                         </tr>
                         <?php endforeach; ?>
@@ -193,19 +208,23 @@ include '../layout_top.php';
 let _rowIdx = <?= max(count($items), 1) ?>;
 
 function updateTotal(input) {
-    const row  = input.closest('tr');
-    const perBox = parseInt(row.querySelector('.qty-per-box').value) || 1;
-    const boxes  = parseInt(row.querySelector('.box-qty').value)    || 1;
-    const total  = perBox * boxes;
+    const row     = input.closest('tr');
+    const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 1;
+    const boxes   = parseInt(row.querySelector('.box-qty').value)      || 1;
+    const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
+    const total   = perBox * boxes;
+    const good    = Math.max(0, total - damaged);
     row.querySelector('.total-display').textContent = total;
-    row.querySelector('.qty-hidden').value = total;
+    row.querySelector('.good-display').textContent  = good;
+    row.querySelector('.qty-hidden').value          = good;
 }
 
 function syncQtys() {
     document.querySelectorAll('.item-row').forEach(row => {
-        const perBox = parseInt(row.querySelector('.qty-per-box').value) || 1;
-        const boxes  = parseInt(row.querySelector('.box-qty').value)    || 1;
-        row.querySelector('.qty-hidden').value = perBox * boxes;
+        const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 1;
+        const boxes   = parseInt(row.querySelector('.box-qty').value)      || 1;
+        const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
+        row.querySelector('.qty-hidden').value = Math.max(0, perBox * boxes - damaged);
     });
 }
 
@@ -235,11 +254,14 @@ function addRow() {
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="1" value="1" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
+        <td class="pr-3 pb-2 text-center"><span class="total-display font-black text-slate-800 text-base">1</span></td>
+        <td class="pr-3 pb-2"><input type="number" name="items[${i}][damaged_qty]" min="0" value="0" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2 text-center">
-            <span class="total-display font-black text-slate-800 text-base">1</span>
+            <span class="good-display font-black text-emerald-600 text-base">1</span>
             <input type="hidden" name="items[${i}][qty]" class="qty-hidden" value="1">
         </td>
         <td class="pr-3 pb-2"><input type="date" name="items[${i}][expiry_date]" class="input-modern text-sm w-full"></td>
+        <td class="pr-3 pb-2"><input type="text" name="items[${i}][damage_notes]" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging"></td>
         <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>`;
     tbody.appendChild(tr);
     tr.querySelector('.barcode-input').focus();
