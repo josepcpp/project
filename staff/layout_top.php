@@ -528,6 +528,21 @@ document.addEventListener('submit', e => {
     var _action = e.target.getAttribute('action') || window.location.href;
     if (_action.includes('logout')) return;
     e.preventDefault();
+
+    // Respect GET forms (search / filters): serialize fields into the query string
+    // and navigate via GET so PHP can read them from $_GET and the URL updates.
+    var _method = (e.target.getAttribute('method') || 'get').toLowerCase();
+    if (_method === 'get') {
+        const params = new URLSearchParams(new FormData(e.target));
+        if (e.submitter && e.submitter.name) params.append(e.submitter.name, e.submitter.value);
+        const base = _action.split('?')[0];
+        const qs = params.toString();
+        const getUrl = base + (qs ? '?' + qs : '');
+        window.history.pushState({}, '', getUrl);
+        navigate(getUrl, null, false);
+        return;
+    }
+
     const fd = new FormData(e.target);
     if (e.submitter && e.submitter.name) fd.append(e.submitter.name, e.submitter.value);
 

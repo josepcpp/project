@@ -80,15 +80,42 @@ include '../layout_top.php';
 
     <!-- Item Encoding Form -->
     <?php if (!$readonly): ?>
+    <style>
+        @keyframes rowFlash {
+            0%, 100% { background-color: transparent; }
+            20%      { background-color: #fde68a; }
+            60%      { background-color: #fef3c7; }
+        }
+        .row-flash {
+            animation: rowFlash 0.9s ease-in-out 3;
+            outline: 3px solid #f59e0b;
+            outline-offset: -2px;
+            border-radius: 6px;
+        }
+        @keyframes scanPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } 50% { box-shadow: 0 0 0 4px rgba(16,185,129,.25); } }
+        #scan-box.scan-active { animation: scanPulse 1.4s ease-in-out infinite; }
+    </style>
     <div class="card-modern p-8">
-        <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
             <h3 class="serif-title text-lg font-black text-slate-800">Encode Received Items</h3>
-            <button type="button" onclick="addRow()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black px-4 py-2 rounded-xl uppercase tracking-widest transition-all">
-                + Add Row
+            <button type="button" onclick="addRow()" class="text-slate-500 hover:text-slate-700 text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-slate-100">
+                + Blank row (no barcode)
             </button>
         </div>
 
-        <form method="POST" action="receive_process.php" id="itemsForm" onsubmit="syncQtys()">
+        <!-- ── Scan Station ─────────────────────────────────────────────── -->
+        <div id="scan-box" class="bg-slate-900 rounded-xl px-4 py-2.5 flex items-center gap-3 mb-6 scan-active">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 5v14M7 5v14M11 5v14M15 5v14M19 5v14"/>
+            </svg>
+            <input type="text" id="scan-input" autocomplete="off" inputmode="numeric"
+                   placeholder="Scan to add — barcode then Enter…"
+                   class="flex-1 min-w-0 bg-transparent text-white text-sm font-bold placeholder-slate-500 focus:outline-none"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();handleScan();}">
+            <span id="scan-hint" class="text-[11px] font-black text-slate-400 whitespace-nowrap">Ready</span>
+        </div>
+
+        <form method="POST" action="receive_process.php" id="itemsForm" onsubmit="return beforeSubmit()">
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="save_items">
             <input type="hidden" name="batch_id" value="<?= $batch_id ?>">
@@ -110,25 +137,6 @@ include '../layout_top.php';
                         </tr>
                     </thead>
                     <tbody id="items-body">
-                    <?php if (empty($items)): ?>
-                        <tr class="item-row">
-                            <td class="pr-3 pb-2"><input type="text" name="items[0][barcode]" class="input-modern text-sm w-full barcode-input" placeholder="628..." onblur="lookupBarcode(this)"></td>
-                            <td class="pr-3 pb-2"><input type="text" name="items[0][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[0][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[0][box_qty]" min="1" value="1" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2 text-center">
-                                <span class="total-display font-black text-slate-800 text-base">1</span>
-                            </td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[0][damaged_qty]" min="0" value="0" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2 text-center">
-                                <span class="good-display font-black text-emerald-600 text-base">1</span>
-                                <input type="hidden" name="items[0][qty]" class="qty-hidden" value="1">
-                            </td>
-                            <td class="pr-3 pb-2"><input type="date" name="items[0][expiry_date]" class="input-modern text-sm w-full"></td>
-                            <td class="pr-3 pb-2"><input type="text" name="items[0][damage_notes]" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging"></td>
-                            <td class="pb-2"></td>
-                        </tr>
-                    <?php else: ?>
                         <?php foreach ($items as $i => $item):
                             $total_raw = intval($item['quantity']) + intval($item['damaged_qty'] ?? 0);
                         ?>
@@ -150,7 +158,6 @@ include '../layout_top.php';
                             <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>
                         </tr>
                         <?php endforeach; ?>
-                    <?php endif; ?>
                     </tbody>
                 </table>
             </div>
@@ -205,7 +212,11 @@ include '../layout_top.php';
 </div>
 
 <script>
-let _rowIdx = <?= max(count($items), 1) ?>;
+let _rowIdx = <?= count($items) ?>;
+
+function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 function updateTotal(input) {
     const row     = input.closest('tr');
@@ -228,29 +239,107 @@ function syncQtys() {
     });
 }
 
+function beforeSubmit() {
+    syncQtys();
+    if (document.querySelectorAll('.item-row').length === 0) {
+        showFlash('Scan or add at least one item before saving.', 'error');
+        document.getElementById('scan-input').focus();
+        return false;
+    }
+    return true;
+}
+
+async function lookupBarcodeData(barcode) {
+    try {
+        const res = await fetch(`../api/product_lookup.php?barcode=${encodeURIComponent(barcode)}`);
+        return await res.json();
+    } catch (_) { return null; }
+}
+
 async function lookupBarcode(input) {
     const barcode = input.value.trim();
     if (!barcode) return;
     const row  = input.closest('tr');
     const desc = row.querySelector('input[name*="[description]"]');
     const exp  = row.querySelector('input[name*="[expiry_date]"]');
-    try {
-        const res  = await fetch(`../api/product_lookup.php?barcode=${encodeURIComponent(barcode)}`);
-        const data = await res.json();
-        if (data.found) {
-            if (!desc.value.trim()) desc.value = data.name;
-            if (!exp.value && data.expiry_date) exp.value = data.expiry_date;
-        }
-    } catch (_) {}
+    const data = await lookupBarcodeData(barcode);
+    if (data && data.found) {
+        if (!desc.value.trim()) desc.value = data.name;
+        if (!exp.value && data.expiry_date) exp.value = data.expiry_date;
+    }
 }
 
-function addRow() {
+// ── Scan station ───────────────────────────────────────────────────────────
+function setHint(text, tone) {
+    const hint = document.getElementById('scan-hint');
+    hint.textContent = text;
+    const colors = { idle: 'text-slate-400', ok: 'text-emerald-400', warn: 'text-amber-400', busy: 'text-sky-400' };
+    hint.className = 'text-xs font-black whitespace-nowrap ' + (colors[tone] || colors.idle);
+}
+
+function findRowByBarcode(barcode) {
+    const norm = barcode.trim().toLowerCase();
+    if (!norm) return null;
+    let match = null;
+    document.querySelectorAll('.item-row .barcode-input').forEach(bc => {
+        if (bc.value.trim().toLowerCase() === norm) match = bc.closest('tr');
+    });
+    return match;
+}
+
+function flashRow(row) {
+    row.classList.remove('row-flash');
+    void row.offsetWidth;                       // restart the animation
+    row.classList.add('row-flash');
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => row.classList.remove('row-flash'), 2800);
+}
+
+async function handleScan() {
+    const input   = document.getElementById('scan-input');
+    const barcode = input.value.trim();
+    if (!barcode) return;
+    input.value = '';
+
+    // Already on the list → DO NOT change counts. Make it obvious so the
+    // clerk re-checks the physical count and avoids a discrepancy.
+    const existing = findRowByBarcode(barcode);
+    if (existing) {
+        flashRow(existing);
+        const name = existing.querySelector('input[name*="[description]"]')?.value.trim() || 'this item';
+        showFlash('⚠ "' + name + '" is already on the list — re-count it and update the boxes manually.', 'error');
+        setHint('Already on list ↑ verify', 'warn');
+        input.focus();
+        return;
+    }
+
+    // New barcode → add a row and look it up
+    const row = addRow(barcode);
+    setHint('Looking up…', 'busy');
+    input.focus();
+
+    const data = await lookupBarcodeData(barcode);
+    const desc = row.querySelector('input[name*="[description]"]');
+    const exp  = row.querySelector('input[name*="[expiry_date]"]');
+    if (data && data.found) {
+        if (!desc.value.trim()) desc.value = data.name;
+        if (!exp.value && data.expiry_date) exp.value = data.expiry_date;
+        setHint('✓ Added — keep scanning', 'ok');
+        input.focus();
+    } else {
+        setHint('New product — type its name', 'warn');
+        flashRow(row);
+        desc.focus();                            // make them name the unknown item
+    }
+}
+
+function addRow(barcode = '') {
     const i = _rowIdx++;
     const tbody = document.getElementById('items-body');
     const tr = document.createElement('tr');
     tr.className = 'item-row';
     tr.innerHTML = `
-        <td class="pr-3 pb-2"><input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full barcode-input" placeholder="628..." onblur="lookupBarcode(this)"></td>
+        <td class="pr-3 pb-2"><input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full barcode-input" value="${esc(barcode)}" placeholder="628..." onblur="lookupBarcode(this)"></td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="1" value="1" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
@@ -264,14 +353,26 @@ function addRow() {
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][damage_notes]" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging"></td>
         <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>`;
     tbody.appendChild(tr);
-    tr.querySelector('.barcode-input').focus();
+    if (!barcode) tr.querySelector('.barcode-input').focus();
+    return tr;
 }
 
 function removeRow(btn) {
-    const rows = document.querySelectorAll('.item-row');
-    if (rows.length <= 1) { showFlash('At least one item row is required.', 'error'); return; }
     btn.closest('tr').remove();
+    document.getElementById('scan-input').focus();
 }
+
+// Pressing Enter inside any grid field jumps back to the scan box (and never
+// submits the batch by accident).
+document.getElementById('items-body').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+        e.preventDefault();
+        document.getElementById('scan-input').focus();
+    }
+});
+
+// Keep the scan box focused as the default landing spot.
+window.addEventListener('load', () => document.getElementById('scan-input')?.focus());
 </script>
 
 <?php include '../layout_bottom.php'; ?>
