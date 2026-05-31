@@ -201,7 +201,16 @@ $pip_draft_q   = $conn->query("SELECT COUNT(DISTINCT supplier_id) as batches, CO
 $pip_draft     = $pip_draft_q->fetch_assoc();
 $pip_archived      = $conn->query("SELECT COUNT(*) as c FROM products WHERE status='" . PRODUCT_ARCHIVED . "'")->fetch_assoc()['c'] ?? 0;
 $pip_new_archived  = $conn->query("SELECT COUNT(*) as c FROM products WHERE status='" . PRODUCT_ARCHIVED . "' AND archived_at >= NOW() - INTERVAL 24 HOUR")->fetch_assoc()['c'] ?? 0;
-$pip_payments  = $conn->query("SELECT COUNT(*) as c, COALESCE(SUM(amount),0) as total FROM supplier_payments WHERE status='" . SUP_PAY_UNPAID . "'");
+// Supplier payments awaiting settlement (validated batches not yet paid) — net of approved damage
+$pip_payments  = $conn->query(
+    "SELECT COUNT(*) AS c,
+            COALESCE(SUM(rb.control_subtotal - COALESCE(d.ded,0)),0) AS total
+     FROM receiving_batches rb
+     LEFT JOIN (SELECT batch_id, SUM(CASE WHEN status='approved' THEN total_deduction ELSE 0 END) AS ded
+                FROM delivery_damage_tickets GROUP BY batch_id) d ON d.batch_id = rb.id
+     WHERE rb.validated_at IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM procurement_payments p WHERE p.batch_id = rb.id)"
+);
 $pip_pay       = $pip_payments ? $pip_payments->fetch_assoc() : ['c' => 0, 'total' => 0];
 $dr_tickets_q  = $conn->query("
     SELECT drr.id, drr.invoice_no, drr.supplier_name, drr.purpose, drr.status,
@@ -548,7 +557,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
             ['label' => 'Suppliers',     'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>',                                                                                                                                                                       'val' => $pip_suppliers,        'sub' => 'active suppliers',                                                                 'href' => 'suppliers.php',                         'color' => 'text-slate-600',                                          'bg' => 'bg-slate-100',  'badge' => 0],
             ['label' => 'Low Stock Items','icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>',                                                                                                                                          'val' => $inv_low,              'sub' => $inv_low > 0 ? 'items need restocking' : 'all stock levels healthy',   'href' => 'stock_management.php?filter=low_stock', 'color' => $inv_low > 0 ? 'text-red-600' : 'text-slate-600',          'bg' => $inv_low > 0 ? 'bg-red-100' : 'bg-slate-100', 'badge' => 0],
             ['label' => 'Archived Items', 'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>',                                                                                                                                                                                             'val' => $pip_archived,         'sub' => $pip_archived > 0 ? 'items out of stock / deactivated' : 'no archived items', 'href' => 'stock_management.php?stock=archived',    'color' => $pip_archived > 0 ? 'text-slate-600' : 'text-slate-400',  'bg' => $pip_archived > 0 ? 'bg-slate-200' : 'bg-slate-100', 'badge' => $pip_new_archived],
-            ['label' => 'Payments',       'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/>',                                                                                                                       'val' => intval($pip_pay['c']), 'sub' => '₱' . number_format($pip_pay['total'], 0) . ' unpaid',                  'href' => 'payments.php',                          'color' => intval($pip_pay['c']) > 0 ? 'text-rose-600' : 'text-slate-600', 'bg' => intval($pip_pay['c']) > 0 ? 'bg-rose-50' : 'bg-slate-100', 'badge' => 0],
+            ['label' => 'Supplier Payments','icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/>',                                                                                                                       'val' => intval($pip_pay['c']), 'sub' => '₱' . number_format($pip_pay['total'], 0) . ' to settle',                'href' => 'procurement/supplier_payments.php',     'color' => intval($pip_pay['c']) > 0 ? 'text-rose-600' : 'text-slate-600', 'bg' => intval($pip_pay['c']) > 0 ? 'bg-rose-50' : 'bg-slate-100', 'badge' => 0],
         ];
         foreach ($steps as $n => $s): ?>
         <a href="<?= $s['href'] ?>" class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-6 hover:shadow-lg transition-all group">

@@ -5,10 +5,15 @@
  * Designed to be included and called as push_inventory($batch_id, ...).
  * NOT directly browsable — no layout, no direct output.
  *
- * Logic per item:
- *  - Product found by barcode, price UNCHANGED → add qty, reactivate if archived
- *  - Product found by barcode, price CHANGED   → insert pipeline_price_changes, notify admin, add qty
- *  - Product NOT found by barcode              → INSERT new product row with base_price
+ * KEY RULE: the Validator's base_price is the SUPPLIER COST, never the selling price.
+ * Selling price (products.price) is set ONLY by the Admin. Any stock without an
+ * admin-set selling price is status='draft' — counted in Inventory but invisible to POS.
+ *
+ * Logic per item (base_price = supplier cost):
+ *  - Brand-new item (no row for barcode)        → draft lot (reason 'new'), notify Admin to price it
+ *  - Existing active lot, SAME cost             → add qty to the active lot, refresh last_buy_cost
+ *  - Existing active lot, DIFFERENT cost         → held draft lot (reason 'cost_change'), notify Admin
+ *  - Only an unpriced draft lot exists           → merge if same cost, else another draft lot
  */
 
 if (!function_exists('push_inventory')) {
@@ -22,7 +27,7 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
     $batch = $bq->get_result()->fetch_assoc();
     if (!$batch) throw new Exception("Batch #$batch_id not found.");
 
-    // Load items with base_price already set by validator
+    // Load items with base_price (supplier cost) already set by validator
     $iq = $conn->prepare("SELECT * FROM receiving_items WHERE batch_id = ? ORDER BY id ASC");
     $iq->bind_param("i", $batch_id);
     $iq->execute();
@@ -33,85 +38,81 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
     foreach ($items as $item) {
         if ($item['base_price'] === null) throw new Exception("Item '{$item['description']}' has no base price. Cannot push.");
 
-        $barcode    = $item['barcode'];
-        $base_price = floatval($item['base_price']);
-        $qty        = intval($item['quantity']);
-        $expiry     = $item['expiry_date'] ?: null;
-        $desc       = $item['description'];
+        $barcode = $item['barcode'];
+        $cost    = floatval($item['base_price']);   // supplier cost
+        $qty     = intval($item['quantity']);
+        $expiry  = $item['expiry_date'] ?: null;
+        $desc    = $item['description'];
 
+        // Resolve the existing active lot and any draft lot for this barcode
+        $active = null;
+        $draft  = null;
         if ($barcode) {
-            // Try to find existing product by barcode
-            $pq = $conn->prepare("SELECT id, name, price, quantity, status FROM products WHERE barcode = ? LIMIT 1");
-            $pq->bind_param("s", $barcode);
-            $pq->execute();
-            $prod = $pq->get_result()->fetch_assoc();
-        } else {
-            $prod = null;
+            $aq = $conn->prepare("SELECT id, name, price, cost_price, last_buy_cost, quantity FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' LIMIT 1");
+            $aq->bind_param("s", $barcode);
+            $aq->execute();
+            $active = $aq->get_result()->fetch_assoc() ?: null;
+
+            $dq = $conn->prepare("SELECT id, cost_price, quantity FROM products WHERE barcode = ? AND status = '" . PRODUCT_DRAFT . "' LIMIT 1");
+            $dq->bind_param("s", $barcode);
+            $dq->execute();
+            $draft = $dq->get_result()->fetch_assoc() ?: null;
         }
 
-        if ($prod) {
-            $old_price = floatval($prod['price']);
-            $price_changed = abs($old_price - $base_price) >= 0.01;
+        if ($active) {
+            $ref_cost      = floatval($active['cost_price']) > 0 ? floatval($active['cost_price']) : floatval($active['last_buy_cost']);
+            $cost_changed  = abs($ref_cost - $cost) >= 0.01;
 
-            if ($price_changed) {
-                // Log price change for admin review — do NOT change price yet
-                $pc = $conn->prepare(
-                    "INSERT INTO pipeline_price_changes
-                        (batch_id, item_id, barcode, description, old_price, new_price, supplier_name, raised_by, raised_by_username)
-                     VALUES (?,?,?,?,?,?,?,?,?)"
+            if (!$cost_changed) {
+                // Same supplier cost → restock the live lot, keep it sellable at its current price
+                $new_qty = intval($active['quantity']) + $qty;
+                $upd = $conn->prepare(
+                    "UPDATE products SET quantity = ?, max_quantity = ?, last_buy_cost = ?, status = '" . PRODUCT_ACTIVE . "', archived_at = NULL, receiving_batch_id = ?" .
+                    ($expiry ? ", expiry_date = ?" : "") .
+                    " WHERE id = ?"
                 );
-                $pc->bind_param("iissddsis",
-                    $batch_id, $item['id'], $barcode, $desc,
-                    $old_price, $base_price,
-                    $batch['supplier_name'],
-                    $actor_id, $actor_username
-                );
-                $pc->execute();
+                if ($expiry) {
+                    $upd->bind_param("iidisi", $new_qty, $new_qty, $cost, $batch_id, $expiry, $active['id']);
+                } else {
+                    $upd->bind_param("iidii", $new_qty, $new_qty, $cost, $batch_id, $active['id']);
+                }
+                $upd->execute();
 
-                // Notify admin
-                $msg = "Price change detected for \"{$desc}\" (barcode: $barcode): ₱" . number_format($old_price, 2) . " → ₱" . number_format($base_price, 2) . " (Batch #$batch_id).";
-                $notif = $conn->prepare("INSERT INTO notifications (recipient_role, type, batch_id, message) VALUES ('admin', 'price_change', ?, ?)");
-                $notif->bind_param("is", $batch_id, $msg);
-                $notif->execute();
-            }
-
-            // Add qty regardless of price change; reactivate if archived; link to this batch.
-            // max_quantity = new total so the 10%-of-intake low-stock threshold is accurate.
-            $new_qty = intval($prod['quantity']) + $qty;
-            $upd = $conn->prepare(
-                "UPDATE products SET quantity = ?, max_quantity = ?, status = '" . PRODUCT_ACTIVE . "', archived_at = NULL, receiving_batch_id = ?" .
-                ($expiry ? ", expiry_date = ?" : "") .
-                " WHERE id = ?"
-            );
-            if ($expiry) {
-                $upd->bind_param("iiisi", $new_qty, $new_qty, $batch_id, $expiry, $prod['id']);
+                _push_log($conn, $actor_id, $active['id'], "Pipeline push: +$qty units for \"{$active['name']}\" (Batch #$batch_id) — cost unchanged, sellable.");
             } else {
-                $upd->bind_param("iiii", $new_qty, $new_qty, $batch_id, $prod['id']);
+                // Cost changed → hold the new stock as a draft lot for Admin to price
+                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'cost_change');
+                _notify_admin($conn, $batch_id,
+                    "Cost change on delivery: \"$desc\" (barcode: $barcode) now ₱" . number_format($cost, 2)
+                    . " vs previous ₱" . number_format($ref_cost, 2) . ". $qty unit(s) held in Inventory — set a selling price to release to POS.");
+                _push_log($conn, $actor_id, $new_id, "Pipeline push: $qty units of \"{$desc}\" HELD (cost change) — awaiting Admin selling price (Batch #$batch_id).");
             }
-            $upd->execute();
-
-            // Activity log
-            $log_msg = "Pipeline push: +$qty units for \"{$prod['name']}\" (Batch #$batch_id)" . ($price_changed ? " [PRICE CHANGE PENDING REVIEW]" : "");
-            $al = $conn->prepare("INSERT INTO activity_logs (user_id, log_type, item_id, message) VALUES (?,'" . LOG_PROCUREMENT . "',?,?)");
-            $al->bind_param("iis", $actor_id, $prod['id'], $log_msg);
-            $al->execute();
-
+        } elseif ($draft) {
+            // No live lot yet, but an unpriced draft lot exists — merge if same cost, else add another draft
+            if (abs(floatval($draft['cost_price']) - $cost) < 0.01) {
+                $new_qty = intval($draft['quantity']) + $qty;
+                $upd = $conn->prepare(
+                    "UPDATE products SET quantity = ?, max_quantity = ?, last_buy_cost = ?, receiving_batch_id = ?" .
+                    ($expiry ? ", expiry_date = ?" : "") .
+                    " WHERE id = ?"
+                );
+                if ($expiry) {
+                    $upd->bind_param("iidisi", $new_qty, $new_qty, $cost, $batch_id, $expiry, $draft['id']);
+                } else {
+                    $upd->bind_param("iidii", $new_qty, $new_qty, $cost, $batch_id, $draft['id']);
+                }
+                $upd->execute();
+                _push_log($conn, $actor_id, $draft['id'], "Pipeline push: +$qty units to unpriced draft \"{$desc}\" (Batch #$batch_id).");
+            } else {
+                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new');
+                _notify_admin($conn, $batch_id, "New item awaiting price: \"$desc\" (barcode: $barcode) — $qty unit(s) in Inventory. Set a selling price to release to POS.");
+                _push_log($conn, $actor_id, $new_id, "Pipeline push: NEW unpriced draft \"{$desc}\" (Batch #$batch_id).");
+            }
         } else {
-            // New product — INSERT with base_price as starting price.
-            // max_quantity = received qty so the 10%-of-intake low-stock threshold is accurate.
-            // supplier_id = NULL (pipeline flow has no legacy supplier FK)
-            $ins = $conn->prepare(
-                "INSERT INTO products (supplier_id, name, barcode, price, cost_price, quantity, max_quantity, status, expiry_date, receiving_batch_id)
-                 VALUES (NULL, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?)"
-            );
-            $ins->bind_param("ssddiisi", $desc, $barcode, $base_price, $base_price, $qty, $qty, $expiry, $batch_id);
-            $ins->execute();
-            $new_product_id = $conn->insert_id;
-
-            $log_msg = "Pipeline push: NEW product \"{$desc}\" (barcode: " . ($barcode ?: 'none') . ") — $qty units @ ₱" . number_format($base_price, 2) . " (Batch #$batch_id)";
-            $al = $conn->prepare("INSERT INTO activity_logs (user_id, log_type, item_id, message) VALUES (?,'" . LOG_PROCUREMENT . "',?,?)");
-            $al->bind_param("iis", $actor_id, $new_product_id, $log_msg);
-            $al->execute();
+            // Brand-new item — stock as draft, no selling price, notify Admin to price it
+            $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new');
+            _notify_admin($conn, $batch_id, "New item awaiting price: \"$desc\" (barcode: " . ($barcode ?: 'none') . ") — $qty unit(s) in Inventory. Set a selling price to release to POS.");
+            _push_log($conn, $actor_id, $new_id, "Pipeline push: NEW item \"{$desc}\" (barcode: " . ($barcode ?: 'none') . ") — $qty units @ cost ₱" . number_format($cost, 2) . " — awaiting Admin selling price (Batch #$batch_id).");
         }
     }
 
@@ -126,6 +127,34 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
     );
     $al2->bind_param("iiss", $batch_id, $actor_id, $actor_username, $actor_role);
     $al2->execute();
+}
+
+/** Insert a draft (unpriced) product lot. Returns the new product id. */
+function _insert_draft_lot(mysqli $conn, string $desc, ?string $barcode, float $cost, int $qty, ?string $expiry, int $batch_id, string $reason): int
+{
+    $ins = $conn->prepare(
+        "INSERT INTO products (supplier_id, name, barcode, price, cost_price, last_buy_cost, quantity, max_quantity, status, draft_reason, expiry_date, receiving_batch_id)
+         VALUES (NULL, ?, ?, NULL, ?, ?, ?, ?, '" . PRODUCT_DRAFT . "', ?, ?, ?)"
+    );
+    $ins->bind_param("ssddiissi", $desc, $barcode, $cost, $cost, $qty, $qty, $reason, $expiry, $batch_id);
+    $ins->execute();
+    return $conn->insert_id;
+}
+
+/** Notify the Admin role of a pricing action. */
+function _notify_admin(mysqli $conn, int $batch_id, string $msg): void
+{
+    $notif = $conn->prepare("INSERT INTO notifications (recipient_role, type, batch_id, message) VALUES ('admin', 'price_change', ?, ?)");
+    $notif->bind_param("is", $batch_id, $msg);
+    $notif->execute();
+}
+
+/** Write an activity_logs entry for a push action. */
+function _push_log(mysqli $conn, ?int $actor_id, int $item_id, string $message): void
+{
+    $al = $conn->prepare("INSERT INTO activity_logs (user_id, log_type, item_id, message) VALUES (?,'" . LOG_PROCUREMENT . "',?,?)");
+    $al->bind_param("iis", $actor_id, $item_id, $message);
+    $al->execute();
 }
 
 } // end function_exists guard

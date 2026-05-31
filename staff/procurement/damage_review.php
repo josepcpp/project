@@ -142,11 +142,6 @@ include '../layout_top.php';
                             class="bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs px-6 py-3 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap">
                         Approve <?= $auto_match ? '& Push Inventory' : 'Deduction' ?>
                     </button>
-                    <button type="submit" name="decision" value="reject"
-                            onclick="return confirm('Reject this damage ticket and reopen the batch to the Price Checker for repricing?')"
-                            class="bg-rose-500 hover:bg-rose-600 text-white font-black text-xs px-6 py-3 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap">
-                        Reject &amp; Reopen to Price Checker
-                    </button>
                 </form>
             </div>
             <?php elseif ($t['admin_notes']): ?>

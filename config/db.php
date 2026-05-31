@@ -638,3 +638,55 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.6.6
+
+// ── v1.6.7 — Separate supplier cost from selling price ───────────────────────
+// Validator base_price = supplier cost. Stock with no admin-set selling price is
+// status='draft' (in Inventory, invisible to POS). draft_reason explains why.
+$_db_version   = '1.6.7';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS draft_reason ENUM('new','cost_change') DEFAULT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.7
+
+// ── v1.6.8 — Supplier payment verification ───────────────────────────────────
+// One payment record per validated batch: receipt subtotal − approved damage
+// deductions = net paid to supplier. A row means the batch has been paid.
+$_db_version   = '1.6.8';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("CREATE TABLE IF NOT EXISTS procurement_payments (
+        id                   INT AUTO_INCREMENT PRIMARY KEY,
+        batch_id             INT NOT NULL,
+        receipt_subtotal     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        damage_deduction     DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        net_amount           DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+        payment_reference    VARCHAR(100) DEFAULT NULL,
+        payment_method       VARCHAR(50)  DEFAULT NULL,
+        notes                TEXT         DEFAULT NULL,
+        status               ENUM('paid') NOT NULL DEFAULT 'paid',
+        verified_by          INT          DEFAULT NULL,
+        verified_by_username VARCHAR(100) DEFAULT NULL,
+        verified_at          DATETIME     DEFAULT NULL,
+        created_at           TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_batch (batch_id)
+    )");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.8
+
+// ── v1.6.9 — Retire legacy sales-side supplier payment feature ───────────────
+// Replaced by the procurement pipeline's supplier_payments.php (procurement_payments
+// table). The old supplier_payments + payment_approvals tables are now unused.
+$_db_version   = '1.6.9';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("DROP TABLE IF EXISTS payment_approvals");
+    $conn->query("DROP TABLE IF EXISTS supplier_payments");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.6.9

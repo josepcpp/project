@@ -459,6 +459,63 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
     </div>
     <?php endif; ?>
 
+    <!-- ── AWAITING PRICING (draft stock held from POS) ──────────────────── -->
+    <?php
+    $awaiting_rows = [];
+    if ($inv_tab === 'live') {
+        $awaiting_q = $conn->query(
+            "SELECT name, barcode, draft_reason, SUM(quantity) AS qty, MAX(cost_price) AS cost
+             FROM products WHERE status = '" . PRODUCT_DRAFT . "'
+             GROUP BY barcode, name, draft_reason
+             ORDER BY FIELD(draft_reason,'new','cost_change'), name ASC"
+        );
+        $awaiting_rows = $awaiting_q ? $awaiting_q->fetch_all(MYSQLI_ASSOC) : [];
+    }
+    if (!empty($awaiting_rows)):
+    ?>
+    <div class="bg-white rounded-[3rem] border-2 border-sky-200 shadow-xl overflow-hidden mb-8">
+        <div class="px-8 py-6 border-b border-slate-50 bg-sky-50/50 flex items-center gap-3 flex-wrap">
+            <span class="w-2.5 h-2.5 bg-sky-500 rounded-full shadow-sm"></span>
+            <h4 class="font-black text-slate-800 text-sm uppercase tracking-[0.15em] flex-1">Awaiting Pricing — In Stock, Held from POS</h4>
+            <span class="text-[10px] font-black text-sky-700 bg-sky-100 px-3 py-1 rounded-full uppercase tracking-widest"><?= count($awaiting_rows) ?> item<?= count($awaiting_rows) !== 1 ? 's' : '' ?></span>
+        </div>
+        <div class="divide-y divide-slate-50">
+        <?php foreach ($awaiting_rows as $aw):
+            $aw_new = ($aw['draft_reason'] ?? 'new') === 'new';
+        ?>
+        <div class="px-8 py-4 flex items-center gap-4 flex-wrap">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($aw['name']) ?></p>
+                    <?php if ($aw_new): ?>
+                        <span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 uppercase">New Item</span>
+                    <?php else: ?>
+                        <span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 uppercase">Cost Change</span>
+                    <?php endif; ?>
+                    <code class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded border">#<?= htmlspecialchars($aw['barcode'] ?? '—') ?></code>
+                </div>
+            </div>
+            <div class="text-center shrink-0">
+                <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest">In Stock</p>
+                <p class="font-black text-slate-700"><?= intval($aw['qty']) ?></p>
+            </div>
+            <div class="text-center shrink-0">
+                <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest">Supplier Cost</p>
+                <p class="font-black text-slate-500">₱<?= number_format(floatval($aw['cost']), 2) ?></p>
+            </div>
+            <?php if ($role !== ROLE_STAFF): ?>
+            <a href="price_maintenance.php" class="bg-sky-600 hover:bg-sky-500 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md whitespace-nowrap">
+                Set Selling Price →
+            </a>
+            <?php else: ?>
+            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Awaiting Admin pricing</span>
+            <?php endif; ?>
+        </div>
+        <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <!-- ── RESULTS TABLE ─────────────────────────────────────────────────── -->
     <div class="bg-white rounded-[3rem] border border-slate-100 shadow-2xl overflow-hidden mb-20">
         <div class="p-8 border-b border-slate-100 bg-slate-50/20 flex justify-between items-center flex-wrap gap-3">

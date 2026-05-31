@@ -2,6 +2,7 @@
 include '../../includes/auth_check.php';
 include '../../config/db.php';
 include '../../includes/require_role.php';
+include '../../includes/csrf.php';
 require_role([ROLE_PRICE_CHECKER, ROLE_ADMIN, ROLE_SUPERADMIN]);
 
 $user_id  = $_SESSION['user_id']  ?? null;
@@ -12,10 +13,124 @@ $active_tab = $_GET['tab'] ?? 'activity';
 $success    = trim($_GET['success'] ?? '');
 $error      = trim($_GET['error']   ?? '');
 
-// ── Activity Records ──────────────────────────────────────────────────────────
+/**
+ * Load each delivered item's two most recent Validator-encoded base prices.
+ * Grouped by barcode (fallback to description when barcode is blank).
+ * Returns: [ ['barcode','description','delivered','recent'(|null),'last_date','deliveries'], ... ]
+ */
+function load_delivery_prices(mysqli $conn, string $search = ''): array {
+    $sql = "SELECT ri.barcode, ri.description, ri.base_price,
+                   COALESCE(rb.validated_at, rb.created_at) AS d_date, rb.id AS batch_id
+            FROM receiving_items ri
+            JOIN receiving_batches rb ON rb.id = ri.batch_id
+            WHERE ri.base_price IS NOT NULL";
+    $params = []; $types = '';
+    if ($search !== '') {
+        $sql .= " AND (ri.description LIKE ? OR ri.barcode LIKE ?)";
+        $types .= 'ss'; $like = '%' . $search . '%';
+        $params[] = $like; $params[] = $like;
+    }
+    $sql .= " ORDER BY COALESCE(ri.barcode, ri.description) ASC, d_date DESC, rb.id DESC";
+    $stmt = $conn->prepare($sql);
+    if ($types) { $stmt->bind_param($types, ...$params); }
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    $groups = []; // key => deliveries (most recent first)
+    while ($r = $res->fetch_assoc()) {
+        $key = ($r['barcode'] !== null && $r['barcode'] !== '') ? 'b:' . $r['barcode'] : 'd:' . $r['description'];
+        $groups[$key][] = $r;
+    }
+
+    $items = [];
+    foreach ($groups as $list) {
+        $delivered = $list[0];
+        $recent    = $list[1] ?? null;
+        $items[] = [
+            'barcode'     => $delivered['barcode'],
+            'description' => $delivered['description'],
+            'delivered'   => floatval($delivered['base_price']),
+            'recent'      => $recent ? floatval($recent['base_price']) : null,
+            'last_date'   => $delivered['d_date'],
+            'deliveries'  => count($list),
+        ];
+    }
+    usort($items, fn($a, $b) => strcasecmp($a['description'], $b['description']));
+    return $items;
+}
+
+// ── Active reporting: flag item(s) to Admin ───────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrf_verify('price_checker.php?tab=monitor');
+
+    // Single-item flag — reports the latest delivery's price movement
+    if (isset($_POST['flag_item'])) {
+        $bc = trim($_POST['barcode'] ?? '');
+        if ($bc !== '') {
+            $q = $conn->prepare(
+                "SELECT ri.base_price, ri.description
+                 FROM receiving_items ri
+                 JOIN receiving_batches rb ON rb.id = ri.batch_id
+                 WHERE ri.base_price IS NOT NULL AND ri.barcode = ?
+                 ORDER BY COALESCE(rb.validated_at, rb.created_at) DESC, rb.id DESC
+                 LIMIT 2"
+            );
+            $q->bind_param("s", $bc);
+            $q->execute();
+            $rows = $q->get_result()->fetch_all(MYSQLI_ASSOC);
+            if ($rows) {
+                $name      = $rows[0]['description'];
+                $delivered = floatval($rows[0]['base_price']);
+                $recent    = isset($rows[1]) ? floatval($rows[1]['base_price']) : null;
+                if ($recent === null) {
+                    $trend = "first recorded delivery";
+                } else {
+                    $delta = $delivered - $recent;
+                    $pct   = $recent > 0 ? ($delta / $recent) * 100 : 0;
+                    $dir   = $delta > 0 ? "▲ hike" : ($delta < 0 ? "▼ drop" : "no change");
+                    $trend = "₱" . number_format($recent, 2) . " → ₱" . number_format($delivered, 2)
+                           . " ($dir " . ($delta >= 0 ? '+' : '') . number_format($delta, 2)
+                           . " / " . ($pct >= 0 ? '+' : '') . number_format($pct, 1) . "%)";
+                }
+                $msg = "Price Monitor flag by @{$username}: \"{$name}\" (barcode: {$bc}) — delivered price $trend. Review required.";
+                $notif = $conn->prepare("INSERT INTO notifications (recipient_role, type, message) VALUES ('admin', 'price_change', ?)");
+                $notif->bind_param("s", $msg);
+                $notif->execute();
+            }
+        }
+        header("Location: price_checker.php?tab=monitor&success=" . urlencode("Item flagged to Admin."));
+        exit();
+    }
+
+    // Consolidated report — every item whose latest delivery is a price hike
+    if (isset($_POST['send_hike_report'])) {
+        $all     = load_delivery_prices($conn, '');
+        $flagged = array_filter($all, fn($i) => $i['recent'] !== null && $i['delivered'] > $i['recent']);
+        if (empty($flagged)) {
+            header("Location: price_checker.php?tab=monitor&error=" . urlencode("No price hikes on the latest deliveries — nothing to report."));
+            exit();
+        }
+        $lines = [];
+        foreach ($flagged as $f) {
+            $delta = $f['delivered'] - $f['recent'];
+            $pct   = $f['recent'] > 0 ? ($delta / $f['recent']) * 100 : 0;
+            $lines[] = "• {$f['description']} (" . ($f['barcode'] ?: '—') . "): ₱" . number_format($f['recent'], 2)
+                     . " → ₱" . number_format($f['delivered'], 2) . " (+" . number_format($pct, 1) . "%)";
+        }
+        $msg = "Price Monitor hike report by @{$username} — " . count($flagged) . " item(s) with a higher latest delivery price:\n"
+             . implode("\n", $lines);
+        $notif = $conn->prepare("INSERT INTO notifications (recipient_role, type, message) VALUES ('admin', 'price_change', ?)");
+        $notif->bind_param("s", $msg);
+        $notif->execute();
+        header("Location: price_checker.php?tab=monitor&success=" . urlencode("Hike report sent to Admin (" . count($flagged) . " item(s)).") );
+        exit();
+    }
+}
+
+// ── Activity Records — full Receiver + Validator detail per batch ──────────────
 $batches = $conn->query(
     "SELECT rb.*,
-            u.username AS receiver_name,
+            u.username  AS receiver_name,
             vu.username AS validator_name
      FROM receiving_batches rb
      LEFT JOIN users u  ON u.id  = rb.receiver_id
@@ -24,74 +139,27 @@ $batches = $conn->query(
      LIMIT 100"
 );
 
-// ── Reprice Queue — batches reopened after a rejected damage ticket ──────────
-$reprice_q = $conn->query(
-    "SELECT rb.id, rb.supplier_name, rb.resolution_reason, rb.resolution_at,
-            COUNT(ri.id) AS item_count,
-            ru.username AS resolved_by_name
-     FROM receiving_batches rb
-     LEFT JOIN receiving_items ri ON ri.batch_id = rb.id
-     LEFT JOIN users ru ON ru.id = rb.resolution_by
-     WHERE rb.status = 'pending_reprice'
-     GROUP BY rb.id
-     ORDER BY rb.resolution_at ASC"
-);
-$reprice_batches = $reprice_q ? $reprice_q->fetch_all(MYSQLI_ASSOC) : [];
-
-// ── Discrepancy Report — per-item amounts visible ─────────────────────────────
-$date_from = trim($_GET['date_from'] ?? '');
-$date_to   = trim($_GET['date_to']   ?? '');
-$supplier_filter = trim($_GET['supplier'] ?? '');
-
-$disc_sql = "SELECT rb.id AS batch_id, rb.supplier_name, rb.created_at AS batch_date,
-                    rb.computed_subtotal, rb.tally_result,
-                    ri.barcode, ri.description, ri.quantity, ri.base_price, ri.amount
-             FROM receiving_batches rb
-             JOIN receiving_items ri ON ri.batch_id = rb.id
-             WHERE rb.tally_result = 'discrepancy'";
-$disc_params = [];
-$disc_types  = '';
-if ($date_from) { $disc_sql .= " AND DATE(rb.created_at) >= ?"; $disc_types .= 's'; $disc_params[] = $date_from; }
-if ($date_to)   { $disc_sql .= " AND DATE(rb.created_at) <= ?"; $disc_types .= 's'; $disc_params[] = $date_to; }
-if ($supplier_filter) { $disc_sql .= " AND rb.supplier_name LIKE ?"; $disc_types .= 's'; $disc_params[] = '%' . $supplier_filter . '%'; }
-$disc_sql .= " ORDER BY rb.id DESC, ri.id ASC LIMIT 500";
-
-$disc_stmt = $conn->prepare($disc_sql);
-if ($disc_types) {
-    $disc_stmt->bind_param($disc_types, ...$disc_params);
-}
-$disc_stmt->execute();
-$disc_items = $disc_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-
-// ── Price Changes ─────────────────────────────────────────────────────────────
-$price_changes = $conn->query(
-    "SELECT pc.*, rb.supplier_name AS batch_supplier
-     FROM pipeline_price_changes pc
-     LEFT JOIN receiving_batches rb ON rb.id = pc.batch_id
-     ORDER BY pc.created_at DESC LIMIT 100"
-);
-
-// Handle "Raise to Admin" POST
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['raise_price_change'])) {
-    include '../../includes/csrf.php';
-    csrf_verify('/project/staff/procurement/price_checker.php?tab=price_changes');
-
-    $pc_id = intval($_POST['pc_id'] ?? 0);
-    if ($pc_id > 0) {
-        $pcr = $conn->prepare("SELECT * FROM pipeline_price_changes WHERE id = ? AND status = 'pending' LIMIT 1");
-        $pcr->bind_param("i", $pc_id);
-        $pcr->execute();
-        $pc = $pcr->get_result()->fetch_assoc();
-        if ($pc) {
-            $msg = "Price change raised by {$username}: \"{$pc['description']}\" (barcode: {$pc['barcode']}) — ₱" . number_format($pc['old_price'], 2) . " → ₱" . number_format($pc['new_price'], 2) . " (Batch #{$pc['batch_id']}).";
-            $notif = $conn->prepare("INSERT INTO notifications (recipient_role, type, batch_id, message) VALUES ('admin', 'price_change', ?, ?)");
-            $notif->bind_param("is", $pc['batch_id'], $msg);
-            $notif->execute();
+// Pre-load all items for the listed batches in one pass, grouped by batch_id
+$items_by_batch = [];
+if ($batches && $batches->num_rows > 0) {
+    $ir = $conn->query(
+        "SELECT ri.batch_id, ri.barcode, ri.description, ri.quantity, ri.damaged_qty,
+                ri.expiry_date, ri.base_price, ri.amount, ri.match_flag
+         FROM receiving_items ri
+         JOIN receiving_batches rb ON rb.id = ri.batch_id
+         WHERE rb.id IN (SELECT id FROM (SELECT id FROM receiving_batches ORDER BY created_at DESC LIMIT 100) t)
+         ORDER BY ri.batch_id DESC, ri.id ASC"
+    );
+    if ($ir) {
+        while ($row = $ir->fetch_assoc()) {
+            $items_by_batch[$row['batch_id']][] = $row;
         }
     }
-    header("Location: price_checker.php?tab=price_changes&success=" . urlencode("Raised to Admin."));
-    exit();
 }
+
+// ── Price Monitor — Validator-encoded delivery base-price trend ───────────────
+$monitor_search = trim($_GET['q'] ?? '');
+$monitor_items  = load_delivery_prices($conn, $monitor_search);
 
 include '../layout_top.php';
 ?>
@@ -99,7 +167,7 @@ include '../layout_top.php';
 <div class="max-w-7xl mx-auto space-y-6">
 
     <?php if ($error): ?>
-    <div class="bg-red-50 border border-red-200 text-red-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($error) ?></div>
+    <div class="bg-red-50 border border-red-200 text-red-700 rounded-2xl px-5 py-4 text-sm font-bold whitespace-pre-line"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
     <?php if ($success): ?>
     <div class="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($success) ?></div>
@@ -108,233 +176,211 @@ include '../layout_top.php';
     <!-- Tab navigation -->
     <div class="flex gap-1 bg-slate-100 rounded-2xl p-1 w-fit">
         <?php
-        $tabs = ['reprice' => 'Reprice Queue', 'activity' => 'Activity Records', 'discrepancy' => 'Discrepancy Report', 'price_changes' => 'Price Changes'];
+        $tabs = ['activity' => 'Activity Records', 'monitor' => 'Price Monitor'];
         foreach ($tabs as $key => $label):
-            $is_reprice_tab = ($key === 'reprice');
-            $reprice_count  = count($reprice_batches);
         ?>
         <a href="?tab=<?= $key ?>"
            class="relative px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all <?= $active_tab === $key ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700' ?>">
             <?= $label ?>
-            <?php if ($is_reprice_tab && $reprice_count > 0): ?>
-            <span class="absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-black w-5 h-5 rounded-full flex items-center justify-center"><?= $reprice_count ?></span>
-            <?php endif; ?>
         </a>
         <?php endforeach; ?>
     </div>
 
-    <?php if ($active_tab === 'reprice'): ?>
-    <!-- ── Tab 0: Reprice Queue ─────────────────────────────────────────── -->
+    <?php if ($active_tab === 'activity'): ?>
+    <!-- ── Tab 1: Activity Records (detailed) ───────────────────────────── -->
     <div class="card-modern p-8">
-        <h3 class="serif-title text-lg font-black text-slate-800 mb-1">Reprice Queue</h3>
-        <p class="text-slate-400 text-xs font-bold mb-6">Batches reopened by Admin after a rejected damage ticket. Re-enter the base prices — the tally will run again on submit.</p>
-        <?php if (empty($reprice_batches)): ?>
-            <p class="text-slate-400 text-sm font-bold text-center py-10">No batches awaiting repricing.</p>
-        <?php else: ?>
-        <div class="overflow-x-auto">
-            <table class="table-modern w-full text-sm">
-                <thead>
-                    <tr>
-                        <th>Batch #</th>
-                        <th>Supplier</th>
-                        <th>Items</th>
-                        <th>Reason</th>
-                        <th>Reopened By</th>
-                        <th>Reopened</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($reprice_batches as $rb): ?>
-                    <tr>
-                        <td class="font-black text-slate-500">#<?= $rb['id'] ?></td>
-                        <td class="font-bold"><?= htmlspecialchars($rb['supplier_name'] ?? '—') ?></td>
-                        <td class="text-center font-black"><?= intval($rb['item_count']) ?></td>
-                        <td class="text-xs text-slate-500 italic max-w-[220px] truncate" title="<?= htmlspecialchars($rb['resolution_reason'] ?? '') ?>"><?= htmlspecialchars($rb['resolution_reason'] ?? '—') ?></td>
-                        <td class="text-xs"><?= htmlspecialchars($rb['resolved_by_name'] ?? '—') ?></td>
-                        <td class="text-slate-400 text-xs"><?= $rb['resolution_at'] ? date('M j, Y g:i A', strtotime($rb['resolution_at'])) : '—' ?></td>
-                        <td>
-                            <a href="validate_items.php?batch_id=<?= $rb['id'] ?>"
-                               class="bg-rose-500 hover:bg-rose-600 text-white text-xs font-black px-4 py-2 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap">
-                                Reprice
-                            </a>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-        <?php endif; ?>
-    </div>
-
-    <?php elseif ($active_tab === 'activity'): ?>
-    <!-- ── Tab 1: Activity Records ──────────────────────────────────────── -->
-    <div class="card-modern p-8">
-        <h3 class="serif-title text-lg font-black text-slate-800 mb-6">All Batches</h3>
+        <h3 class="serif-title text-lg font-black text-slate-800 mb-1">Activity Records</h3>
+        <p class="text-slate-400 text-xs font-bold mb-6">Full Receiver &amp; Validator trail per batch. Click a row to expand the item-level breakdown.</p>
         <?php if (!$batches || $batches->num_rows === 0): ?>
             <p class="text-slate-400 text-sm font-bold text-center py-10">No batches found.</p>
         <?php else: ?>
-        <div class="overflow-x-auto">
-            <table class="table-modern w-full text-sm">
-                <thead>
-                    <tr>
-                        <th>Batch #</th>
-                        <th>Supplier</th>
-                        <th>Receiver</th>
-                        <th>Validator</th>
-                        <th>Tally</th>
-                        <th>Status</th>
-                        <th>Date</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php
-                $status_labels = [
-                    'pending_request'        => ['Pending',     'bg-amber-100 text-amber-700'],
-                    'pending_validation'     => ['In Review',   'bg-blue-100 text-blue-700'],
-                    'validated_tally'        => ['Validated',   'bg-emerald-100 text-emerald-700'],
-                    'validated_discrepancy'  => ['Discrepancy', 'bg-orange-100 text-orange-700'],
-                    'on_hold'                => ['On Hold',     'bg-rose-100 text-rose-700'],
-                    'completed'              => ['Completed',   'bg-green-100 text-green-700'],
-                    'rejected'               => ['Rejected',    'bg-red-100 text-red-700'],
-                ];
-                while ($b = $batches->fetch_assoc()):
-                    [$sl, $sb] = $status_labels[$b['status']] ?? ['—', 'bg-slate-100 text-slate-500'];
-                ?>
-                    <tr>
-                        <td class="font-black text-slate-500">#<?= $b['id'] ?></td>
-                        <td class="font-bold"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></td>
-                        <td><?= htmlspecialchars($b['receiver_name'] ?? '—') ?></td>
-                        <td><?= htmlspecialchars($b['validator_name'] ?? '—') ?></td>
-                        <td>
-                            <?php if ($b['tally_result'] === 'match'): ?>
-                                <span class="text-emerald-600 font-black text-xs">Match</span>
-                            <?php elseif ($b['tally_result'] === 'discrepancy'): ?>
-                                <span class="text-rose-600 font-black text-xs">Discrepancy</span>
-                            <?php else: ?>
-                                <span class="text-slate-300 text-xs">—</span>
-                            <?php endif; ?>
-                        </td>
-                        <td><span class="<?= $sb ?> text-[10px] font-black px-2 py-1 rounded-full uppercase"><?= $sl ?></span></td>
-                        <td class="text-slate-400 text-xs"><?= date('M j, Y', strtotime($b['created_at'])) ?></td>
-                    </tr>
-                <?php endwhile; ?>
-                </tbody>
-            </table>
+        <?php
+        $status_labels = [
+            'pending_request'        => ['Pending',     'bg-amber-100 text-amber-700'],
+            'pending_validation'     => ['In Review',   'bg-blue-100 text-blue-700'],
+            'pending_reprice'        => ['Reprice',     'bg-fuchsia-100 text-fuchsia-700'],
+            'validated_tally'        => ['Validated',   'bg-emerald-100 text-emerald-700'],
+            'validated_discrepancy'  => ['Discrepancy', 'bg-orange-100 text-orange-700'],
+            'on_hold'                => ['On Hold',     'bg-rose-100 text-rose-700'],
+            'completed'              => ['Completed',   'bg-green-100 text-green-700'],
+            'rejected'               => ['Rejected',    'bg-red-100 text-red-700'],
+        ];
+        ?>
+        <div class="space-y-3">
+        <?php while ($b = $batches->fetch_assoc()):
+            [$sl, $sb] = $status_labels[$b['status']] ?? ['—', 'bg-slate-100 text-slate-500'];
+            $rows = $items_by_batch[$b['id']] ?? [];
+        ?>
+            <details class="bg-white border border-slate-100 rounded-2xl overflow-hidden group">
+                <summary class="cursor-pointer list-none px-5 py-4 flex flex-wrap items-center gap-4 hover:bg-slate-50 transition-all">
+                    <span class="font-black text-slate-500">#<?= $b['id'] ?></span>
+                    <span class="font-bold text-slate-800 flex-1 min-w-[140px]"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></span>
+                    <span class="text-xs text-slate-500">Receiver: <span class="font-bold text-slate-700"><?= htmlspecialchars($b['receiver_name'] ?? '—') ?></span></span>
+                    <span class="text-xs text-slate-500">Validator: <span class="font-bold text-slate-700"><?= htmlspecialchars($b['validator_name'] ?? '—') ?></span></span>
+                    <?php if ($b['tally_result'] === 'match'): ?>
+                        <span class="text-emerald-600 font-black text-xs">Match</span>
+                    <?php elseif ($b['tally_result'] === 'discrepancy'): ?>
+                        <span class="text-rose-600 font-black text-xs">Discrepancy</span>
+                    <?php else: ?>
+                        <span class="text-slate-300 text-xs">—</span>
+                    <?php endif; ?>
+                    <span class="<?= $sb ?> text-[10px] font-black px-2 py-1 rounded-full uppercase"><?= $sl ?></span>
+                    <span class="text-slate-400 text-xs"><?= date('M j, Y', strtotime($b['created_at'])) ?></span>
+                    <span class="text-slate-300 text-xs font-black group-open:rotate-90 transition-transform">▸</span>
+                </summary>
+
+                <div class="border-t border-slate-100 px-5 py-4 bg-slate-50/50 space-y-4">
+                    <!-- Receiver / Validator meta -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div class="bg-white rounded-xl border border-slate-100 px-4 py-3">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Receiver</p>
+                            <p class="font-bold text-slate-700"><?= htmlspecialchars($b['receiver_name'] ?? '—') ?></p>
+                            <p class="text-slate-400">Encoded: <?= $b['created_at'] ? date('M j, Y g:i A', strtotime($b['created_at'])) : '—' ?></p>
+                        </div>
+                        <div class="bg-white rounded-xl border border-slate-100 px-4 py-3">
+                            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Validator</p>
+                            <p class="font-bold text-slate-700"><?= htmlspecialchars($b['validator_name'] ?? '—') ?></p>
+                            <p class="text-slate-400">Validated: <?= $b['validated_at'] ? date('M j, Y g:i A', strtotime($b['validated_at'])) : '—' ?></p>
+                        </div>
+                    </div>
+
+                    <!-- Item-level breakdown -->
+                    <?php if (empty($rows)): ?>
+                        <p class="text-slate-400 text-xs font-bold text-center py-4">No items recorded for this batch.</p>
+                    <?php else: ?>
+                    <div class="overflow-x-auto">
+                        <table class="table-modern w-full text-sm">
+                            <thead>
+                                <tr>
+                                    <th>Description</th>
+                                    <th>Barcode</th>
+                                    <th class="text-center">Qty</th>
+                                    <th class="text-center">Damaged</th>
+                                    <th>Expiry</th>
+                                    <th class="text-right">Base Price</th>
+                                    <th class="text-right">Amount</th>
+                                    <th class="text-center">Matched</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($rows as $ri): ?>
+                                <tr>
+                                    <td class="font-bold text-slate-700"><?= htmlspecialchars($ri['description']) ?></td>
+                                    <td class="font-mono text-xs text-slate-400"><?= htmlspecialchars($ri['barcode'] ?? '—') ?></td>
+                                    <td class="text-center"><?= intval($ri['quantity']) ?></td>
+                                    <td class="text-center <?= intval($ri['damaged_qty']) > 0 ? 'font-black text-rose-500' : 'text-slate-300' ?>"><?= intval($ri['damaged_qty']) ?></td>
+                                    <td class="text-xs text-slate-500"><?= $ri['expiry_date'] ? date('M j, Y', strtotime($ri['expiry_date'])) : '—' ?></td>
+                                    <td class="text-right"><?= $ri['base_price'] !== null ? '₱' . number_format(floatval($ri['base_price']), 2) : '—' ?></td>
+                                    <td class="text-right font-black text-slate-700"><?= $ri['amount'] !== null ? '₱' . number_format(floatval($ri['amount']), 2) : '—' ?></td>
+                                    <td class="text-center"><?= intval($ri['match_flag']) === 1 ? '<span class="text-emerald-500 font-black">✓</span>' : '<span class="text-slate-300">—</span>' ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </details>
+        <?php endwhile; ?>
         </div>
         <?php endif; ?>
     </div>
 
-    <?php elseif ($active_tab === 'discrepancy'): ?>
-    <!-- ── Tab 2: Discrepancy Report ───────────────────────────────────── -->
+    <?php elseif ($active_tab === 'monitor'): ?>
+    <!-- ── Tab 2: Price Monitor ─────────────────────────────────────────── -->
     <div class="card-modern p-8 space-y-6">
-        <h3 class="serif-title text-lg font-black text-slate-800">Discrepancy Report</h3>
+        <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+                <h3 class="serif-title text-lg font-black text-slate-800">Price Monitor</h3>
+                <p class="text-slate-400 text-xs font-bold mt-1">Validator-encoded base price per item — previous delivery vs the latest. Flag price hikes to Admin.</p>
+            </div>
+            <form method="POST" onsubmit="return confirm('Send a report of every item whose latest delivery is a price hike to Admin?');">
+                <?= csrf_field() ?>
+                <input type="hidden" name="send_hike_report" value="1">
+                <button type="submit" class="btn-pos-primary px-6 py-2.5 text-xs font-black uppercase tracking-widest whitespace-nowrap">
+                    Send Hike Report to Admin
+                </button>
+            </form>
+        </div>
 
-        <!-- Filters -->
+        <!-- Search -->
         <form method="GET" class="flex flex-wrap gap-3 items-end">
-            <input type="hidden" name="tab" value="discrepancy">
-            <div>
-                <label class="label-modern">From</label>
-                <input type="date" name="date_from" value="<?= htmlspecialchars($date_from) ?>" class="input-modern text-sm">
+            <input type="hidden" name="tab" value="monitor">
+            <div class="flex-1 min-w-[220px]">
+                <label class="label-modern">Search</label>
+                <input type="text" name="q" value="<?= htmlspecialchars($monitor_search) ?>" placeholder="Item name or barcode" class="input-modern text-sm w-full">
             </div>
-            <div>
-                <label class="label-modern">To</label>
-                <input type="date" name="date_to" value="<?= htmlspecialchars($date_to) ?>" class="input-modern text-sm">
-            </div>
-            <div>
-                <label class="label-modern">Supplier</label>
-                <input type="text" name="supplier" value="<?= htmlspecialchars($supplier_filter) ?>" placeholder="Filter by supplier" class="input-modern text-sm">
-            </div>
-            <button type="submit" class="btn-pos-primary px-6 py-2.5 text-xs font-black uppercase tracking-widest">Filter</button>
+            <button type="submit" class="btn-pos-primary px-6 py-2.5 text-xs font-black uppercase tracking-widest">Search</button>
+            <?php if ($monitor_search !== ''): ?>
+            <a href="?tab=monitor" class="text-xs font-bold text-slate-400 hover:text-slate-600 py-3">Clear</a>
+            <?php endif; ?>
         </form>
 
-        <?php if (empty($disc_items)): ?>
-            <p class="text-slate-400 text-sm font-bold text-center py-10">No discrepancy items found.</p>
+        <?php if (empty($monitor_items)): ?>
+            <p class="text-slate-400 text-sm font-bold text-center py-10">No delivered items with encoded prices yet.</p>
         <?php else: ?>
         <div class="overflow-x-auto">
             <table class="table-modern w-full text-sm">
                 <thead>
                     <tr>
-                        <th>Batch</th>
-                        <th>Supplier</th>
-                        <th>Description</th>
+                        <th>Item</th>
                         <th>Barcode</th>
-                        <th class="text-right">Qty</th>
-                        <th class="text-right">Base Price</th>
-                        <th class="text-right">Amount</th>
-                        <th>Date</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($disc_items as $di): ?>
-                    <tr>
-                        <td class="font-black text-slate-500">#<?= $di['batch_id'] ?></td>
-                        <td class="text-xs"><?= htmlspecialchars($di['supplier_name'] ?? '—') ?></td>
-                        <td class="font-bold"><?= htmlspecialchars($di['description']) ?></td>
-                        <td class="font-mono text-xs"><?= htmlspecialchars($di['barcode'] ?? '—') ?></td>
-                        <td class="text-right"><?= intval($di['quantity']) ?></td>
-                        <td class="text-right"><?= $di['base_price'] !== null ? '₱' . number_format(floatval($di['base_price']), 2) : '—' ?></td>
-                        <td class="text-right font-black text-slate-700"><?= $di['amount'] !== null ? '₱' . number_format(floatval($di['amount']), 2) : '—' ?></td>
-                        <td class="text-slate-400 text-xs"><?= date('M j, Y', strtotime($di['batch_date'])) ?></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-        <?php endif; ?>
-    </div>
-
-    <?php elseif ($active_tab === 'price_changes'): ?>
-    <!-- ── Tab 3: Price Changes ─────────────────────────────────────────── -->
-    <div class="card-modern p-8">
-        <h3 class="serif-title text-lg font-black text-slate-800 mb-6">Pipeline Price Changes</h3>
-        <?php if (!$price_changes || $price_changes->num_rows === 0): ?>
-            <p class="text-slate-400 text-sm font-bold text-center py-10">No price changes recorded.</p>
-        <?php else: ?>
-        <div class="overflow-x-auto">
-            <table class="table-modern w-full text-sm">
-                <thead>
-                    <tr>
-                        <th>Batch</th>
-                        <th>Description</th>
-                        <th>Barcode</th>
-                        <th class="text-right">Old Price</th>
-                        <th class="text-right">New Price</th>
-                        <th>Status</th>
-                        <th>Date</th>
+                        <th class="text-right">Recent Price</th>
+                        <th class="text-right">Delivered Price</th>
+                        <th class="text-center">Trend</th>
+                        <th>Last Delivered</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
-                <?php while ($pc = $price_changes->fetch_assoc()):
-                    $status_badge = match($pc['status']) {
-                        'approved' => 'bg-emerald-100 text-emerald-700',
-                        'rejected' => 'bg-red-100 text-red-700',
-                        default    => 'bg-amber-100 text-amber-700',
-                    };
+                <?php foreach ($monitor_items as $m):
+                    $delivered = floatval($m['delivered']);
+                    $recent    = $m['recent'];                       // null when only one delivery
+                    $has_prev  = ($recent !== null);
+                    $delta     = $has_prev ? $delivered - floatval($recent) : 0;
+                    $pct       = ($has_prev && floatval($recent) > 0) ? ($delta / floatval($recent)) * 100 : 0;
+
+                    if (!$has_prev) {
+                        $row_cls = '';
+                    } elseif ($delta > 0) {
+                        $row_cls = 'bg-amber-50';                    // hike
+                    } elseif ($delta < 0) {
+                        $row_cls = 'bg-emerald-50/40';               // drop
+                    } else {
+                        $row_cls = '';
+                    }
                 ?>
-                    <tr>
-                        <td class="font-black text-slate-500">#<?= $pc['batch_id'] ?></td>
-                        <td class="font-bold"><?= htmlspecialchars($pc['description'] ?? '—') ?></td>
-                        <td class="font-mono text-xs"><?= htmlspecialchars($pc['barcode'] ?? '—') ?></td>
-                        <td class="text-right">₱<?= number_format(floatval($pc['old_price']), 2) ?></td>
-                        <td class="text-right font-black">₱<?= number_format(floatval($pc['new_price']), 2) ?></td>
-                        <td><span class="<?= $status_badge ?> text-[10px] font-black px-2 py-1 rounded-full uppercase"><?= $pc['status'] ?></span></td>
-                        <td class="text-slate-400 text-xs"><?= date('M j, Y', strtotime($pc['created_at'])) ?></td>
-                        <td>
-                            <?php if ($pc['status'] === 'pending'): ?>
-                            <form method="POST">
+                    <tr class="<?= $row_cls ?>">
+                        <td class="font-bold text-slate-700"><?= htmlspecialchars($m['description'] ?? '—') ?></td>
+                        <td class="font-mono text-xs text-slate-400"><?= htmlspecialchars($m['barcode'] ?? '—') ?></td>
+                        <td class="text-right text-slate-500"><?= $has_prev ? '₱' . number_format(floatval($recent), 2) : '—' ?></td>
+                        <td class="text-right font-black text-slate-800">₱<?= number_format($delivered, 2) ?></td>
+                        <td class="text-center">
+                            <?php if (!$has_prev): ?>
+                                <span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 uppercase">New</span>
+                            <?php elseif ($delta > 0): ?>
+                                <span class="text-rose-600 font-black whitespace-nowrap">▲ +₱<?= number_format($delta, 2) ?> <span class="text-[10px]">(+<?= number_format($pct, 1) ?>%)</span></span>
+                            <?php elseif ($delta < 0): ?>
+                                <span class="text-emerald-600 font-black whitespace-nowrap">▼ −₱<?= number_format(abs($delta), 2) ?> <span class="text-[10px]">(<?= number_format($pct, 1) ?>%)</span></span>
+                            <?php else: ?>
+                                <span class="text-slate-400 font-black">– no change</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="text-xs text-slate-400"><?= $m['last_date'] ? date('M j, Y', strtotime($m['last_date'])) : '—' ?></td>
+                        <td class="text-right">
+                            <?php if ($m['barcode']): ?>
+                            <form method="POST" onsubmit="return confirm('Flag &quot;<?= htmlspecialchars($m['description'], ENT_QUOTES) ?>&quot; to Admin for price review?');">
                                 <?= csrf_field() ?>
-                                <input type="hidden" name="raise_price_change" value="1">
-                                <input type="hidden" name="pc_id" value="<?= $pc['id'] ?>">
-                                <button type="submit" class="bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all">
-                                    Raise to Admin
+                                <input type="hidden" name="flag_item" value="1">
+                                <input type="hidden" name="barcode" value="<?= htmlspecialchars($m['barcode'], ENT_QUOTES) ?>">
+                                <button type="submit" class="bg-slate-100 hover:bg-rose-100 hover:text-rose-700 text-slate-600 text-[10px] font-black px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all whitespace-nowrap">
+                                    Flag to Admin
                                 </button>
                             </form>
                             <?php endif; ?>
                         </td>
                     </tr>
-                <?php endwhile; ?>
+                <?php endforeach; ?>
                 </tbody>
             </table>
         </div>

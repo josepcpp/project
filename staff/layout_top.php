@@ -44,7 +44,6 @@ $titles = [
     'dashboard.php'         => 'Business Analytics',
     'activity_logs.php'     => 'System Audit Logs',    
     'price_maintenance.php' => 'Master Price Table',
-    'payments.php'          => 'Outgoing Payments',
     'discount.php'          => 'Promotions',
     'users.php'             => 'Staff Accounts',
     'settings.php'          => 'App Settings',
@@ -65,6 +64,7 @@ $titles = [
     'validate_items.php'      => 'Price Validation',
     'discrepancy_resolve.php' => 'Discrepancy',
     'damage_review.php'       => 'Damage Tickets',
+    'supplier_payments.php'   => 'Supplier Payments',
     'price_checker.php'       => 'Price Checker',
 ];
 
@@ -79,7 +79,6 @@ $icons = [
     'product_info.php'      => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>',
     'suppliers.php'         => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>',
     'delivery_receive.php'  => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>',
-    'payments.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>',
     'discount.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/></svg>',
     'users.php'             => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>',
     'settings.php'          => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>',
@@ -99,6 +98,7 @@ $icons = [
     'validate_items.php'      => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>',
     'discrepancy_resolve.php' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>',
     'price_checker.php'       => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/></svg>',
+    'supplier_payments.php'   => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>',
 ];
 
 // ── Navigation URL map (absolute paths — safe from any page depth) ───────────
@@ -111,7 +111,6 @@ $hrefs = [
     'dashboard.php'         => '/project/staff/dashboard.php',
     'activity_logs.php'     => '/project/staff/activity_logs.php',
     'price_maintenance.php' => '/project/staff/inventory/price_maintenance.php',
-    'payments.php'          => '/project/staff/sales/payments.php',
     'discount.php'          => '/project/staff/pos/discount.php',
     'users.php'             => '/project/staff/users/users.php',
     'settings.php'          => '/project/staff/settings.php',
@@ -132,10 +131,11 @@ $hrefs = [
     'validate_items.php'      => '/project/staff/procurement/validate_items.php',
     'discrepancy_resolve.php' => '/project/staff/procurement/discrepancy_resolve.php',
     'damage_review.php'       => '/project/staff/procurement/damage_review.php',
+    'supplier_payments.php'   => '/project/staff/procurement/supplier_payments.php',
     'price_checker.php'       => '/project/staff/procurement/price_checker.php',
 ];
 
-$pipeline_steps = ['batches_pending.php', 'discrepancy_resolve.php', 'damage_review.php'];
+$pipeline_steps = ['batches_pending.php', 'discrepancy_resolve.php', 'damage_review.php', 'supplier_payments.php'];
 
 $support_open_count = 0;
 $support_reply_count = 0;

@@ -26,12 +26,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
     // ── Manual global price update (existing feature) ─────────────────────────
     if ($action === 'update_unit_price') {
-        $pid       = intval($_POST['p_id']);
-        $item_name = trim($_POST['item_name'] ?? 'Product');
-        $t1_qty    = max(0, intval($_POST['t1_qty']    ?? 0));
-        $t1_price  = max(0, floatval($_POST['t1_price'] ?? 0));
-        $t2_qty    = max(0, intval($_POST['t2_qty']    ?? 0));
-        $t2_price  = max(0, floatval($_POST['t2_price'] ?? 0));
+        $pid          = intval($_POST['p_id']);
+        $item_name    = trim($_POST['item_name'] ?? 'Product');
+        $retail_price = max(0, floatval($_POST['retail_price'] ?? 0));
+        $t1_qty       = max(0, intval($_POST['t1_qty']    ?? 0));
+        $t1_price     = max(0, floatval($_POST['t1_price'] ?? 0));
+        $t2_qty       = max(0, intval($_POST['t2_qty']    ?? 0));
+        $t2_price     = max(0, floatval($_POST['t2_price'] ?? 0));
 
         $conn->begin_transaction();
         try {
@@ -44,6 +45,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             if ($t2_qty > 0) $tier_note .= " | T2: {$t2_qty}pcs @ ₱" . number_format($t2_price, 2);
             $log_msg = "TIER UPDATE: {$item_name} —{$tier_note}";
             _log_activity($conn, $user_id, $pid, $log_msg);
+
+            // Retail (unit) price — apply directly across all live lots of this product if changed
+            if ($retail_price > 0) {
+                $cq = $conn->prepare("SELECT MAX(price) AS cur FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'");
+                $cq->bind_param("s", $item_name); $cq->execute();
+                $cur_price = floatval($cq->get_result()->fetch_assoc()['cur'] ?? 0);
+                if (abs($cur_price - $retail_price) >= 0.01) {
+                    $pu = $conn->prepare("UPDATE products SET price = ? WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'");
+                    $pu->bind_param("ds", $retail_price, $item_name); $pu->execute();
+
+                    $ph = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
+                    $ph->bind_param("idd", $pid, $cur_price, $retail_price); $ph->execute();
+
+                    _log_activity($conn, $user_id, $pid,
+                        "RETAIL PRICE: {$item_name} ₱" . number_format($cur_price, 2) . " → ₱" . number_format($retail_price, 2),
+                        number_format($cur_price, 2), number_format($retail_price, 2));
+                }
+            }
 
             $conn->commit();
             $msg = "<div class='bg-emerald-500 text-white p-4 rounded-2xl mb-6 font-bold animate-in text-center shadow-lg'>Prices updated and synced across all active batches.</div>";
@@ -150,6 +169,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold animate-in text-center shadow-lg'>Request rejected and logged.</div>";
         }
     }
+
+    // ── Set selling price on a draft (unpriced) lot → release to POS ───────────
+    if ($action === 'set_selling_price') {
+        $pid       = intval($_POST['p_id'] ?? 0);
+        $new_price = floatval($_POST['selling_price'] ?? 0);
+        if ($pid > 0 && $new_price > 0) {
+            $dq = $conn->prepare("SELECT id, name, barcode FROM products WHERE id = ? AND status = '" . PRODUCT_DRAFT . "' LIMIT 1");
+            $dq->bind_param("i", $pid); $dq->execute();
+            $dp = $dq->get_result()->fetch_assoc();
+            if ($dp) {
+                // old_price = current live selling price for this barcode (if any), else 0
+                $old_price = 0.0;
+                if (!empty($dp['barcode'])) {
+                    $oq = $conn->prepare("SELECT price FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND price IS NOT NULL LIMIT 1");
+                    $oq->bind_param("s", $dp['barcode']); $oq->execute();
+                    $orow = $oq->get_result()->fetch_assoc();
+                    if ($orow) $old_price = floatval($orow['price']);
+                }
+                $conn->begin_transaction();
+                try {
+                    $ph = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
+                    $ph->bind_param("idd", $pid, $old_price, $new_price); $ph->execute();
+
+                    $up = $conn->prepare("UPDATE products SET price = ?, status = '" . PRODUCT_ACTIVE . "', draft_reason = NULL WHERE id = ?");
+                    $up->bind_param("di", $new_price, $pid); $up->execute();
+
+                    // Keep selling price uniform across all live lots of this barcode
+                    if (!empty($dp['barcode'])) {
+                        $uu = $conn->prepare("UPDATE products SET price = ? WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND id != ?");
+                        $uu->bind_param("dsi", $new_price, $dp['barcode'], $pid); $uu->execute();
+                    }
+
+                    _log_activity($conn, $user_id, $pid,
+                        "SELLING PRICE SET: {$dp['name']} → ₱" . number_format($new_price, 2) . " (released to POS)",
+                        number_format($old_price, 2), number_format($new_price, 2));
+
+                    $conn->commit();
+                    $msg = "<div class='bg-emerald-600 text-white p-4 rounded-2xl mb-6 font-bold animate-in text-center shadow-lg'>Selling price set. Stock released to POS.</div>";
+                } catch (\Throwable $e) {
+                    $conn->rollback();
+                    $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold shadow-lg'>Error: " . htmlspecialchars($e->getMessage()) . "</div>";
+                }
+            }
+        } else {
+            $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold shadow-lg'>Enter a selling price greater than ₱0.00.</div>";
+        }
+    }
 }
 
 include '../layout_top.php';
@@ -207,6 +273,17 @@ $pending_by_barcode = [];
 foreach ($pending_rows as $pr) {
     $pending_by_barcode[$pr['barcode']][] = $pr;
 }
+
+// Draft lots awaiting an Admin selling price (new items + held cost-change stock)
+$draft_products = $conn->query(
+    "SELECT p.id, p.name, p.barcode, p.cost_price, p.last_buy_cost, p.quantity, p.draft_reason, p.expiry_date,
+            (SELECT a.price FROM products a WHERE a.barcode = p.barcode AND a.status = '" . PRODUCT_ACTIVE . "' AND a.price IS NOT NULL LIMIT 1) AS active_price
+     FROM products p
+     WHERE p.status = '" . PRODUCT_DRAFT . "'
+     ORDER BY FIELD(p.draft_reason,'new','cost_change'), p.id DESC"
+);
+$draft_rows = [];
+while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
 ?>
 
 <style>
@@ -275,8 +352,26 @@ foreach ($pending_rows as $pr) {
         </select>
     </div>
 
-    <!-- ── MASTER PRICE TABLE ────────────────────────────────────────────────── -->
+    <!-- ── MASTER PRICE TABLE (tabbed) ───────────────────────────────────────── -->
     <div class="bg-white rounded-[3rem] border border-slate-100 shadow-2xl overflow-hidden">
+
+        <!-- Tab nav -->
+        <div class="px-8 pt-7 flex gap-2 border-b border-slate-100">
+            <button type="button" id="ptab-btn-live" onclick="showPriceTab('live')"
+                class="px-6 py-3 rounded-t-2xl text-xs font-black uppercase tracking-widest transition-all bg-slate-900 text-white shadow">
+                Live Selling Price
+            </button>
+            <button type="button" id="ptab-btn-pending" onclick="showPriceTab('pending')"
+                class="px-6 py-3 rounded-t-2xl text-xs font-black uppercase tracking-widest transition-all text-slate-400 hover:text-slate-600">
+                Pending Price Update
+                <?php $pending_total = count($pending_rows) + count($draft_rows); if ($pending_total > 0): ?>
+                <span class="ml-1 bg-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full"><?= $pending_total ?></span>
+                <?php endif; ?>
+            </button>
+        </div>
+
+        <!-- ── Tab 1: Live Selling Price ─────────────────────────────────────── -->
+        <div id="ptab-live">
         <div class="overflow-x-auto">
             <table class="table-modern text-left min-w-full">
                 <thead>
@@ -307,16 +402,20 @@ foreach ($pending_rows as $pr) {
                                     <?php if ($tiers_locked): ?>
                                         <span class="text-[9px] font-black text-rose-600 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 uppercase animate-pulse">⚠ Tiers Need Review</span>
                                     <?php elseif ($has_pending): ?>
-                                        <span class="text-[9px] font-black text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-200 uppercase"><?= count($reqs) > 1 ? count($reqs) . ' Price Updates Pending' : 'Price Update Pending' ?></span>
+                                        <span onclick="showPriceTab('pending')" class="cursor-pointer text-[9px] font-black text-amber-600 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-full border border-amber-200 uppercase transition-all"><?= count($reqs) > 1 ? count($reqs) . ' Price Updates Pending' : 'Price Update Pending' ?> →</span>
                                     <?php endif; ?>
                                 </div>
                             </td>
 
                             <td class="px-6 py-5 text-center">
-                                <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Current</p>
-                                <p class="text-xl font-black <?= $has_pending ? 'text-amber-500' : 'text-emerald-600' ?>">₱<?= number_format($r['price'], 2) ?></p>
+                                <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Retail Price</p>
+                                <div class="relative inline-block">
+                                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-black text-sm pointer-events-none">₱</span>
+                                    <input type="number" step="0.01" min="0" id="retail_<?= $r['id'] ?>" value="<?= number_format($r['price'], 2, '.', '') ?>"
+                                        class="w-28 bg-white border border-slate-200 rounded-xl pl-7 pr-2 py-2 text-right font-black <?= $has_pending ? 'text-amber-500' : 'text-emerald-600' ?> text-base outline-none focus:border-emerald-400 transition-all">
+                                </div>
                                 <?php if ($first_req): ?>
-                                    <p class="text-[8px] font-black text-slate-300 mt-0.5">→ <span class="text-rose-500">₱<?= number_format($first_req['proposed_price'], 2) ?></span><?= count($reqs) > 1 ? ' <span class="text-slate-300">+' . (count($reqs)-1) . ' more</span>' : '' ?></p>
+                                    <p class="text-[8px] font-black text-slate-300 mt-1">Pending → <span class="text-rose-500">₱<?= number_format($first_req['proposed_price'], 2) ?></span><?= count($reqs) > 1 ? ' <span class="text-slate-300">+' . (count($reqs) - 1) . ' more</span>' : '' ?></p>
                                 <?php endif; ?>
                             </td>
 
@@ -377,118 +476,202 @@ foreach ($pending_rows as $pr) {
                             </td>
                         </tr>
 
-                        <?php foreach ($reqs as $req_idx => $req):
-                            $step        = $req['status'];
-                            $s1_done     = in_array($step, [PRICE_REQ_STEP1_APPROVED, PRICE_REQ_APPROVED, PRICE_REQ_DEFERRED]);
-                            $can_step1   = $step === PRICE_REQ_PENDING;
-                            $can_apply   = in_array($step, PRICE_REQ_APPLY_STATUSES);
-                            $is_deferred = $step === PRICE_REQ_DEFERRED;
-                            $can_reject  = in_array($step, [PRICE_REQ_PENDING, PRICE_REQ_STEP1_APPROVED, PRICE_REQ_APPROVED, PRICE_REQ_DEFERRED]);
-                            $pct_change = $req['current_price'] > 0
-                                ? round((($req['proposed_price'] - $req['current_price']) / $req['current_price']) * 100, 1)
-                                : 0;
-                            $is_increase = $pct_change >= 0;
-                        ?>
-                        <tr class="border-l-4 border-amber-400 bg-amber-50/60">
-                            <td colspan="5" class="px-8 py-4 border-t-2 border-b-2 border-amber-300">
-                                <div class="flex flex-wrap lg:flex-nowrap gap-4 items-center">
-
-                                    <!-- Submitted info -->
-                                    <div class="flex-1 min-w-0">
-                                        <p class="text-[8px] font-black text-amber-500 uppercase tracking-widest mb-1.5">Price Update Request — Pending Approval</p>
-                                        <p class="font-bold text-slate-800 text-sm leading-tight mb-0.5"><?= htmlspecialchars($req['product_name']) ?></p>
-                                        <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded inline-block mb-1.5">#<?= htmlspecialchars($req['barcode']) ?></code>
-                                        <div class="flex flex-wrap gap-1.5">
-                                            <?php if ($req['supplier_name']): ?>
-                                                <span class="text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100 uppercase"><?= htmlspecialchars($req['supplier_name']) ?></span>
-                                            <?php endif; ?>
-                                            <?php if ($req['invoice']): ?>
-                                                <span class="text-[10px] font-black text-slate-400 bg-white px-2 py-0.5 rounded-lg border uppercase">INV: <?= htmlspecialchars($req['invoice']) ?></span>
-                                            <?php endif; ?>
-                                            <span class="text-[10px] font-black text-slate-300 uppercase"><?= date('M d, Y', strtotime($req['created_at'])) ?></span>
-                                        </div>
-                                        <p class="text-[10px] text-slate-400 mt-1">Submitted by <span class="font-black text-slate-600"><?= htmlspecialchars($req['submitted_username'] ?? '—') ?></span></p>
-                                    </div>
-
-                                    <!-- Price comparison -->
-                                    <div class="flex items-center gap-3 shrink-0">
-                                        <div class="text-center">
-                                            <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Current</p>
-                                            <p class="text-lg font-black text-slate-500">₱<?= number_format($req['current_price'], 2) ?></p>
-                                        </div>
-                                        <div class="flex flex-col items-center gap-0.5">
-                                            <svg class="w-3.5 h-3.5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-                                            <span class="text-[9px] font-black px-1.5 py-0.5 rounded-full <?= $is_increase ? 'text-rose-600 bg-rose-50' : 'text-emerald-600 bg-emerald-50' ?>"><?= ($is_increase ? '+' : '') . $pct_change ?>%</span>
-                                        </div>
-                                        <div class="text-center">
-                                            <p class="text-[8px] font-black text-amber-400 uppercase tracking-widest mb-0.5">Proposed</p>
-                                            <p class="text-lg font-black <?= $is_increase ? 'text-rose-600' : 'text-emerald-600' ?>">₱<?= number_format($req['proposed_price'], 2) ?></p>
-                                        </div>
-                                    </div>
-
-                                    <!-- Step tracker -->
-                                    <div class="shrink-0 text-center">
-                                        <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1.5">Approval Progress</p>
-                                        <div class="step-track">
-                                            <div class="step-node done" title="Submitted">S</div>
-                                            <div class="step-line <?= $s1_done ? 'done' : 'idle' ?>"></div>
-                                            <div class="step-node <?= $s1_done ? 'done' : ($step === 'pending' ? 'active' : 'idle') ?>" title="Reviewer">1</div>
-                                            <div class="step-line <?= $s1_done ? 'done' : 'idle' ?>"></div>
-                                            <div class="step-node <?= $is_deferred ? 'active' : ($can_apply && !$is_deferred ? 'active' : 'idle') ?>" title="Apply">
-                                                <?= $is_deferred ? '⏱' : 'A' ?>
-                                            </div>
-                                        </div>
-                                        <?php if ($s1_done): ?><p class="text-[8px] text-emerald-600 font-bold mt-1">By: <?= htmlspecialchars($req['step1_username'] ?? '?') ?></p><?php endif; ?>
-                                    </div>
-
-                                    <!-- Action buttons -->
-                                    <div class="flex flex-col gap-2 shrink-0 min-w-[148px]">
-                                        <?php if ($is_deferred): ?>
-                                            <div class="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
-                                                <span class="text-blue-500 text-sm">⏱</span>
-                                                <span class="text-[9px] font-black text-blue-600 uppercase">Applies on stockout</span>
-                                            </div>
-                                            <button onclick="applyPrice(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>', '<?= number_format($req['proposed_price'], 2) ?>')"
-                                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
-                                                Apply Now
-                                            </button>
-                                            <button onclick="cancelDefer(<?= $req['id'] ?>)"
-                                                class="border border-slate-200 text-slate-500 hover:bg-slate-50 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all active:scale-95">
-                                                Cancel Schedule
-                                            </button>
-                                        <?php elseif ($can_apply): ?>
-                                            <button onclick="applyPrice(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>', '<?= number_format($req['proposed_price'], 2) ?>')"
-                                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
-                                                Apply Now
-                                            </button>
-                                            <button onclick="doDefer(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>')"
-                                                class="bg-blue-500 hover:bg-blue-400 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
-                                                Apply on Stockout
-                                            </button>
-                                        <?php elseif ($can_step1): ?>
-                                            <button onclick="doStep(<?= $req['id'] ?>, 'price_step1', 'Approve price update for <?= addslashes($req['product_name']) ?>?')"
-                                                class="bg-amber-500 hover:bg-amber-400 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95">
-                                                Approve
-                                            </button>
-                                        <?php endif; ?>
-                                        <?php if ($can_reject && !$is_deferred): ?>
-                                            <button onclick="openRejectModal(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>')"
-                                                class="border border-rose-200 text-rose-500 hover:bg-rose-50 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all active:scale-95">
-                                                Reject
-                                            </button>
-                                        <?php endif; ?>
-                                    </div>
-
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-
                         <?php endwhile; ?>
+                    <?php else: ?>
+                        <tr><td colspan="5" class="px-8 py-16 text-center text-slate-400 font-bold text-sm">No active products to price.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         </div>
+        </div>
+        <!-- end Tab 1 -->
+
+        <!-- ── Tab 2: Pending Price Update ───────────────────────────────────── -->
+        <div id="ptab-pending" class="hidden">
+            <?php if (empty($pending_rows) && empty($draft_rows)): ?>
+                <p class="px-8 py-16 text-center text-slate-400 font-bold text-sm">No pending price updates.</p>
+            <?php else: ?>
+
+            <?php if (!empty($draft_rows)): ?>
+            <!-- Awaiting Selling Price (draft lots from procurement) -->
+            <div class="px-8 pt-6 pb-3 flex items-center gap-3 flex-wrap">
+                <span class="w-2.5 h-2.5 bg-sky-500 rounded-full shadow-sm"></span>
+                <h4 class="font-black text-slate-800 text-sm uppercase tracking-[0.15em] flex-1">Awaiting Selling Price</h4>
+                <span class="text-[10px] font-black text-sky-700 bg-sky-100 px-3 py-1 rounded-full uppercase tracking-widest">New stock held from POS</span>
+            </div>
+            <div class="divide-y divide-slate-50 border-y border-slate-100">
+            <?php foreach ($draft_rows as $dr):
+                $is_new  = ($dr['draft_reason'] ?? 'new') === 'new';
+                $cost    = floatval($dr['cost_price']) > 0 ? floatval($dr['cost_price']) : floatval($dr['last_buy_cost']);
+                $suggest = (!$is_new && $dr['active_price'] !== null) ? floatval($dr['active_price']) : 0.0;
+            ?>
+            <div class="px-8 py-5 flex flex-col lg:flex-row lg:items-center gap-4 border-l-4 border-sky-400 bg-sky-50/30">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                        <p class="font-bold text-slate-800"><?= htmlspecialchars($dr['name']) ?></p>
+                        <?php if ($is_new): ?>
+                            <span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 uppercase">New Item</span>
+                        <?php else: ?>
+                            <span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 uppercase">Cost Change — Held</span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <code class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded border">#<?= htmlspecialchars($dr['barcode'] ?? '—') ?></code>
+                        <span class="text-[10px] font-black text-slate-400 uppercase">Qty: <?= intval($dr['quantity']) ?></span>
+                        <?php if ($dr['expiry_date']): ?>
+                            <span class="text-[10px] font-black text-slate-400 uppercase">Exp: <?= date('M j, Y', strtotime($dr['expiry_date'])) ?></span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-4 shrink-0">
+                    <div class="text-center">
+                        <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Supplier Cost</p>
+                        <p class="text-lg font-black text-slate-500">₱<?= number_format($cost, 2) ?></p>
+                    </div>
+                    <?php if ($suggest > 0): ?>
+                    <div class="text-center">
+                        <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Current Selling</p>
+                        <p class="text-lg font-black text-slate-400">₱<?= number_format($suggest, 2) ?></p>
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="flex items-end gap-2 shrink-0">
+                    <div>
+                        <label class="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Selling Price</label>
+                        <input type="number" id="sell_<?= $dr['id'] ?>" step="0.01" min="0" value="<?= $suggest > 0 ? number_format($suggest, 2, '.', '') : '' ?>"
+                            placeholder="₱0.00"
+                            class="w-32 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-right font-black text-emerald-600 outline-none focus:border-emerald-400">
+                    </div>
+                    <button onclick="setSellingPrice(<?= $dr['id'] ?>, '<?= addslashes($dr['name']) ?>')"
+                        class="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md active:scale-95 whitespace-nowrap">
+                        Set Price &amp; Activate
+                    </button>
+                </div>
+            </div>
+            <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+
+            <?php if (!empty($pending_rows)): ?>
+            <!-- Price Update Requests (approval workflow) -->
+            <div class="px-8 pt-6 pb-3 flex items-center gap-3 flex-wrap">
+                <span class="w-2.5 h-2.5 bg-amber-500 rounded-full shadow-sm"></span>
+                <h4 class="font-black text-slate-800 text-sm uppercase tracking-[0.15em] flex-1">Price Update Requests</h4>
+                <span class="text-[10px] font-black text-amber-700 bg-amber-100 px-3 py-1 rounded-full uppercase tracking-widest">Awaiting approval</span>
+            </div>
+            <div class="divide-y divide-slate-50">
+            <?php foreach ($pending_rows as $req):
+                $step        = $req['status'];
+                $s1_done     = in_array($step, [PRICE_REQ_STEP1_APPROVED, PRICE_REQ_APPROVED, PRICE_REQ_DEFERRED]);
+                $can_step1   = $step === PRICE_REQ_PENDING;
+                $can_apply   = in_array($step, PRICE_REQ_APPLY_STATUSES);
+                $is_deferred = $step === PRICE_REQ_DEFERRED;
+                $can_reject  = in_array($step, [PRICE_REQ_PENDING, PRICE_REQ_STEP1_APPROVED, PRICE_REQ_APPROVED, PRICE_REQ_DEFERRED]);
+                $pct_change = $req['current_price'] > 0
+                    ? round((($req['proposed_price'] - $req['current_price']) / $req['current_price']) * 100, 1)
+                    : 0;
+                $is_increase = $pct_change >= 0;
+            ?>
+            <div class="px-8 py-5 border-l-4 border-amber-400 bg-amber-50/40">
+                <div class="flex flex-wrap lg:flex-nowrap gap-4 items-center">
+
+                    <!-- Submitted info -->
+                    <div class="flex-1 min-w-0">
+                        <p class="text-[8px] font-black text-amber-500 uppercase tracking-widest mb-1.5">Price Update Request — Pending Approval</p>
+                        <p class="font-bold text-slate-800 text-sm leading-tight mb-0.5"><?= htmlspecialchars($req['product_name']) ?></p>
+                        <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded inline-block mb-1.5">#<?= htmlspecialchars($req['barcode']) ?></code>
+                        <div class="flex flex-wrap gap-1.5">
+                            <?php if ($req['supplier_name']): ?>
+                                <span class="text-[10px] font-black text-blue-500 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100 uppercase"><?= htmlspecialchars($req['supplier_name']) ?></span>
+                            <?php endif; ?>
+                            <?php if ($req['invoice']): ?>
+                                <span class="text-[10px] font-black text-slate-400 bg-white px-2 py-0.5 rounded-lg border uppercase">INV: <?= htmlspecialchars($req['invoice']) ?></span>
+                            <?php endif; ?>
+                            <span class="text-[10px] font-black text-slate-300 uppercase"><?= date('M d, Y', strtotime($req['created_at'])) ?></span>
+                        </div>
+                        <p class="text-[10px] text-slate-400 mt-1">Submitted by <span class="font-black text-slate-600"><?= htmlspecialchars($req['submitted_username'] ?? '—') ?></span></p>
+                    </div>
+
+                    <!-- Price comparison -->
+                    <div class="flex items-center gap-3 shrink-0">
+                        <div class="text-center">
+                            <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-0.5">Current</p>
+                            <p class="text-lg font-black text-slate-500">₱<?= number_format($req['current_price'], 2) ?></p>
+                        </div>
+                        <div class="flex flex-col items-center gap-0.5">
+                            <svg class="w-3.5 h-3.5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+                            <span class="text-[9px] font-black px-1.5 py-0.5 rounded-full <?= $is_increase ? 'text-rose-600 bg-rose-50' : 'text-emerald-600 bg-emerald-50' ?>"><?= ($is_increase ? '+' : '') . $pct_change ?>%</span>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-[8px] font-black text-amber-400 uppercase tracking-widest mb-0.5">Proposed</p>
+                            <p class="text-lg font-black <?= $is_increase ? 'text-rose-600' : 'text-emerald-600' ?>">₱<?= number_format($req['proposed_price'], 2) ?></p>
+                        </div>
+                    </div>
+
+                    <!-- Step tracker -->
+                    <div class="shrink-0 text-center">
+                        <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1.5">Approval Progress</p>
+                        <div class="step-track">
+                            <div class="step-node done" title="Submitted">S</div>
+                            <div class="step-line <?= $s1_done ? 'done' : 'idle' ?>"></div>
+                            <div class="step-node <?= $s1_done ? 'done' : ($step === 'pending' ? 'active' : 'idle') ?>" title="Reviewer">1</div>
+                            <div class="step-line <?= $s1_done ? 'done' : 'idle' ?>"></div>
+                            <div class="step-node <?= $is_deferred ? 'active' : ($can_apply && !$is_deferred ? 'active' : 'idle') ?>" title="Apply">
+                                <?= $is_deferred ? '⏱' : 'A' ?>
+                            </div>
+                        </div>
+                        <?php if ($s1_done): ?><p class="text-[8px] text-emerald-600 font-bold mt-1">By: <?= htmlspecialchars($req['step1_username'] ?? '?') ?></p><?php endif; ?>
+                    </div>
+
+                    <!-- Action buttons -->
+                    <div class="flex flex-col gap-2 shrink-0 min-w-[148px]">
+                        <?php if ($is_deferred): ?>
+                            <div class="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                                <span class="text-blue-500 text-sm">⏱</span>
+                                <span class="text-[9px] font-black text-blue-600 uppercase">Applies on stockout</span>
+                            </div>
+                            <button onclick="applyPrice(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>', '<?= number_format($req['proposed_price'], 2) ?>')"
+                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
+                                Apply Now
+                            </button>
+                            <button onclick="cancelDefer(<?= $req['id'] ?>)"
+                                class="border border-slate-200 text-slate-500 hover:bg-slate-50 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all active:scale-95">
+                                Cancel Schedule
+                            </button>
+                        <?php elseif ($can_apply): ?>
+                            <button onclick="applyPrice(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>', '<?= number_format($req['proposed_price'], 2) ?>')"
+                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
+                                Apply Now
+                            </button>
+                            <button onclick="doDefer(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>')"
+                                class="bg-blue-500 hover:bg-blue-400 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
+                                Apply on Stockout
+                            </button>
+                        <?php elseif ($can_step1): ?>
+                            <button onclick="doStep(<?= $req['id'] ?>, 'price_step1', 'Approve price update for <?= addslashes($req['product_name']) ?>?')"
+                                class="bg-amber-500 hover:bg-amber-400 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95">
+                                Approve
+                            </button>
+                        <?php endif; ?>
+                        <?php if ($can_reject && !$is_deferred): ?>
+                            <button onclick="openRejectModal(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>')"
+                                class="border border-rose-200 text-rose-500 hover:bg-rose-50 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all active:scale-95">
+                                Reject
+                            </button>
+                        <?php endif; ?>
+                    </div>
+
+                </div>
+            </div>
+            <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+
+            <?php endif; ?>
+        </div>
+        <!-- end Tab 2 -->
     </div>
 
     <!-- ── RECENT PRICE CHANGE HISTORY ──────────────────────────────────────── -->
@@ -555,15 +738,52 @@ foreach ($pending_rows as $pr) {
 </div>
 
 <script>
+// ── Master Price Table tabs: Live Selling Price / Pending Price Update ─────────
+function showPriceTab(which) {
+    const isPending = which === 'pending';
+    document.getElementById('ptab-live').classList.toggle('hidden', isPending);
+    document.getElementById('ptab-pending').classList.toggle('hidden', !isPending);
+    const bLive = document.getElementById('ptab-btn-live');
+    const bPend = document.getElementById('ptab-btn-pending');
+    [bLive, bPend].forEach(b => {
+        b.classList.remove('bg-slate-900', 'text-white', 'shadow');
+        b.classList.add('text-slate-400', 'hover:text-slate-600');
+    });
+    const active = isPending ? bPend : bLive;
+    active.classList.remove('text-slate-400', 'hover:text-slate-600');
+    active.classList.add('bg-slate-900', 'text-white', 'shadow');
+}
+
+// ── Set selling price on a draft lot → release to POS ─────────────────────────
+async function setSellingPrice(pid, name) {
+    const input = document.getElementById('sell_' + pid);
+    const val = parseFloat(input.value);
+    if (!val || val <= 0) { alert('Enter a selling price greater than ₱0.00.'); input.focus(); return; }
+    if (!await customConfirm(
+        'This sets the selling price to ₱' + val.toFixed(2) + ' and releases the stock to POS.',
+        "Price '" + name + "'?"
+    )) return;
+    const fd = new FormData();
+    fd.append('action',        'set_selling_price');
+    fd.append('p_id',          pid);
+    fd.append('selling_price', val);
+    if (typeof navigate === 'function') navigate('price_maintenance.php', fd);
+    else window.location.reload();
+}
+
 // ── Global price manual update ────────────────────────────────────────────────
 async function saveGlobalPrice(pid, itemName) {
     const form = document.getElementById('p_form_' + pid);
-    if (!await customConfirm('Tier pricing will be updated across all active batches.', "Update tiers for '" + itemName + "'?")) return;
+    const retailEl = document.getElementById('retail_' + pid);
+    const retailVal = retailEl ? parseFloat(retailEl.value) : 0;
+    if (retailEl && (!retailVal || retailVal <= 0)) { alert('Retail price must be greater than ₱0.00.'); retailEl.focus(); return; }
+    if (!await customConfirm('Retail price and bulk tiers will be updated across all active batches and applied to POS immediately.', "Apply pricing for '" + itemName + "'?")) return;
 
     const fd = new FormData();
     fd.append('action',    'update_unit_price');
     fd.append('p_id',      pid);
     fd.append('item_name', itemName);
+    if (retailEl) fd.append('retail_price', retailVal);
     fd.append('t1_qty',    form.querySelector('[name="t1_qty"]').value);
     fd.append('t1_price',  form.querySelector('[name="t1_price"]').value);
     fd.append('t2_qty',    form.querySelector('[name="t2_qty"]').value);

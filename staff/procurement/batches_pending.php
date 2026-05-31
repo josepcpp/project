@@ -93,7 +93,7 @@ include '../layout_top.php';
     <div class="card-modern p-8">
         <h3 class="serif-title text-xl font-black text-slate-800 mb-1">Create Receiving Voucher</h3>
         <p class="text-slate-400 text-sm font-bold mb-6">Enter the supplier details and the invoice subtotal. The Receiver will encode the items against this voucher.</p>
-        <form method="POST" class="space-y-5">
+        <form id="voucher-form" method="POST" class="space-y-5">
             <?= csrf_field() ?>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div>
@@ -118,7 +118,7 @@ include '../layout_top.php';
                     Stored securely — never shown to the Receiver.
                 </p>
             </div>
-            <button type="submit" class="btn-pos-primary px-10 py-3 text-sm font-black uppercase tracking-widest">
+            <button type="button" onclick="openVoucherConfirm()" class="btn-pos-primary px-10 py-3 text-sm font-black uppercase tracking-widest">
                 Create Voucher
             </button>
         </form>
@@ -193,5 +193,93 @@ include '../layout_top.php';
     <?php endif; ?>
 
 </div>
+
+<!-- ── Confirm Voucher Modal ──────────────────────────────────────────────── -->
+<div id="voucher-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden">
+    <div class="bg-white rounded-[2.5rem] shadow-2xl p-8 w-full max-w-md mx-4 animate-in">
+        <h4 class="serif-title text-2xl font-black text-slate-800 mb-1">Are the details correct?</h4>
+        <p class="text-slate-400 text-sm font-bold mb-6">Please review carefully — the subtotal is never shown to the Receiver.</p>
+
+        <div class="space-y-1 mb-6 bg-slate-50 rounded-2xl p-5">
+            <div class="flex justify-between items-center py-2 border-b border-slate-100">
+                <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Supplier Name</span>
+                <span id="vc-name" class="font-black text-slate-800 text-right"></span>
+            </div>
+            <div class="flex justify-between items-center py-2 border-b border-slate-100">
+                <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact Details</span>
+                <span id="vc-contact" class="font-bold text-slate-600 text-right"></span>
+            </div>
+            <div class="flex justify-between items-center py-2">
+                <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Receipt Subtotal</span>
+                <span id="vc-subtotal" class="font-black text-emerald-600 text-lg text-right"></span>
+            </div>
+        </div>
+
+        <div class="flex gap-3">
+            <button type="button" onclick="closeVoucherConfirm()"
+                class="flex-1 border border-slate-200 text-slate-500 font-black text-[10px] uppercase tracking-widest py-3.5 rounded-2xl hover:bg-slate-50 transition-all">
+                Cancel
+            </button>
+            <button type="button" id="vc-yes" onclick="submitVoucher()" disabled
+                class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest py-3.5 rounded-2xl transition-all shadow-lg active:scale-95 opacity-50 cursor-not-allowed">
+                Please wait… 3s
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+let _vcTimer = null;
+
+function openVoucherConfirm() {
+    const form = document.getElementById('voucher-form');
+    if (!form.reportValidity()) return;   // native required / min validation first
+
+    const name     = form.querySelector('[name="supplier_name"]').value.trim();
+    const contact  = form.querySelector('[name="supplier_contact"]').value.trim();
+    const subtotal = parseFloat(form.querySelector('[name="control_subtotal"]').value || 0);
+
+    document.getElementById('vc-name').textContent     = name || '—';
+    document.getElementById('vc-contact').textContent  = contact || '—';
+    document.getElementById('vc-subtotal').textContent = '₱' + subtotal.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    document.getElementById('voucher-modal').classList.remove('hidden');
+
+    // 3-second countdown before "Yes" is clickable
+    const yes = document.getElementById('vc-yes');
+    let secs = 3;
+    yes.disabled = true;
+    yes.classList.add('opacity-50', 'cursor-not-allowed');
+    yes.textContent = 'Please wait… ' + secs + 's';
+
+    clearInterval(_vcTimer);
+    _vcTimer = setInterval(function () {
+        secs--;
+        if (secs > 0) {
+            yes.textContent = 'Please wait… ' + secs + 's';
+        } else {
+            clearInterval(_vcTimer);
+            yes.disabled = false;
+            yes.classList.remove('opacity-50', 'cursor-not-allowed');
+            yes.textContent = 'Yes, Create Voucher';
+        }
+    }, 1000);
+}
+
+function closeVoucherConfirm() {
+    clearInterval(_vcTimer);
+    document.getElementById('voucher-modal').classList.add('hidden');
+}
+
+function submitVoucher() {
+    if (document.getElementById('vc-yes').disabled) return;
+    document.getElementById('voucher-form').submit();
+}
+
+// Close when clicking the backdrop
+document.getElementById('voucher-modal').addEventListener('click', function (e) {
+    if (e.target === this) closeVoucherConfirm();
+});
+</script>
 
 <?php include '../layout_bottom.php'; ?>
