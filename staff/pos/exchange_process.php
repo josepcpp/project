@@ -20,7 +20,7 @@ $user_id  = $_SESSION['user_id']  ?? null;
 $username = $_SESSION['username'] ?? 'unknown';
 
 $_ex_role = strtolower($_SESSION['role'] ?? '');
-if (!in_array($_ex_role, [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN])) {
+if (!in_array($_ex_role, [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN, ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER])) {
     header("Location: ../sales/returns_exchange.php?error=" . urlencode("Insufficient permissions."));
     exit();
 }
@@ -142,6 +142,18 @@ try {
             'line_total' => $line_total,
             'prod'       => $prod,
         ];
+    }
+
+    // 3b. Reject a pure no-op exchange — same product(s) AND same quantities on
+    //     both sides (net change is zero everywhere). Different qty (refund/collect)
+    //     or a different product is allowed.
+    $net_change = [];
+    foreach ($validated_returns as $r)   $net_change[$r['product_id']] = ($net_change[$r['product_id']] ?? 0) - $r['qty'];
+    foreach ($validated_new_items as $n) $net_change[$n['product_id']] = ($net_change[$n['product_id']] ?? 0) + $n['qty'];
+    $has_net_change = false;
+    foreach ($net_change as $d) { if ($d !== 0) { $has_net_change = true; break; } }
+    if (!$has_net_change) {
+        throw new Exception("No net change — the replacement items and quantities are identical to what's being returned. Lower the quantity for a refund, raise it to collect, or pick a different item.");
     }
 
     // 4. EXC-1: Compute delta server-side — POST values for delta are IGNORED

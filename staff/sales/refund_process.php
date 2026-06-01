@@ -1,7 +1,15 @@
 <?php
+include '../../includes/auth_check.php';
 include '../../config/db.php';
 include '../../config/settings.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
+
+// All staff-level roles may submit refunds (non-admins create pending requests;
+// Admin+ auto-processes). Only fully unknown/unauthenticated roles are blocked.
+if (!in_array(strtolower($_SESSION['role'] ?? ''), [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN, ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER])) {
+    header("Location: ../dashboard.php?error=" . urlencode("Insufficient permissions to process refunds."));
+    exit();
+}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     header("Location: refund_management.php");

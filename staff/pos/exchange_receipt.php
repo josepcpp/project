@@ -50,7 +50,7 @@ $delta_amount = floatval($ex['delta_amount']);
         </div>
 
         <div class="flex gap-4 pt-4">
-            <a href="exchange.php" class="flex-1 btn-secondary py-4 text-sm font-black uppercase tracking-widest rounded-2xl text-center">New Exchange</a>
+            <a href="../sales/returns_exchange.php" class="flex-1 btn-secondary py-4 text-sm font-black uppercase tracking-widest rounded-2xl text-center">New Exchange</a>
             <a href="pos.php" class="flex-1 btn-pos-primary py-4 text-sm uppercase tracking-widest rounded-2xl text-center">Back to POS</a>
         </div>
     </div>

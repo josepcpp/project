@@ -8,7 +8,7 @@ $role     = strtolower($_SESSION['role'] ?? '');
 $user_id  = $_SESSION['user_id'] ?? null;
 $is_admin = in_array($role, ROLES_ADMIN_AND_UP);
 
-// Only staff-and-above can use this page
+// All staff-level roles can use this page — kept in sync with exchange_process.php's gate.
 if (!in_array($role, [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN, ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER])) {
     header("Location: ../dashboard.php");
     exit();
@@ -360,7 +360,10 @@ if ($is_admin) {
 </div><!-- end max-w-4xl -->
 
 <script>
-const TAX_MODE = <?= json_encode($tax_display_mode) ?>;
+// var (not const/let) so this script re-initialises cleanly when the SPA
+// re-renders the page (e.g. returning here after a rejected exchange) instead
+// of throwing a redeclaration error and leaving stale replacement state behind.
+var TAX_MODE = <?= json_encode($tax_display_mode) ?>;
 
 // ── Mode toggle ───────────────────────────────────────────────────────────────
 function setMode(mode) {
@@ -389,7 +392,7 @@ document.getElementById('receipt-input')?.addEventListener('keydown', e => { if 
 (function(){ const i = document.getElementById('receipt-input'); if (i?.value.trim()) filterReceipts(i.value); })();
 
 // ── Exchange helpers ──────────────────────────────────────────────────────────
-let replacements = [], pendingSlotIndex = null;
+var replacements = [], pendingSlotIndex = null;
 
 function toggleReturn(i) {
     document.getElementById('xqty-wrap-' + i)?.classList.toggle('hidden', !document.getElementById('xitem_' + i).checked);
@@ -444,12 +447,43 @@ function addReplacement() {
     p?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 function closeSearch() { document.getElementById('product-search-panel')?.classList.add('hidden'); pendingSlotIndex = null; }
-function pickReplacement(pid, name, price) {
+function pickReplacement(pid, name, price, stock) {
     if (pendingSlotIndex === null) return;
+    stock = parseInt(stock) || 0;
+    if (stock < 1) { showFlash('"' + name + '" is out of stock.', 'error'); return; }
     const idx = pendingSlotIndex;
-    if (idx < replacements.length) { replacements[idx] = { product_id: pid, name, price, qty: replacements[idx].qty }; }
-    else replacements.push({ product_id: pid, name, price, qty: 1 });
+    if (idx < replacements.length) {
+        const keepQty = Math.min(replacements[idx].qty || 1, stock);
+        replacements[idx] = { product_id: pid, name, price, stock, qty: keepQty };
+    } else {
+        replacements.push({ product_id: pid, name, price, stock, qty: 1 });
+    }
     pendingSlotIndex = null; closeSearch(); renderReplacements(); recalcDelta();
+}
+// Live clamp (fires on every keystroke): the moment the typed qty exceeds stock,
+// force it down to the available amount and warn. Empty/low values are allowed
+// mid-typing and normalised on blur (fixReplQty) so editing stays smooth.
+function setReplQty(idx, input) {
+    const max = replacements[idx].stock || 1;
+    let v = parseInt(input.value);
+    if (isNaN(v)) { replacements[idx].qty = 0; recalcDelta(); return; }   // still typing
+    if (v > max) {
+        v = max;
+        input.value = max;                                                // force to available stock
+        showFlash('Only ' + max + ' in stock for "' + replacements[idx].name + '".', 'error');
+    }
+    replacements[idx].qty = Math.max(v, 0);
+    recalcDelta();
+}
+// Normalise on blur — never leave the box empty or below 1.
+function fixReplQty(idx, input) {
+    const max = replacements[idx].stock || 1;
+    let v = parseInt(input.value) || 1;
+    if (v < 1)   v = 1;
+    if (v > max) v = max;
+    input.value = v;
+    replacements[idx].qty = v;
+    recalcDelta();
 }
 function removeReplacement(idx) { replacements.splice(idx, 1); renderReplacements(); recalcDelta(); }
 function renderReplacements() {
@@ -465,10 +499,10 @@ function renderReplacements() {
             <input type="hidden" name="new_items[${i}][unit_price]" value="${r.price}">
             <div class="flex-1 min-w-0">
                 <p class="font-bold text-slate-700 text-sm truncate">${r.name}</p>
-                <p class="text-[10px] text-violet-600 font-bold">₱${r.price.toFixed(2)}</p>
+                <p class="text-[10px] text-violet-600 font-bold">₱${r.price.toFixed(2)} · ${r.stock} in stock</p>
             </div>
-            <input type="number" name="new_items[${i}][qty]" min="1" value="${r.qty}"
-                   onchange="replacements[${i}].qty=parseInt(this.value)||1;recalcDelta()"
+            <input type="number" name="new_items[${i}][qty]" min="1" max="${r.stock}" value="${r.qty}"
+                   oninput="setReplQty(${i}, this)" onblur="fixReplQty(${i}, this)"
                    class="w-16 border-2 border-violet-200 rounded-xl px-2 py-1.5 text-sm font-black text-center focus:outline-none focus:border-violet-500">
             <button type="button" onclick="removeReplacement(${i})" class="text-slate-300 hover:text-rose-400 transition-colors font-black">✕</button>`;
         list.appendChild(d);
@@ -483,18 +517,43 @@ function searchProducts() {
         .then(data => {
             if (!data.length) { res.innerHTML = '<p class="text-slate-300 text-xs font-bold p-3">No products found.</p>'; return; }
             res.innerHTML = data.map(p => `
-                <div onclick='pickReplacement(${p.id},${JSON.stringify(p.name)},${parseFloat(p.price)})'
+                <div onclick='pickReplacement(${p.id},${JSON.stringify(p.name)},${parseFloat(p.price)},${parseInt(p.total_qty)||0})'
                      class="flex items-center justify-between px-4 py-3 hover:bg-violet-50 rounded-xl cursor-pointer transition-colors">
-                    <div><p class="font-bold text-slate-700 text-sm">${p.name}</p><p class="text-[10px] text-slate-400">${p.barcode||''}</p></div>
+                    <div><p class="font-bold text-slate-700 text-sm">${p.name}</p><p class="text-[10px] text-slate-400">${p.barcode||''} · ${parseInt(p.total_qty)||0} in stock</p></div>
                     <span class="font-black text-emerald-600 text-sm">₱${parseFloat(p.price).toFixed(2)}</span>
                 </div>`).join('');
         }).catch(() => { res.innerHTML = '<p class="text-rose-400 text-xs font-bold p-3">Search failed.</p>'; });
 }
 function toggleRefField(mode) { document.getElementById('ref-field-wrap')?.classList.toggle('hidden', mode !== 'yes'); }
+// Enter inside a field must NOT submit the whole exchange — it only commits/clamps
+// the value (via blur → onchange). Submitting is done explicitly with the button.
+document.getElementById('exchangeForm')?.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'submit') {
+        e.preventDefault();
+        e.target.blur();
+    }
+});
 document.getElementById('exchangeForm')?.addEventListener('submit', function(e) {
     const anyReturn = [...document.querySelectorAll('[name$="[selected]"]')].some(c => c.checked);
     if (!anyReturn) { e.preventDefault(); showFlash('Select at least one item to return.', 'error'); return; }
     if (!replacements.length) { e.preventDefault(); showFlash('Add at least one replacement item.', 'error'); return; }
+
+    // Block a pure no-op: same product(s) AND same quantities on both sides.
+    // Different qty (lower = refund, higher = collect) or a different product is allowed.
+    const netChange = {};
+    document.querySelectorAll('[name^="return_items"][name$="[selected]"]').forEach(cb => {
+        if (!cb.checked) return;
+        const m = cb.name.match(/return_items\[(\d+)\]/); if (!m) return;
+        const pid = document.querySelector(`[name="return_items[${m[1]}][product_id]"]`)?.value;
+        const q   = parseInt(document.querySelector(`[name="return_items[${m[1]}][qty]"]`)?.value || '0');
+        if (pid) netChange[pid] = (netChange[pid] || 0) - q;
+    });
+    replacements.forEach(r => { netChange[r.product_id] = (netChange[r.product_id] || 0) + (parseInt(r.qty) || 0); });
+    if (!Object.values(netChange).some(v => v !== 0)) {
+        e.preventDefault();
+        showFlash("Same item and quantity — that's not an exchange. Lower the qty for a refund, raise it to collect more, or pick a different item.", 'error');
+        return;
+    }
     if (document.getElementById('delta-type-hidden').value === 'collect') {
         const m = document.querySelector('[name="payment_mode"]:checked')?.value;
         if (m !== '<?= PAY_METHOD_CASH ?>' && !document.getElementById('ref-field')?.value.trim()) {
