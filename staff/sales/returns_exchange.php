@@ -408,7 +408,18 @@ function getReturnTotal() {
     });
     return t;
 }
-function getNewTotal() { return replacements.reduce((s, r) => s + r.price * r.qty, 0); }
+// Per-replacement line total using the same Full/Half-box bulk rule as the POS
+// and the exchange server (exchange_process.php).
+function replLineTotal(r) {
+    const qty    = parseInt(r.qty) || 0;
+    const retail = parseFloat(r.price) || 0;
+    const bqf = parseInt(r.bulk_qty_full)  || 0, pfb = parseFloat(r.price_full_box) || 0;
+    const bqh = parseInt(r.bulk_qty_half)  || 0, phb = parseFloat(r.price_half_box) || 0;
+    if (bqf > 0 && qty >= bqf) return pfb + ((qty - bqf) * retail);
+    if (bqh > 0 && qty >= bqh) return phb + ((qty - bqh) * retail);
+    return qty * retail;
+}
+function getNewTotal() { return replacements.reduce((s, r) => s + replLineTotal(r), 0); }
 function recalcDelta() {
     const rd = document.getElementById('return-total-display'); if (!rd) return;
     const rt = getReturnTotal(), nt = getNewTotal(), delta = nt - rt;
@@ -447,16 +458,25 @@ function addReplacement() {
     p?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 function closeSearch() { document.getElementById('product-search-panel')?.classList.add('hidden'); pendingSlotIndex = null; }
-function pickReplacement(pid, name, price, stock) {
+function pickReplacement(pid, name, price, stock, tiers) {
     if (pendingSlotIndex === null) return;
     stock = parseInt(stock) || 0;
     if (stock < 1) { showFlash('"' + name + '" is out of stock.', 'error'); return; }
+    tiers = tiers || {};
+    const base = {
+        product_id: pid, name, price, stock,
+        bulk_qty_half:  parseInt(tiers.bulk_qty_half)  || 0,
+        price_half_box: parseFloat(tiers.price_half_box) || 0,
+        bulk_qty_full:  parseInt(tiers.bulk_qty_full)  || 0,
+        price_full_box: parseFloat(tiers.price_full_box) || 0,
+    };
     const idx = pendingSlotIndex;
     if (idx < replacements.length) {
-        const keepQty = Math.min(replacements[idx].qty || 1, stock);
-        replacements[idx] = { product_id: pid, name, price, stock, qty: keepQty };
+        base.qty = Math.min(replacements[idx].qty || 1, stock);
+        replacements[idx] = base;
     } else {
-        replacements.push({ product_id: pid, name, price, stock, qty: 1 });
+        base.qty = 1;
+        replacements.push(base);
     }
     pendingSlotIndex = null; closeSearch(); renderReplacements(); recalcDelta();
 }
@@ -517,7 +537,7 @@ function searchProducts() {
         .then(data => {
             if (!data.length) { res.innerHTML = '<p class="text-slate-300 text-xs font-bold p-3">No products found.</p>'; return; }
             res.innerHTML = data.map(p => `
-                <div onclick='pickReplacement(${p.id},${JSON.stringify(p.name)},${parseFloat(p.price)},${parseInt(p.total_qty)||0})'
+                <div onclick='pickReplacement(${p.id},${JSON.stringify(p.name)},${parseFloat(p.price)},${parseInt(p.total_qty)||0},{"bulk_qty_half":${parseInt(p.bulk_qty_half)||0},"price_half_box":${parseFloat(p.price_half_box)||0},"bulk_qty_full":${parseInt(p.bulk_qty_full)||0},"price_full_box":${parseFloat(p.price_full_box)||0}})'
                      class="flex items-center justify-between px-4 py-3 hover:bg-violet-50 rounded-xl cursor-pointer transition-colors">
                     <div><p class="font-bold text-slate-700 text-sm">${p.name}</p><p class="text-[10px] text-slate-400">${p.barcode||''} · ${parseInt(p.total_qty)||0} in stock</p></div>
                     <span class="font-black text-emerald-600 text-sm">₱${parseFloat(p.price).toFixed(2)}</span>

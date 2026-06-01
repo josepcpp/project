@@ -28,6 +28,7 @@ $refund_qty  = intval($_POST['qty']);
 $receipt_no  = trim($_POST['receipt_no'] ?? '');
 $disposition = $_POST['disposition'] ?? 'restock';
 $user_id     = $_SESSION['user_id'] ?? null;
+$username    = $_SESSION['username'] ?? 'unknown';
 $role        = strtolower($_SESSION['role'] ?? '');
 $is_admin    = in_array($role, ROLES_ADMIN_AND_UP);
 
@@ -59,10 +60,12 @@ try {
     $original_discount = floatval($sale['discount_amount'] ?? 0);
 
     // ── FETCH PRODUCT NAME ───────────────────────────────────────────────────
-    $pn = $conn->prepare("SELECT name FROM products WHERE id = ?");
+    $pn = $conn->prepare("SELECT name, barcode FROM products WHERE id = ?");
     $pn->bind_param("i", $product_id);
     $pn->execute();
-    $prod_name = $pn->get_result()->fetch_assoc()['name'] ?? 'Product';
+    $prow = $pn->get_result()->fetch_assoc();
+    $prod_name    = $prow['name'] ?? 'Product';
+    $prod_barcode = $prow['barcode'] ?? null;
 
     // ── RE-PRICING CALCULATION (shared by both paths) ────────────────────────
     $items_q = $conn->prepare("
@@ -143,7 +146,7 @@ try {
     }
 
     // Restock if applicable
-    if ($disposition === 'restock') {
+    if ($disposition === DISP_RESTOCK) {
         // RR-4: only restore status to ACTIVE when qty was 0 (auto-archived); don't touch deliberately-archived products
         $up_p = $conn->prepare(
             "UPDATE products
@@ -154,6 +157,21 @@ try {
         );
         $up_p->bind_param("ii", $refund_qty, $product_id);
         $up_p->execute();
+    }
+    // Disposed (not restocked) → log an APPROVED disposal so it isn't a "ghost".
+    // Stock is NOT touched (the unit was already deducted at the original sale).
+    elseif ($disposition === DISP_DISPOSE) {
+        $d_reason = DISPOSE_OTHER; // enum-safe; detail goes in notes
+        $d_notes  = "Disposed via customer refund (Receipt {$receipt_no})";
+        $d_status = DISPOSAL_APPROVED;
+        $dd = $conn->prepare("INSERT INTO product_disposals
+            (qty, product_id, requested_by, approved_by,
+             product_name, barcode, reason, notes, requested_username, approved_username, status, approved_at)
+            VALUES (?,?,?,?, ?,?,?,?,?,?,?, NOW())");
+        $dd->bind_param("iiiisssssss",
+            $refund_qty, $product_id, $user_id, $user_id,
+            $prod_name, $prod_barcode, $d_reason, $d_notes, $username, $username, $d_status);
+        $dd->execute();
     }
 
     // Update sale total

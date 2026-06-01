@@ -833,6 +833,90 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDashRej
 
 <?php endif; ?>
 
+<?php if (in_array($role, ROLES_ADMIN_AND_UP)):
+    // ── Disposed items (all disposals: inventory write-offs + refund-disposed) ──
+    $disp_tot = $conn->query(
+        "SELECT COUNT(*) AS cnt, COALESCE(SUM(pd.qty),0) AS units,
+                COALESCE(SUM(pd.qty * COALESCE(p.cost_price,0)),0) AS loss_value
+         FROM product_disposals pd
+         LEFT JOIN products p ON p.id = pd.product_id
+         WHERE pd.status = '" . DISPOSAL_APPROVED . "'"
+    );
+    $disp_stats = $disp_tot ? $disp_tot->fetch_assoc() : ['cnt'=>0,'units'=>0,'loss_value'=>0];
+    $disp_recent = $conn->query(
+        "SELECT pd.product_name, pd.barcode, pd.qty, pd.reason, pd.notes, pd.status,
+                pd.approved_username, pd.created_at,
+                (pd.notes LIKE '%refund%') AS from_refund
+         FROM product_disposals pd
+         ORDER BY pd.created_at DESC LIMIT 10"
+    );
+?>
+<!-- ── DISPOSED ITEMS ───────────────────────────────────────────────────── -->
+<div class="max-w-[1600px] mx-auto pb-6 animate-in">
+    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl p-8">
+        <div class="flex items-center gap-4 mb-6 flex-wrap">
+            <div class="w-10 h-10 bg-rose-100 rounded-2xl flex items-center justify-center text-rose-500">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+                <h4 class="font-black text-slate-800 text-sm">Disposed Items</h4>
+                <p class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Write-offs &amp; refund-disposed stock</p>
+            </div>
+            <div class="flex gap-6">
+                <div class="text-right">
+                    <p class="text-[9px] font-black text-slate-300 uppercase tracking-widest">Approved</p>
+                    <p class="font-black text-slate-700 text-lg"><?= intval($disp_stats['cnt']) ?> <span class="text-xs text-slate-400"><?= intval($disp_stats['units']) ?> units</span></p>
+                </div>
+                <div class="text-right">
+                    <p class="text-[9px] font-black text-slate-300 uppercase tracking-widest">Est. Loss (cost)</p>
+                    <p class="font-black text-rose-600 text-lg">₱<?= number_format(floatval($disp_stats['loss_value']), 2) ?></p>
+                </div>
+            </div>
+        </div>
+
+        <?php if ($disp_recent && $disp_recent->num_rows > 0): ?>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead>
+                    <tr class="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100">
+                        <th class="py-2 pr-3">Product</th>
+                        <th class="py-2 px-3 text-center">Qty</th>
+                        <th class="py-2 px-3">Reason</th>
+                        <th class="py-2 px-3">Source</th>
+                        <th class="py-2 px-3">By</th>
+                        <th class="py-2 pl-3 text-right">Date</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-50">
+                <?php while ($d = $disp_recent->fetch_assoc()): ?>
+                    <tr class="hover:bg-slate-50/50">
+                        <td class="py-2.5 pr-3">
+                            <p class="font-bold text-slate-700"><?= htmlspecialchars($d['product_name'] ?? '—') ?></p>
+                            <?php if (!empty($d['barcode'])): ?><code class="text-[10px] text-slate-400">#<?= htmlspecialchars($d['barcode']) ?></code><?php endif; ?>
+                        </td>
+                        <td class="py-2.5 px-3 text-center font-black text-slate-700"><?= intval($d['qty']) ?></td>
+                        <td class="py-2.5 px-3 text-slate-500"><?= htmlspecialchars($d['reason'] ?? '—') ?></td>
+                        <td class="py-2.5 px-3">
+                            <?php if (!empty($d['from_refund'])): ?>
+                                <span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 uppercase">Refund</span>
+                            <?php else: ?>
+                                <span class="text-[9px] font-black px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 uppercase">Inventory</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="py-2.5 px-3 text-slate-500">@<?= htmlspecialchars($d['approved_username'] ?? '—') ?></td>
+                        <td class="py-2.5 pl-3 text-right text-slate-400 text-xs"><?= date('M j, Y', strtotime($d['created_at'])) ?></td>
+                    </tr>
+                <?php endwhile; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php else: ?>
+            <p class="text-slate-400 text-sm font-bold text-center py-8">No disposed items on record.</p>
+        <?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
+
 <?php if (in_array($role, ROLES_ADMIN_AND_UP)): ?>
 <!-- ── EXPORT PANEL ──────────────────────────────────────────────────────── -->
 <div class="max-w-[1600px] mx-auto pb-10 animate-in">

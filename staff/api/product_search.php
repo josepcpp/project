@@ -20,7 +20,9 @@ $base_status = PRODUCT_ACTIVE;
 if ($mode === 'exchange') {
     // Only return in-stock products for exchange replacements
     $stmt = $conn->prepare("
-        SELECT MIN(p.id) AS id, p.name, p.barcode, MAX(p.price) AS price, SUM(p.quantity) AS total_qty
+        SELECT MIN(p.id) AS id, p.name, p.barcode, MAX(p.price) AS price, SUM(p.quantity) AS total_qty,
+               MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.price_half_box) AS price_half_box,
+               MAX(p.bulk_qty_full) AS bulk_qty_full, MAX(p.price_full_box) AS price_full_box
         FROM products p
         WHERE p.status = ? AND p.quantity > 0
           AND (p.expiry_date IS NULL OR p.expiry_date > CURDATE())
@@ -32,7 +34,9 @@ if ($mode === 'exchange') {
     $stmt->bind_param("sss", $base_status, $like, $like);
 } else {
     $stmt = $conn->prepare("
-        SELECT MIN(p.id) AS id, p.name, p.barcode, MAX(p.price) AS price, SUM(p.quantity) AS total_qty
+        SELECT MIN(p.id) AS id, p.name, p.barcode, MAX(p.price) AS price, SUM(p.quantity) AS total_qty,
+               MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.price_half_box) AS price_half_box,
+               MAX(p.bulk_qty_full) AS bulk_qty_full, MAX(p.price_full_box) AS price_full_box
         FROM products p
         WHERE p.status = ?
           AND (p.name LIKE ? OR p.barcode LIKE ?)

@@ -12,6 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $action    = $_POST['action'] ?? '';
 $refund_id = intval($_POST['refund_id']);
 $reviewer  = $_SESSION['user_id'] ?? null;
+$reviewer_name = $_SESSION['username'] ?? 'unknown';
 $role      = strtolower($_SESSION['role'] ?? '');
 $note      = trim($_POST['note'] ?? '');
 
@@ -86,10 +87,12 @@ if ($action === 'approve' || $action === 'override') {
         $original_discount = floatval($sale['discount_amount'] ?? 0);
 
         // Product name for logging
-        $pn = $conn->prepare("SELECT name FROM products WHERE id = ?");
+        $pn = $conn->prepare("SELECT name, barcode FROM products WHERE id = ?");
         $pn->bind_param("i", $product_id);
         $pn->execute();
-        $prod_name = $pn->get_result()->fetch_assoc()['name'] ?? 'Product';
+        $prow = $pn->get_result()->fetch_assoc();
+        $prod_name    = $prow['name'] ?? 'Product';
+        $prod_barcode = $prow['barcode'] ?? null;
 
         // Fetch sale items for re-pricing
         $iq = $conn->prepare("
@@ -148,6 +151,21 @@ if ($action === 'approve' || $action === 'override') {
             );
             $up_p->bind_param("ii", $refund_qty, $product_id);
             $up_p->execute();
+        }
+        // Disposed (not restocked) → log an APPROVED disposal so it isn't a "ghost".
+        // Stock is NOT touched (the unit was already deducted at the original sale).
+        elseif ($disposition === DISP_DISPOSE) {
+            $d_reason = DISPOSE_OTHER; // enum-safe; detail goes in notes
+            $d_notes  = "Disposed via customer refund (Refund #{$refund_id})";
+            $d_status = DISPOSAL_APPROVED;
+            $dd = $conn->prepare("INSERT INTO product_disposals
+                (qty, product_id, requested_by, approved_by,
+                 product_name, barcode, reason, notes, requested_username, approved_username, status, approved_at)
+                VALUES (?,?,?,?, ?,?,?,?,?,?,?, NOW())");
+            $dd->bind_param("iiiisssssss",
+                $refund_qty, $product_id, $reviewer, $reviewer,
+                $prod_name, $prod_barcode, $d_reason, $d_notes, $reviewer_name, $reviewer_name, $d_status);
+            $dd->execute();
         }
 
         // Update sale total
