@@ -144,16 +144,15 @@ try {
         ];
     }
 
-    // 3b. Reject a pure no-op exchange — same product(s) AND same quantities on
-    //     both sides (net change is zero everywhere). Different qty (refund/collect)
-    //     or a different product is allowed.
-    $net_change = [];
-    foreach ($validated_returns as $r)   $net_change[$r['product_id']] = ($net_change[$r['product_id']] ?? 0) - $r['qty'];
-    foreach ($validated_new_items as $n) $net_change[$n['product_id']] = ($net_change[$n['product_id']] ?? 0) + $n['qty'];
-    $has_net_change = false;
-    foreach ($net_change as $d) { if ($d !== 0) { $has_net_change = true; break; } }
-    if (!$has_net_change) {
-        throw new Exception("No net change — the replacement items and quantities are identical to what's being returned. Lower the quantity for a refund, raise it to collect, or pick a different item.");
+    // 3b. Replacements must be DIFFERENT products from the returned items.
+    //     (More of the same item = a new sale; fewer = a refund. An exchange swaps
+    //     for something different.)
+    $returned_ids = [];
+    foreach ($validated_returns as $r) $returned_ids[$r['product_id']] = true;
+    foreach ($validated_new_items as $n) {
+        if (isset($returned_ids[$n['product_id']])) {
+            throw new Exception("Replacement items must be different from the items being returned. To get more or fewer of the same item, use a refund or a new sale.");
+        }
     }
 
     // 4. EXC-1: Compute delta server-side — POST values for delta are IGNORED

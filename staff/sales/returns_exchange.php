@@ -408,6 +408,17 @@ function getReturnTotal() {
     });
     return t;
 }
+// product_ids of the currently-checked return items (replacements must differ from these)
+function getReturnedIds() {
+    const ids = new Set();
+    document.querySelectorAll('[name^="return_items"][name$="[selected]"]').forEach(cb => {
+        if (!cb.checked) return;
+        const m = cb.name.match(/return_items\[(\d+)\]/); if (!m) return;
+        const pid = document.querySelector(`[name="return_items[${m[1]}][product_id]"]`)?.value;
+        if (pid) ids.add(String(pid));
+    });
+    return ids;
+}
 // Per-replacement line total using the same Full/Half-box bulk rule as the POS
 // and the exchange server (exchange_process.php).
 function replLineTotal(r) {
@@ -462,6 +473,11 @@ function pickReplacement(pid, name, price, stock, tiers) {
     if (pendingSlotIndex === null) return;
     stock = parseInt(stock) || 0;
     if (stock < 1) { showFlash('"' + name + '" is out of stock.', 'error'); return; }
+    // Replacement must be a different item than what's being returned.
+    if (getReturnedIds().has(String(pid))) {
+        showFlash('Replacement must be a different item than what you\'re returning. For more/less of the same item, use Refund or a new sale.', 'error');
+        return;
+    }
     tiers = tiers || {};
     const base = {
         product_id: pid, name, price, stock,
@@ -558,20 +574,13 @@ document.getElementById('exchangeForm')?.addEventListener('submit', function(e) 
     if (!anyReturn) { e.preventDefault(); showFlash('Select at least one item to return.', 'error'); return; }
     if (!replacements.length) { e.preventDefault(); showFlash('Add at least one replacement item.', 'error'); return; }
 
-    // Block a pure no-op: same product(s) AND same quantities on both sides.
-    // Different qty (lower = refund, higher = collect) or a different product is allowed.
-    const netChange = {};
-    document.querySelectorAll('[name^="return_items"][name$="[selected]"]').forEach(cb => {
-        if (!cb.checked) return;
-        const m = cb.name.match(/return_items\[(\d+)\]/); if (!m) return;
-        const pid = document.querySelector(`[name="return_items[${m[1]}][product_id]"]`)?.value;
-        const q   = parseInt(document.querySelector(`[name="return_items[${m[1]}][qty]"]`)?.value || '0');
-        if (pid) netChange[pid] = (netChange[pid] || 0) - q;
-    });
-    replacements.forEach(r => { netChange[r.product_id] = (netChange[r.product_id] || 0) + (parseInt(r.qty) || 0); });
-    if (!Object.values(netChange).some(v => v !== 0)) {
+    // Replacements must be DIFFERENT products from the returned items.
+    // (Catches the case where a return item is checked AFTER a matching replacement was added.)
+    const returnedIds = getReturnedIds();
+    const clash = replacements.find(r => returnedIds.has(String(r.product_id)));
+    if (clash) {
         e.preventDefault();
-        showFlash("Same item and quantity — that's not an exchange. Lower the qty for a refund, raise it to collect more, or pick a different item.", 'error');
+        showFlash('"' + clash.name + '" is being returned — replacements must be different items. Use a refund or a new sale for the same item.', 'error');
         return;
     }
     if (document.getElementById('delta-type-hidden').value === 'collect') {
