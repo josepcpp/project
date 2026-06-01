@@ -104,7 +104,9 @@ try {
 
         // Lock the row so concurrent exchanges can't over-sell (also fixes POS-2 equivalent)
         $pq = $conn->prepare(
-            "SELECT name, quantity, price, status FROM products
+            "SELECT name, quantity, price, status,
+                    bulk_qty_half, bulk_qty_full, price_half_box, price_full_box
+             FROM products
              WHERE id = ? AND status = '" . PRODUCT_ACTIVE . "' LIMIT 1 FOR UPDATE"
         );
         $pq->bind_param("i", $product_id); $pq->execute();
@@ -113,8 +115,24 @@ try {
         if ($prod['quantity'] < $qty)
             throw new Exception("Insufficient stock for \"{$prod['name']}\" (need $qty, have {$prod['quantity']}).");
 
-        $unit_price = floatval($prod['price']);
-        $line_total = round($qty * $unit_price, 4);
+        // Apply the same bulk-tier rule the POS uses (pos_process.php):
+        //   qty ≥ full-box threshold → full-box price + extra pcs at retail
+        //   qty ≥ half-box threshold → half-box price + extra pcs at retail
+        //   otherwise                → flat retail × qty
+        $unit_price = floatval($prod['price']);          // base retail (list) price
+        $bqf = intval($prod['bulk_qty_full']  ?? 0);
+        $bqh = intval($prod['bulk_qty_half']  ?? 0);
+        $pfb = floatval($prod['price_full_box'] ?? 0);
+        $phb = floatval($prod['price_half_box'] ?? 0);
+
+        if ($bqf > 0 && $qty >= $bqf) {
+            $line_total = $pfb + (($qty - $bqf) * $unit_price);
+        } elseif ($bqh > 0 && $qty >= $bqh) {
+            $line_total = $phb + (($qty - $bqh) * $unit_price);
+        } else {
+            $line_total = $qty * $unit_price;
+        }
+        $line_total = round($line_total, 4);
         $total_new_value += $line_total;
 
         $validated_new_items[] = [
