@@ -181,19 +181,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             if ($dp) {
                 // old_price = current live selling price for this barcode (if any), else 0
                 $old_price = 0.0;
+                // Inherit the existing live bulk tiers for this barcode so the new lot
+                // carries the same bulk rule (FIFO only decides which lot is sold; the
+                // bulk price must be uniform across all active lots of a product).
+                $inh = ['bulk_qty_half' => 0, 'price_half_box' => 0.0, 'bulk_qty_full' => 0, 'price_full_box' => 0.0];
                 if (!empty($dp['barcode'])) {
                     $oq = $conn->prepare("SELECT price FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND price IS NOT NULL LIMIT 1");
                     $oq->bind_param("s", $dp['barcode']); $oq->execute();
                     $orow = $oq->get_result()->fetch_assoc();
                     if ($orow) $old_price = floatval($orow['price']);
+
+                    $tq = $conn->prepare("SELECT bulk_qty_half, price_half_box, bulk_qty_full, price_full_box
+                                          FROM products
+                                          WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "'
+                                            AND (bulk_qty_half > 0 OR bulk_qty_full > 0) LIMIT 1");
+                    $tq->bind_param("s", $dp['barcode']); $tq->execute();
+                    if ($trow = $tq->get_result()->fetch_assoc()) {
+                        $inh['bulk_qty_half']  = intval($trow['bulk_qty_half']);
+                        $inh['price_half_box'] = floatval($trow['price_half_box']);
+                        $inh['bulk_qty_full']  = intval($trow['bulk_qty_full']);
+                        $inh['price_full_box'] = floatval($trow['price_full_box']);
+                    }
                 }
                 $conn->begin_transaction();
                 try {
                     $ph = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
                     $ph->bind_param("idd", $pid, $old_price, $new_price); $ph->execute();
 
-                    $up = $conn->prepare("UPDATE products SET price = ?, status = '" . PRODUCT_ACTIVE . "', draft_reason = NULL WHERE id = ?");
-                    $up->bind_param("di", $new_price, $pid); $up->execute();
+                    // Activate the lot AND stamp it with the inherited bulk tiers.
+                    $up = $conn->prepare("UPDATE products SET price = ?, status = '" . PRODUCT_ACTIVE . "', draft_reason = NULL,
+                                          bulk_qty_half = ?, price_half_box = ?, bulk_qty_full = ?, price_full_box = ? WHERE id = ?");
+                    $up->bind_param("dididi", $new_price, $inh['bulk_qty_half'], $inh['price_half_box'], $inh['bulk_qty_full'], $inh['price_full_box'], $pid);
+                    $up->execute();
 
                     // Keep selling price uniform across all live lots of this barcode
                     if (!empty($dp['barcode'])) {
