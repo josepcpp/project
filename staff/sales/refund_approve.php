@@ -5,7 +5,7 @@ include '../../includes/admin_only.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header("Location: refund_management.php?tab=queue");
+    header("Location: returns_exchange.php?refunds=1");
     exit();
 }
 
@@ -16,7 +16,7 @@ $reviewer_name = $_SESSION['username'] ?? 'unknown';
 $role      = strtolower($_SESSION['role'] ?? '');
 $note      = trim($_POST['note'] ?? '');
 
-$back = "refund_management.php?tab=queue";
+$back = "returns_exchange.php?refunds=1";
 
 // ── REJECT ────────────────────────────────────────────────────────────────────
 if ($action === 'reject') {

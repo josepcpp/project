@@ -12,13 +12,13 @@ if (!in_array(strtolower($_SESSION['role'] ?? ''), [ROLE_STAFF, ROLE_ADMIN, ROLE
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header("Location: refund_management.php");
+    header("Location: returns_exchange.php");
     exit();
 }
 
 // C-01: CSRF validation
 if (empty($_POST['csrf_token']) || $_POST['csrf_token'] !== ($_SESSION['csrf_token'] ?? '')) {
-    header("Location: refund_management.php?error=" . urlencode("Invalid request. Please try again."));
+    header("Location: returns_exchange.php?error=" . urlencode("Invalid request. Please try again."));
     exit();
 }
 
@@ -32,8 +32,9 @@ $username    = $_SESSION['username'] ?? 'unknown';
 $role        = strtolower($_SESSION['role'] ?? '');
 $is_admin    = in_array($role, ROLES_ADMIN_AND_UP);
 
-$back_ok  = "refund_management.php?tab=sales&receipt_no=" . urlencode($receipt_no);
-$back_err = "refund_management.php?tab=sales&receipt_no=" . urlencode($receipt_no);
+// Return to the unified Returns & Exchange module (the new hub).
+$back_ok  = "returns_exchange.php?receipt=" . urlencode($receipt_no);
+$back_err = "returns_exchange.php?receipt=" . urlencode($receipt_no);
 
 if ($refund_qty <= 0) {
     header("Location: {$back_err}&error=" . urlencode("Return quantity must be greater than zero."));

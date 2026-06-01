@@ -58,8 +58,10 @@ $rq = $conn->query("
 ");
 if ($rq) while ($r = $rq->fetch_assoc()) $recent_sales[] = $r;
 
-// ── Admin: pending refund queue ───────────────────────────────────────────────
-$pending_refunds = [];
+// ── Admin: refund approval queue (pending + rejected) ─────────────────────────
+$is_super        = $role === ROLE_SUPERADMIN;
+$pending_refunds = [];   // pending + rejected rows shown in the queue
+$pending_count   = 0;    // pending-only count for the badge
 if ($is_admin) {
     $prq = $conn->query("
         SELECT r.*, s.receipt_no, p.name AS product_name, u.username AS requested_by_name
@@ -67,10 +69,12 @@ if ($is_admin) {
         JOIN sales s    ON r.sale_id    = s.id
         JOIN products p ON r.product_id = p.id
         LEFT JOIN users u ON r.requested_by = u.id
-        WHERE r.status = '" . REFUND_PENDING . "'
-        ORDER BY r.created_at ASC
+        WHERE r.status IN ('" . REFUND_PENDING . "', '" . REFUND_REJECTED . "')
+        ORDER BY FIELD(r.status, '" . REFUND_PENDING . "', '" . REFUND_REJECTED . "'), r.created_at ASC
     ");
     if ($prq) $pending_refunds = $prq->fetch_all(MYSQLI_ASSOC);
+    $pc = $conn->query("SELECT COUNT(*) AS c FROM refunds WHERE status = '" . REFUND_PENDING . "'");
+    $pending_count = intval($pc ? ($pc->fetch_assoc()['c'] ?? 0) : 0);
 }
 ?>
 
@@ -309,27 +313,41 @@ if ($is_admin) {
 
     <?php endif; ?>
 
-    <!-- ── ADMIN REFUND QUEUE ────────────────────────────────────────────── -->
+    <!-- ── ADMIN REFUND APPROVAL QUEUE ───────────────────────────────────── -->
     <?php if ($is_admin && !empty($pending_refunds)): ?>
     <div class="card-modern p-6">
         <div class="flex items-center justify-between mb-4">
-            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Pending Refund Approvals</p>
-            <span class="bg-amber-500 text-white text-[9px] font-black px-3 py-1 rounded-full"><?= count($pending_refunds) ?></span>
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Refund Approval Queue</p>
+            <?php if ($pending_count > 0): ?>
+            <span class="bg-amber-500 text-white text-[9px] font-black px-3 py-1 rounded-full"><?= $pending_count ?> pending</span>
+            <?php endif; ?>
         </div>
         <div class="space-y-3">
-        <?php foreach ($pending_refunds as $pr): ?>
-        <div class="flex flex-wrap items-center justify-between gap-3 bg-amber-50 border border-amber-100 rounded-2xl px-5 py-3">
+        <?php foreach ($pending_refunds as $pr):
+            $q_pending  = $pr['status'] === REFUND_PENDING;
+            $q_rejected = $pr['status'] === REFUND_REJECTED;
+            $q_reason   = $pr['reject_note'] ?? $pr['override_note'] ?? '';
+            $row_cls    = $q_rejected ? 'bg-rose-50 border-rose-100 opacity-90' : 'bg-amber-50 border-amber-100';
+        ?>
+        <div class="flex flex-wrap items-center justify-between gap-3 border rounded-2xl px-5 py-3 <?= $row_cls ?>">
             <div class="flex-1 min-w-0">
-                <p class="font-black text-slate-800 text-sm"><?= htmlspecialchars($pr['product_name']) ?></p>
+                <p class="font-black text-slate-800 text-sm">
+                    <?= htmlspecialchars($pr['product_name']) ?>
+                    <?php if ($q_rejected): ?><span class="ml-1 text-[9px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-600 uppercase">Rejected</span><?php endif; ?>
+                </p>
                 <p class="text-[10px] text-slate-400 font-bold mt-0.5">
                     Qty: <?= intval($pr['qty']) ?> ·
-                    <span class="<?= $pr['disposition'] === 'restock' ? 'text-emerald-600' : 'text-rose-500' ?>"><?= ucfirst($pr['disposition']) ?></span>
+                    <span class="<?= $pr['disposition'] === DISP_RESTOCK ? 'text-emerald-600' : 'text-rose-500' ?>"><?= ucfirst($pr['disposition']) ?></span>
                     · Receipt: <?= htmlspecialchars($pr['receipt_no']) ?>
                     · by @<?= htmlspecialchars($pr['requested_by_name'] ?? '?') ?>
                 </p>
+                <?php if ($q_rejected && $q_reason): ?>
+                <p class="text-[10px] text-rose-400 italic mt-0.5">Reason: <?= htmlspecialchars($q_reason) ?></p>
+                <?php endif; ?>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
                 <span class="font-black text-amber-600">₱<?= number_format($pr['amount_refunded'], 2) ?></span>
+                <?php if ($q_pending): ?>
                 <form method="POST" action="refund_approve.php">
                     <?= csrf_field() ?>
                     <input type="hidden" name="action"    value="approve">
@@ -350,6 +368,19 @@ if ($is_admin) {
                         Reject
                     </button>
                 </form>
+                <?php elseif ($q_rejected && $is_super): ?>
+                <form method="POST" action="refund_approve.php" class="flex gap-2 items-center">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="action"    value="override">
+                    <input type="hidden" name="refund_id" value="<?= $pr['id'] ?>">
+                    <input type="text" name="note" placeholder="Override note (optional)" class="input-modern text-xs py-2 w-36">
+                    <button type="submit"
+                            onclick="return confirm('Override and process this rejected refund of ₱<?= number_format($pr['amount_refunded'], 2) ?>?')"
+                            class="bg-amber-500 hover:bg-amber-600 text-white font-black text-xs px-4 py-2 rounded-xl uppercase transition-all">
+                        Override
+                    </button>
+                </form>
+                <?php endif; ?>
             </div>
         </div>
         <?php endforeach; ?>

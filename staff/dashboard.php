@@ -140,7 +140,7 @@ if ($role === ROLE_STAFF):
             <p class="<?= $low_count > 0 ? 'text-red-500' : 'text-slate-400' ?> text-[10px] font-black uppercase tracking-widest mb-1">Low Stock Alerts</p>
             <p class="text-2xl font-black <?= $low_count > 0 ? 'text-red-700' : 'text-slate-800' ?>"><?= $low_count ?> <span class="text-sm font-bold opacity-30 italic">items</span></p>
         </a>
-        <a href="sales/refund_management.php?tab=queue" class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-7 hover:shadow-lg transition-all group">
+        <a href="sales/returns_exchange.php?refunds=1" class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-7 hover:shadow-lg transition-all group">
             <div class="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                 <svg class="w-5 h-5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
             </div>
@@ -336,7 +336,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                     <?php if ($dr_pending_ct > 0): ?>
                     <span class="bg-rose-500 text-white text-[9px] font-black px-3 py-1 rounded-full"><?= $dr_pending_ct ?> pending</span>
                     <?php endif; ?>
-                    <a href="sales/refund_management.php?tab=queue" class="text-[9px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl hover:bg-rose-100 transition-all uppercase tracking-widest border border-rose-100">Queue →</a>
+                    <a href="sales/returns_exchange.php?refunds=1" class="text-[9px] font-black text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl hover:bg-rose-100 transition-all uppercase tracking-widest border border-rose-100">Queue →</a>
                 </div>
             </div>
             <div class="divide-y divide-slate-50">
@@ -447,7 +447,7 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                         <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
                     </div>
                     <?php else: ?>
-                    <a href="sales/refund_management.php?tab=queue" onclick="event.stopPropagation()" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest flex-shrink-0">View →</a>
+                    <a href="sales/returns_exchange.php?refunds=1" onclick="event.stopPropagation()" class="text-[9px] font-black text-amber-500 hover:underline uppercase tracking-widest flex-shrink-0">View →</a>
                     <?php endif; ?>
                 </div>
 
