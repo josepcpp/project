@@ -27,6 +27,11 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
     $batch = $bq->get_result()->fetch_assoc();
     if (!$batch) throw new Exception("Batch #$batch_id not found.");
 
+    // Idempotency guard: a completed batch was already pushed — never stock it twice.
+    if ($batch['status'] === 'completed') {
+        throw new Exception("Batch #$batch_id was already pushed to inventory.");
+    }
+
     // Load items with base_price (supplier cost) already set by validator
     $iq = $conn->prepare("SELECT * FROM receiving_items WHERE batch_id = ? ORDER BY id ASC");
     $iq->bind_param("i", $batch_id);

@@ -104,7 +104,8 @@ $result = $stmt->get_result();
     <input
       type="text"
       name="search"
-      placeholder="Search name or barcode..."
+      data-live="#prodRows"
+      placeholder="Search name…"
       value="<?= htmlspecialchars($search) ?>"
       class="border rounded-lg px-4 py-2 w-64
              focus:ring-2 focus:ring-primary transition"
@@ -132,6 +133,7 @@ $result = $stmt->get_result();
   <!-- 📦 PRODUCT TABLE -->
   <div class="overflow-x-auto">
     <table class="table w-full">
+      <thead>
       <tr>
         <th>Name</th>
         <th>Barcode</th>
@@ -140,10 +142,12 @@ $result = $stmt->get_result();
         <th>Price</th>
         <th>Action</th>
       </tr>
+      </thead>
+      <tbody id="prodRows">
 
       <?php while ($p = $result->fetch_assoc()): ?>
       <tr class="hover:bg-slate-50 transition">
-        <td><?= htmlspecialchars($p['name']) ?></td>
+        <td class="live-name"><?= htmlspecialchars($p['name']) ?></td>
         <td><?= htmlspecialchars($p['barcode']) ?></td>
         <td><?= htmlspecialchars($p['category']) ?></td>
         <td><?= $p['quantity'] ?></td>
@@ -169,6 +173,7 @@ $result = $stmt->get_result();
         </td>
       </tr>
       <?php endif; ?>
+      </tbody>
     </table>
   </div>
 

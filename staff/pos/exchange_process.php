@@ -21,17 +21,17 @@ $username = $_SESSION['username'] ?? 'unknown';
 
 $_ex_role = strtolower($_SESSION['role'] ?? '');
 if (!in_array($_ex_role, [ROLE_STAFF, ROLE_ADMIN, ROLE_OWNER, ROLE_SUPERADMIN])) {
-    header("Location: exchange.php?error=" . urlencode("Insufficient permissions."));
+    header("Location: ../sales/returns_exchange.php?error=" . urlencode("Insufficient permissions."));
     exit();
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header("Location: exchange.php");
+    header("Location: ../sales/returns_exchange.php");
     exit();
 }
 
 // SEC-1: Reject forged cross-origin POST requests
-csrf_verify('exchange.php');
+csrf_verify('../sales/returns_exchange.php');
 
 $sale_id      = intval($_POST['sale_id'] ?? 0);
 $receipt_no   = trim($_POST['receipt_no'] ?? '');
@@ -46,7 +46,7 @@ $new_items    = $_POST['new_items']    ?? [];
 $selected_returns = array_filter($return_items, fn($r) => !empty($r['selected']));
 
 if (!$sale_id || empty($selected_returns) || empty($new_items)) {
-    header("Location: exchange.php?error=" . urlencode("Invalid exchange submission."));
+    header("Location: ../sales/returns_exchange.php?error=" . urlencode("Invalid exchange submission."));
     exit();
 }
 
@@ -211,6 +211,6 @@ try {
 
 } catch (Throwable $e) {
     $conn->rollback();
-    header("Location: exchange.php?step=1&receipt=" . urlencode($receipt_no) . "&error=" . urlencode($e->getMessage()));
+    header("Location: ../sales/returns_exchange.php?step=1&receipt=" . urlencode($receipt_no) . "&error=" . urlencode($e->getMessage()));
     exit();
 }

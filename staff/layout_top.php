@@ -58,7 +58,7 @@ $titles = [
     // Phase 4 — Procurement Pipeline
     'receive_batch.php'       => 'Receive Stock',
     'receive_items.php'       => 'Encode Items',
-    'batches_pending.php'     => 'Pending Batches',
+    'batches_pending.php'     => 'Create Vouchers',
     'validator_request.php'   => 'Validator Request',
     'validate_batch.php'      => 'Validate Batches',
     'validate_items.php'      => 'Price Validation',
@@ -241,7 +241,7 @@ if ($role === ROLE_STAFF) {
 } elseif (in_array($role, ROLES_ADMIN_OWNER)) {
     $nav_sections = [
         'Overview'       => ['dashboard.php'],
-        'Sales'          => ['pos.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
+        'Sales'          => ['pos.php', 'discount.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
         'Procurement'    => $pipeline_steps,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
@@ -249,7 +249,7 @@ if ($role === ROLE_STAFF) {
 } else { // superadmin
     $nav_sections = [
         'Overview'       => ['dashboard.php'],
-        'Sales'          => ['pos.php', 'discount.php', 'customer_groups.php', 'bundles.php'],
+        'Sales'          => ['pos.php', 'discount.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
         'Procurement'    => $pipeline_steps,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
@@ -293,6 +293,10 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
         .collapsed .nav-item { justify-content: center; margin: 4px 12px; }
         /* Explicit icon sizing — prevents external CSS from collapsing SVG icons to 0/tiny */
         .nav-item svg { display: block; width: 1.25rem !important; height: 1.25rem !important; flex-shrink: 0; }
+        /* Hide native up/down spinner arrows on all number inputs (UI only — typing/values unchanged) */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; appearance: textfield; }
     </style>
 </head>
 <body>
@@ -385,6 +389,24 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
                     </div>
                     <div id="notif-list" class="max-h-80 overflow-y-auto divide-y divide-slate-50">
                         <div class="px-4 py-6 text-center text-slate-400 text-xs font-bold">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Subtle "new notification arrived" pop-up (shown by the badge poller) -->
+            <style>
+                #notif-pop { transition: opacity .3s ease, transform .3s ease; opacity: 0; transform: translateY(-8px); }
+                #notif-pop.notif-pop-show { opacity: 1; transform: translateY(0); }
+                #notif-pop-msg { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+            </style>
+            <div id="notif-pop" class="hidden fixed top-20 right-8 z-[450] w-72 cursor-pointer" onclick="openNotifFromPop()">
+                <div class="bg-white border border-slate-200 shadow-xl rounded-2xl px-4 py-3 flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-full bg-rose-100 text-rose-500 flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+                    </div>
+                    <div class="min-w-0">
+                        <p class="text-[10px] font-black uppercase tracking-widest text-rose-500">New notification</p>
+                        <p id="notif-pop-msg" class="text-xs font-bold text-slate-700 leading-snug">You have a new notification.</p>
                     </div>
                 </div>
             </div>
@@ -559,6 +581,64 @@ function toggleSidebar() {
     document.getElementById('main-content').classList.toggle('expanded');
 }
 
+// ── LIVE SEARCH FILTER (client-side, name-only, contains-match) ───────────────
+// Any <input data-live="#rowsContainer"> instantly hides non-matching rows as you
+// type. It matches against each row's ".live-name" cell (name only). Enter still
+// submits the form → full server-side search of the whole dataset (the fallback).
+// Delegated on document, so it keeps working after every SPA page swap.
+document.addEventListener('input', function (e) {
+    const input = e.target;
+    if (!input || !input.matches || !input.matches('[data-live]')) return;
+
+    const container = document.querySelector(input.getAttribute('data-live'));
+    if (!container) return;
+
+    const q    = input.value.trim().toLowerCase();
+    const rows = container.querySelectorAll(':scope > tr');
+    let shown  = 0;
+    let lastMatched = true;   // tracks the most recent filterable row's result
+
+    rows.forEach(function (row) {
+        if (row.classList.contains('live-empty')) return;       // skip our own message row
+
+        // Detail/sub rows follow their parent: hide if parent didn't match,
+        // otherwise leave their own (collapsed) state untouched.
+        if (row.hasAttribute('data-live-detail')) {
+            row.style.display = (q !== '' && !lastMatched) ? 'none' : '';
+            return;
+        }
+
+        const nameEl = row.querySelector('.live-name');
+        if (!nameEl) {                                          // header/placeholder row
+            row.style.display = (q !== '') ? 'none' : '';
+            return;
+        }
+
+        const match = q === '' || nameEl.textContent.toLowerCase().indexOf(q) !== -1;
+        row.style.display = match ? '' : 'none';
+        lastMatched = match;
+        if (match) shown++;
+    });
+
+    // Manage a single "no matches in loaded rows" message row
+    let empty = container.querySelector('tr.live-empty');
+    if (q !== '' && shown === 0) {
+        if (!empty) {
+            empty = document.createElement('tr');
+            empty.className = 'live-empty';
+            const td = document.createElement('td');
+            td.colSpan = 99;
+            td.className = 'text-center text-slate-400 font-bold text-xs py-4';
+            empty.appendChild(td);
+            container.appendChild(empty);
+        }
+        empty.firstChild.textContent = 'No matches in loaded rows — press Enter to search all.';
+        empty.style.display = '';
+    } else if (empty) {
+        empty.style.display = 'none';
+    }
+});
+
 // ── NOTIFICATION BELL ─────────────────────────────────────────────────────────
 let _notifOpen = false;
 function toggleNotifDropdown() {
@@ -619,6 +699,7 @@ function refreshNotifBadge(forceCount) {
 }
 function updateNotifBadge(count) {
     const badge = document.getElementById('notif-badge');
+    window._lastNotifCount = count;                   // keep the poller's tracker in sync
     if (!badge) return;
     if (count > 0) {
         badge.textContent = Math.min(count, 99);
@@ -627,6 +708,76 @@ function updateNotifBadge(count) {
         badge.classList.add('hidden');
     }
 }
+
+// ── Subtle "new notification" pop-up ──────────────────────────────────────────
+function showNotifPop(message) {
+    var pop = document.getElementById('notif-pop');
+    if (!pop) return;
+    var msgEl = document.getElementById('notif-pop-msg');
+    if (msgEl) msgEl.textContent = message || 'You have a new notification.';
+    pop.classList.remove('hidden');
+    pop.classList.remove('notif-pop-show'); void pop.offsetWidth;   // restart transition
+    pop.classList.add('notif-pop-show');
+    clearTimeout(window._notifPopTimer);
+    window._notifPopTimer = setTimeout(hideNotifPop, 5000);
+}
+function hideNotifPop() {
+    var pop = document.getElementById('notif-pop');
+    if (!pop) return;
+    pop.classList.remove('notif-pop-show');
+    setTimeout(function () { pop.classList.add('hidden'); }, 300);  // wait for fade-out
+}
+function showNotifPopLatest() {
+    fetch('/project/staff/api/notifications.php?action=list', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function (r) {
+            var ct = r.headers.get('content-type') || '';
+            return (r.ok && ct.indexOf('application/json') !== -1) ? r.json() : null;
+        })
+        .then(function (rows) { showNotifPop(rows && rows.length ? rows[0].message : null); })
+        .catch(function () { showNotifPop(null); });
+}
+function openNotifFromPop() {
+    hideNotifPop();
+    if (typeof toggleNotifDropdown === 'function' && !_notifOpen) toggleNotifDropdown();
+}
+
+// ── REALTIME: notification badge polling ──────────────────────────────────────
+// Safest live-update: only refreshes the bell badge count. It NEVER re-renders
+// page content, so it can't wipe inputs, close modals, or reset scroll.
+(function () {
+    var POLL_MS = 15000;
+    // Baseline = whatever the server already rendered, so we don't pop for
+    // notifications that were already unread when the page loaded.
+    (function () {
+        var b = document.getElementById('notif-badge');
+        window._lastNotifCount = (b && !b.classList.contains('hidden')) ? (parseInt(b.textContent, 10) || 0) : 0;
+    })();
+
+    function safeBadgePoll() {
+        if (document.hidden) return;                 // pause when the tab isn't visible
+        fetch('/project/staff/api/notifications.php?action=count', {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(function (r) {
+            // If the session expired, the server returns a redirect/HTML, not JSON.
+            var ct = r.headers.get('content-type') || '';
+            return (r.ok && ct.indexOf('application/json') !== -1) ? r.json() : null;
+        })
+        .then(function (d) {
+            if (!d || typeof d.count === 'undefined') return;
+            var prev = (typeof window._lastNotifCount === 'number') ? window._lastNotifCount : d.count;
+            if (d.count > prev) showNotifPopLatest();   // count went up → something new arrived
+            updateNotifBadge(d.count);                  // also refreshes window._lastNotifCount
+        })
+        .catch(function () {});                       // silent on network blips
+    }
+    if (window._notifBadgeTimer) clearInterval(window._notifBadgeTimer);
+    window._notifBadgeTimer = setInterval(safeBadgePoll, POLL_MS);
+    // Refresh immediately when the tab regains focus (catch up on what was missed)
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) safeBadgePoll();
+    });
+})();
 
 // ── IDLE SESSION WARNING (M-01) ───────────────────────────────────────────────
 // Server timeout = 7200s (2 hrs). Warn at 1:55:00, auto-redirect at 2:00:00.

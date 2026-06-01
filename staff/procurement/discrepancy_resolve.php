@@ -136,6 +136,10 @@ $pq = $conn->query(
      LEFT JOIN receiving_items ri ON ri.batch_id = rb.id
      LEFT JOIN users u ON u.id = rb.receiver_id
      WHERE rb.status = 'on_hold'
+       AND NOT EXISTS (
+           SELECT 1 FROM delivery_damage_tickets d
+           WHERE d.batch_id = rb.id AND d.status = 'pending'
+       )
      GROUP BY rb.id
      ORDER BY rb.validated_at ASC"
 );

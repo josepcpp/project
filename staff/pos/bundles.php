@@ -13,6 +13,9 @@ $msg    = '';
 $edit_bundle = null;
 $edit_id     = intval($_GET['edit'] ?? 0);
 
+// Maximum number of bundle deals that may exist at once. Change here to adjust.
+$MAX_BUNDLES = 10;
+
 // ── POST HANDLERS ──────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -28,6 +31,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($name === '')    { $msg = "<p class='msg-error'>Bundle name is required.</p>"; }
         elseif ($price <= 0) { $msg = "<p class='msg-error'>Bundle price must be greater than zero.</p>"; }
         elseif (count($pids) < 2) { $msg = "<p class='msg-error'>A bundle must include at least 2 products.</p>"; }
+        elseif ($bid === 0 && intval($conn->query("SELECT COUNT(*) AS c FROM bundles")->fetch_assoc()['c'] ?? 0) >= $MAX_BUNDLES) {
+            $msg = "<p class='msg-error'>Bundle limit reached (max {$MAX_BUNDLES}). Remove or disable an existing bundle before creating a new one.</p>";
+        }
         else {
             $uid = $_SESSION['user_id'] ?? null;
             $conn->begin_transaction();
@@ -106,11 +112,25 @@ if ($edit_id > 0) {
 
 // Load all bundles with their items for the list
 $bundles_q = $conn->query("SELECT b.*, GROUP_CONCAT(CONCAT(bi.qty,'× ',p.name) ORDER BY p.name SEPARATOR ', ') AS item_summary FROM bundles b LEFT JOIN bundle_items bi ON bi.bundle_id=b.id LEFT JOIN products p ON p.id=bi.product_id GROUP BY b.id ORDER BY b.id DESC");
+$bundle_count = $bundles_q ? $bundles_q->num_rows : 0;
+$at_limit     = $bundle_count >= $MAX_BUNDLES;
 ?>
 
 <div class="max-w-5xl mx-auto pb-20 animate-in space-y-10">
 
+    <!-- Promotions / Bundle Deals tabs -->
+    <div class="flex gap-1 bg-slate-100 rounded-2xl p-1 w-fit">
+        <a href="discount.php" class="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-slate-500 hover:text-slate-700">Promotions</a>
+        <a href="bundles.php" class="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all bg-white shadow text-slate-800">Bundle Deals</a>
+    </div>
+
     <?php if ($msg): ?><div><?= $msg ?></div><?php endif; ?>
+
+    <?php if ($at_limit && !$edit_bundle): ?>
+    <div class="bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl px-5 py-4 text-sm font-bold">
+        Bundle limit reached (<?= $bundle_count ?>/<?= $MAX_BUNDLES ?>). Remove or disable an existing bundle before creating a new one.
+    </div>
+    <?php endif; ?>
 
     <!-- ── CREATE / EDIT BUNDLE ───────────────────────────────────────────── -->
     <div class="card-modern shadow-xl">
@@ -199,9 +219,13 @@ $bundles_q = $conn->query("SELECT b.*, GROUP_CONCAT(CONCAT(bi.qty,'× ',p.name) 
             </div>
 
             <div class="flex gap-4 mt-8 pt-6 border-t border-slate-100">
-                <button type="submit" class="btn-pos-primary px-10 shadow-lg shadow-orange-200">
-                    <?= $edit_bundle ? 'UPDATE BUNDLE' : 'CREATE BUNDLE' ?>
-                </button>
+                <?php if (!$edit_bundle && $at_limit): ?>
+                    <button type="button" disabled class="btn-pos-primary px-10 opacity-50 cursor-not-allowed">LIMIT REACHED (<?= $MAX_BUNDLES ?>)</button>
+                <?php else: ?>
+                    <button type="submit" class="btn-pos-primary px-10 shadow-lg shadow-orange-200">
+                        <?= $edit_bundle ? 'UPDATE BUNDLE' : 'CREATE BUNDLE' ?>
+                    </button>
+                <?php endif; ?>
                 <?php if ($edit_bundle): ?>
                     <a href="bundles.php" class="btn-secondary px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest">Cancel</a>
                 <?php endif; ?>
@@ -212,7 +236,7 @@ $bundles_q = $conn->query("SELECT b.*, GROUP_CONCAT(CONCAT(bi.qty,'× ',p.name) 
     <!-- ── BUNDLE LIST ────────────────────────────────────────────────────── -->
     <div class="bg-white rounded-[3rem] border border-slate-100 shadow-xl overflow-hidden">
         <div class="p-6 bg-slate-50 border-b border-slate-100">
-            <h4 class="font-black text-slate-800 text-[11px] uppercase tracking-widest">Active Bundle Deals</h4>
+            <h4 class="font-black text-slate-800 text-[11px] uppercase tracking-widest">Active Bundle Deals (<?= $bundle_count ?> / <?= $MAX_BUNDLES ?>)</h4>
         </div>
 
         <table class="table-modern text-left w-full">

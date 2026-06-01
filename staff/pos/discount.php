@@ -70,6 +70,13 @@ $today = date('Y-m-d');
 ?>
 
 <div class="max-w-7xl mx-auto pb-20 animate-in space-y-10">
+
+    <!-- Promotions / Bundle Deals tabs -->
+    <div class="flex gap-1 bg-slate-100 rounded-2xl p-1 w-fit">
+        <a href="discount.php" class="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all bg-white shadow text-slate-800">Promotions</a>
+        <a href="bundles.php" class="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-slate-500 hover:text-slate-700">Bundle Deals</a>
+    </div>
+
     <?= $msg ?>
 
     <!-- ── CREATE NEW PROMO ────────────────────────────────────────────────────── -->

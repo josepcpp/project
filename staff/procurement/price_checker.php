@@ -308,7 +308,7 @@ include '../layout_top.php';
             <input type="hidden" name="tab" value="monitor">
             <div class="flex-1 min-w-[220px]">
                 <label class="label-modern">Search</label>
-                <input type="text" name="q" value="<?= htmlspecialchars($monitor_search) ?>" placeholder="Item name or barcode" class="input-modern text-sm w-full">
+                <input type="text" name="q" value="<?= htmlspecialchars($monitor_search) ?>" data-live="#monitorRows" placeholder="Type to filter by item name…" class="input-modern text-sm w-full">
             </div>
             <button type="submit" class="btn-pos-primary px-6 py-2.5 text-xs font-black uppercase tracking-widest">Search</button>
             <?php if ($monitor_search !== ''): ?>
@@ -332,7 +332,7 @@ include '../layout_top.php';
                         <th></th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="monitorRows">
                 <?php foreach ($monitor_items as $m):
                     $delivered = floatval($m['delivered']);
                     $recent    = $m['recent'];                       // null when only one delivery
@@ -351,7 +351,7 @@ include '../layout_top.php';
                     }
                 ?>
                     <tr class="<?= $row_cls ?>">
-                        <td class="font-bold text-slate-700"><?= htmlspecialchars($m['description'] ?? '—') ?></td>
+                        <td class="live-name font-bold text-slate-700"><?= htmlspecialchars($m['description'] ?? '—') ?></td>
                         <td class="font-mono text-xs text-slate-400"><?= htmlspecialchars($m['barcode'] ?? '—') ?></td>
                         <td class="text-right text-slate-500"><?= $has_prev ? '₱' . number_format(floatval($recent), 2) : '—' ?></td>
                         <td class="text-right font-black text-slate-800">₱<?= number_format($delivered, 2) ?></td>

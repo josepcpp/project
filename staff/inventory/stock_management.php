@@ -285,7 +285,8 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                     <div class="flex-1 relative">
                         <svg class="h-6 w-6 absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                         <input type="text" name="search" id="kw-input" value="<?= htmlspecialchars($search) ?>"
-                               placeholder="Name or barcode..."
+                               data-live="#stockRows"
+                               placeholder="Type to filter by name…"
                                class="w-full bg-transparent border-none py-4 pl-12 pr-4 outline-none font-bold text-slate-600">
                     </div>
                     <button type="submit" class="bg-slate-900 text-white px-8 rounded-[1.5rem] font-black uppercase text-xs tracking-widest hover:bg-emerald-600 transition-all">Search</button>
@@ -635,7 +636,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                     <th class="px-6 py-7 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Expiry</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="stockRows">
 
             <?php if (!empty($batch_filter)): ?>
             <?php /* ── BATCH MODE: one row per product, supplier shown inline ─── */ ?>
@@ -665,7 +666,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                 ?>
                 <tr class="hover:bg-slate-50/50 transition-all border-b border-slate-50">
                     <td class="px-10 py-7">
-                        <p class="font-bold text-slate-800 text-lg tracking-tight leading-tight"><?= htmlspecialchars($p['name']) ?></p>
+                        <p class="live-name font-bold text-slate-800 text-lg tracking-tight leading-tight"><?= htmlspecialchars($p['name']) ?></p>
                         <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded shadow-sm mt-1 inline-block">#<?= htmlspecialchars($p['barcode']) ?></code>
                         <?php if (!empty($p['supplier_display'])): ?>
                         <p class="text-[10px] text-slate-400 font-bold mt-0.5"><?= htmlspecialchars($p['supplier_display']) ?></p>
@@ -746,7 +747,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                 <!-- Master product row -->
                 <tr class="hover:bg-slate-50/40 transition-all border-b border-slate-50 cursor-pointer" onclick="toggleSuppliers('<?= $g['id'] ?>')">
                     <td class="px-10 py-6">
-                        <p class="font-bold text-slate-800 text-lg tracking-tight leading-tight"><?= htmlspecialchars($g['name']) ?></p>
+                        <p class="live-name font-bold text-slate-800 text-lg tracking-tight leading-tight"><?= htmlspecialchars($g['name']) ?></p>
                         <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded shadow-sm mt-1 inline-block">#<?= htmlspecialchars($g['barcode']) ?></code>
                         <button type="button" id="sup-btn-<?= $g['id'] ?>"
                                 onclick="event.stopPropagation(); toggleSuppliers('<?= $g['id'] ?>')"
@@ -792,7 +793,7 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                 </tr>
 
                 <!-- Collapsible supplier detail row -->
-                <tr id="<?= $row_id ?>" class="hidden border-b border-slate-100">
+                <tr id="<?= $row_id ?>" data-live-detail class="hidden border-b border-slate-100">
                     <td colspan="5" class="px-10 pb-5 pt-0">
                         <div class="bg-slate-50 border border-slate-100 rounded-2xl overflow-hidden">
                             <table class="w-full text-left text-xs">

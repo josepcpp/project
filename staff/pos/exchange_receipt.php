@@ -6,7 +6,7 @@ include '../../config/db.php';
 include '../layout_top.php';
 
 if (empty($_SESSION['exchange_done'])) {
-    header("Location: exchange.php");
+    header("Location: ../sales/returns_exchange.php");
     exit();
 }
 

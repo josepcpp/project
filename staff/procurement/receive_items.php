@@ -93,7 +93,14 @@ include '../layout_top.php';
             border-radius: 6px;
         }
         @keyframes scanPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); } 50% { box-shadow: 0 0 0 4px rgba(16,185,129,.25); } }
-        #scan-box.scan-active { animation: scanPulse 1.4s ease-in-out infinite; }
+        #scan-box { outline: 2px solid transparent; transition: outline-color .2s ease, opacity .2s ease; opacity: .65; }
+        #scan-box.scan-active { animation: scanPulse 1.4s ease-in-out infinite; outline-color: #10b981; opacity: 1; }
+
+        /* "Synced from previous data" pop-up */
+        #sync-pop { position: fixed; top: 6rem; right: 2.5rem; z-index: 400; transform: translateX(130%); transition: transform .45s cubic-bezier(.2,.8,.2,1); }
+        #sync-pop.show { transform: translateX(0); }
+        @keyframes fieldSync { 0% { background-color: #a7f3d0; } 100% { background-color: transparent; } }
+        .field-synced { animation: fieldSync 1.5s ease-out; }
     </style>
     <div class="card-modern p-8">
         <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -104,15 +111,31 @@ include '../layout_top.php';
         </div>
 
         <!-- ── Scan Station ─────────────────────────────────────────────── -->
-        <div id="scan-box" class="bg-slate-900 rounded-xl px-4 py-2.5 flex items-center gap-3 mb-6 scan-active">
+        <div id="scan-box" class="bg-slate-900 rounded-xl px-4 py-2.5 flex items-center gap-3 mb-6 cursor-pointer"
+             onclick="document.getElementById('scan-input').focus()">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 5v14M7 5v14M11 5v14M15 5v14M19 5v14"/>
             </svg>
             <input type="text" id="scan-input" autocomplete="off" inputmode="numeric"
                    placeholder="Scan to add — barcode then Enter…"
                    class="flex-1 min-w-0 bg-transparent text-white text-sm font-bold placeholder-slate-500 focus:outline-none"
+                   onfocus="document.getElementById('scan-box').classList.add('scan-active'); setHint('Active Barcode Entry','ok');"
+                   onblur="document.getElementById('scan-box').classList.remove('scan-active'); setHint('Click and Hover to scan','idle');"
                    onkeydown="if(event.key==='Enter'){event.preventDefault();handleScan();}">
-            <span id="scan-hint" class="text-[11px] font-black text-slate-400 whitespace-nowrap">Ready</span>
+            <span id="scan-hint" class="text-[11px] font-black text-slate-400 whitespace-nowrap">Click to scan</span>
+        </div>
+
+        <!-- "Synced from previous data" pop-up -->
+        <div id="sync-pop">
+            <div class="bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-500 max-w-xs">
+                <div class="bg-emerald-500 p-1.5 rounded-lg text-white flex-shrink-0">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                </div>
+                <div class="min-w-0">
+                    <p class="text-[10px] font-black uppercase tracking-widest text-emerald-400">Synced from previous data</p>
+                    <p id="sync-pop-name" class="font-bold text-sm truncate">Description filled — no need to type it.</p>
+                </div>
+            </div>
         </div>
 
         <form method="POST" action="receive_process.php" id="itemsForm" onsubmit="return beforeSubmit()">
@@ -166,13 +189,44 @@ include '../layout_top.php';
                 <button type="submit" name="submit_action" value="save" class="btn-pos-primary px-8 py-3 text-sm font-black uppercase tracking-widest">
                     Save Items
                 </button>
-                <button type="submit" name="submit_action" value="submit"
-                        onclick="return confirm('Submit this batch? You will not be able to edit items after this.')"
+                <button type="button" onclick="openSubmitConfirm()"
                         class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100">
                     Submit Batch
                 </button>
+                <!-- real submitter, triggered by the confirm modal -->
+                <button type="submit" name="submit_action" value="submit" id="submitBatchTrigger" class="hidden" tabindex="-1" aria-hidden="true"></button>
             </div>
         </form>
+    </div>
+
+    <!-- ── Submit Batch Confirm Modal ──────────────────────────────────────── -->
+    <div id="submit-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden">
+        <div class="bg-white rounded-[2rem] shadow-2xl p-8 w-full max-w-md mx-4">
+            <h4 class="serif-title text-2xl font-black text-slate-800 mb-1">Submit this batch?</h4>
+            <p class="text-slate-400 text-sm font-bold mb-6">Once submitted, the items are locked and sent for validation — you won't be able to edit them.</p>
+
+            <div class="bg-slate-50 rounded-2xl p-5 mb-6 space-y-2">
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Supplier</span>
+                    <span class="font-black text-slate-800 text-right"><?= htmlspecialchars($batch['supplier_name'] ?? '—') ?></span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Items to submit</span>
+                    <span id="sm-item-count" class="font-black text-emerald-600 text-lg text-right">0</span>
+                </div>
+            </div>
+
+            <div class="flex gap-3">
+                <button type="button" onclick="closeSubmitConfirm()"
+                    class="flex-1 border border-slate-200 text-slate-500 font-black text-[10px] uppercase tracking-widest py-3.5 rounded-2xl hover:bg-slate-50 transition-all">
+                    Cancel
+                </button>
+                <button type="button" onclick="confirmSubmitBatch()"
+                    class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest py-3.5 rounded-2xl transition-all shadow-lg active:scale-95">
+                    Yes, Submit Batch
+                </button>
+            </div>
+        </div>
     </div>
     <?php else: ?>
     <!-- Read-only item list -->
@@ -221,7 +275,8 @@ function esc(s) {
 function updateTotal(input) {
     const row     = input.closest('tr');
     const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 1;
-    const boxes   = parseInt(row.querySelector('.box-qty').value)      || 1;
+    const boxesRaw = parseInt(row.querySelector('.box-qty').value);
+    const boxes   = isNaN(boxesRaw) ? 0 : boxesRaw;          // blank → 0 (was coerced to 1)
     const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
     const total   = perBox * boxes;
     const good    = Math.max(0, total - damaged);
@@ -233,7 +288,8 @@ function updateTotal(input) {
 function syncQtys() {
     document.querySelectorAll('.item-row').forEach(row => {
         const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 1;
-        const boxes   = parseInt(row.querySelector('.box-qty').value)      || 1;
+        const boxesRaw = parseInt(row.querySelector('.box-qty').value);
+        const boxes   = isNaN(boxesRaw) ? 0 : boxesRaw;
         const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
         row.querySelector('.qty-hidden').value = Math.max(0, perBox * boxes - damaged);
     });
@@ -261,12 +317,33 @@ async function lookupBarcode(input) {
     if (!barcode) return;
     const row  = input.closest('tr');
     const desc = row.querySelector('input[name*="[description]"]');
-    const exp  = row.querySelector('input[name*="[expiry_date]"]');
     const data = await lookupBarcodeData(barcode);
     if (data && data.found) {
-        if (!desc.value.trim()) desc.value = data.name;
-        if (!exp.value && data.expiry_date) exp.value = data.expiry_date;
+        if (!desc.value.trim()) {
+            desc.value = data.name;
+            flashSynced(desc);
+            showSyncPop(data.name);
+        }
+        // Expiry is NOT carried over — each delivery sets its own expiry date.
     }
+}
+
+// ── "Synced from previous data" feedback ───────────────────────────────────
+let _syncPopTimer = null;
+function showSyncPop(name) {
+    const pop = document.getElementById('sync-pop');
+    if (!pop) return;
+    const label = document.getElementById('sync-pop-name');
+    if (label) label.textContent = name ? (name + ' — no need to type it.') : 'Description filled — no need to type it.';
+    pop.classList.add('show');
+    clearTimeout(_syncPopTimer);
+    _syncPopTimer = setTimeout(() => pop.classList.remove('show'), 2400);
+}
+function flashSynced(field) {
+    if (!field) return;
+    field.classList.remove('field-synced');
+    void field.offsetWidth;               // restart the animation
+    field.classList.add('field-synced');
 }
 
 // ── Scan station ───────────────────────────────────────────────────────────
@@ -320,11 +397,14 @@ async function handleScan() {
 
     const data = await lookupBarcodeData(barcode);
     const desc = row.querySelector('input[name*="[description]"]');
-    const exp  = row.querySelector('input[name*="[expiry_date]"]');
     if (data && data.found) {
-        if (!desc.value.trim()) desc.value = data.name;
-        if (!exp.value && data.expiry_date) exp.value = data.expiry_date;
-        setHint('✓ Added — keep scanning', 'ok');
+        if (!desc.value.trim()) {
+            desc.value = data.name;
+            flashSynced(desc);            // green flash so the clerk sees it was auto-filled
+            showSyncPop(data.name);       // "Synced from previous data" pop-up
+        }
+        // Expiry is left blank — clerk enters this delivery's expiry date.
+        setHint('✓ Synced — enter qty & expiry', 'ok');
         input.focus();
     } else {
         setHint('New product — type its name', 'warn');
@@ -342,12 +422,12 @@ function addRow(barcode = '') {
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full barcode-input" value="${esc(barcode)}" placeholder="628..." onblur="lookupBarcode(this)"></td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
-        <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="1" value="1" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
-        <td class="pr-3 pb-2 text-center"><span class="total-display font-black text-slate-800 text-base">1</span></td>
+        <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="0" value="0" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
+        <td class="pr-3 pb-2 text-center"><span class="total-display font-black text-slate-800 text-base">0</span></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][damaged_qty]" min="0" value="0" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2 text-center">
-            <span class="good-display font-black text-emerald-600 text-base">1</span>
-            <input type="hidden" name="items[${i}][qty]" class="qty-hidden" value="1">
+            <span class="good-display font-black text-emerald-600 text-base">0</span>
+            <input type="hidden" name="items[${i}][qty]" class="qty-hidden" value="0">
         </td>
         <td class="pr-3 pb-2"><input type="date" name="items[${i}][expiry_date]" class="input-modern text-sm w-full"></td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][damage_notes]" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging"></td>
@@ -361,6 +441,29 @@ function removeRow(btn) {
     btn.closest('tr').remove();
     document.getElementById('scan-input').focus();
 }
+
+// ── Submit confirm modal ───────────────────────────────────────────────────
+function openSubmitConfirm() {
+    const count = document.querySelectorAll('.item-row').length;
+    if (count === 0) {
+        showFlash('Scan or add at least one item before submitting.', 'error');
+        document.getElementById('scan-input').focus();
+        return;
+    }
+    document.getElementById('sm-item-count').textContent = count;
+    document.getElementById('submit-modal').classList.remove('hidden');
+}
+function closeSubmitConfirm() {
+    document.getElementById('submit-modal').classList.add('hidden');
+}
+function confirmSubmitBatch() {
+    closeSubmitConfirm();
+    syncQtys();
+    document.getElementById('submitBatchTrigger').click();   // fires the real submit
+}
+document.getElementById('submit-modal')?.addEventListener('click', function (e) {
+    if (e.target === this) closeSubmitConfirm();
+});
 
 // Pressing Enter inside any grid field jumps back to the scan box (and never
 // submits the batch by accident).
