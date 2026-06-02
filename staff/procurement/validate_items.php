@@ -88,6 +88,17 @@ if ($is_reprice) {
 
 $error = trim($_GET['error'] ?? '');
 
+// ── Soft lock: claim this batch while pricing; show "on-going" if someone else holds it ──
+require_once '../../includes/batch_lock.php';
+$is_admin_role = in_array($role, [ROLE_ADMIN, ROLE_SUPERADMIN]);
+$lock_holder   = null;
+if ($is_admin_role && ($_GET['takeover'] ?? '') === '1') {
+    batch_lock_force($conn, $batch_id, $user_id, $username, $role);
+}
+if (!batch_lock_acquire($conn, $batch_id, $user_id, $username, $role)) {
+    $lock_holder = batch_lock_holder($conn, $batch_id);
+}
+
 include '../layout_top.php';
 ?>
 
@@ -110,6 +121,48 @@ include '../layout_top.php';
     <?php if ($error): ?>
     <div class="bg-red-50 border border-red-200 text-red-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
+
+    <?php if ($lock_holder): ?>
+    <!-- ON-GOING PROCESS — another user is pricing this batch -->
+    <div class="card-modern p-8 text-center">
+        <div class="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-amber-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+        <h3 class="serif-title text-xl font-black text-slate-800">On-going process</h3>
+        <p class="text-slate-500 font-bold mt-1">
+            Being worked on by <span class="text-slate-800">@<?= htmlspecialchars($lock_holder['working_username']) ?></span>
+            <span class="text-slate-400">(<?= htmlspecialchars(ucfirst($lock_holder['working_role'])) ?>)</span>
+        </p>
+        <p class="text-xs text-slate-400 font-bold mt-1">
+            Started <?= date('g:i A', strtotime($lock_holder['working_at'])) ?> ·
+            <span id="ongoing-idle">last active <?= intval($lock_holder['idle_secs']) ?>s ago</span>
+        </p>
+        <div class="flex gap-3 justify-center mt-6">
+            <a href="<?= htmlspecialchars($home_page) ?>" class="btn-secondary px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest">&larr; Back</a>
+            <?php if ($is_admin_role): ?>
+            <a href="validate_items.php?batch_id=<?= $batch_id ?>&takeover=1"
+               onclick="return confirm('Take over this batch from @<?= htmlspecialchars(addslashes($lock_holder['working_username'])) ?>? Their in-progress lock will be released.');"
+               class="bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-md">Take over</a>
+            <?php endif; ?>
+        </div>
+        <p class="text-[10px] text-slate-300 font-bold mt-3">This view updates automatically when the batch becomes free.</p>
+    </div>
+    <script>
+    (function () {
+        var bid = <?= (int)$batch_id ?>, idleEl = document.getElementById('ongoing-idle');
+        var t = setInterval(function () {
+            fetch('/project/staff/api/batch_lock_status.php?ids=' + bid)
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    var s = d && d[bid];
+                    if (!s || !s.locked) { clearInterval(t); window.location.href = 'validate_items.php?batch_id=' + bid; return; }
+                    if (idleEl) idleEl.textContent = 'last active ' + s.idle_secs + 's ago';
+                }).catch(function () {});
+        }, 10000);
+    })();
+    </script>
+
+    <?php else: ?>
 
     <?php if ($is_reprice): ?>
     <div class="bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl px-5 py-4 text-sm font-bold flex flex-wrap items-center justify-between gap-4">
@@ -227,6 +280,7 @@ include '../layout_top.php';
             </div>
         </div>
     </form>
+    <?php endif; /* lock_holder */ ?>
 </div>
 
 <script>

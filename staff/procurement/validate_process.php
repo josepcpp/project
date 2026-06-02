@@ -9,6 +9,7 @@ include '../../includes/auth_check.php';
 include '../../config/db.php';
 include '../../includes/require_role.php';
 include '../../includes/csrf.php';
+require_once '../../includes/batch_lock.php';
 require_role([ROLE_VALIDATOR, ROLE_PRICE_CHECKER, ROLE_ADMIN, ROLE_SUPERADMIN]);
 
 $user_id  = $_SESSION['user_id']  ?? null;
@@ -99,6 +100,9 @@ try {
     );
     $upd->bind_param("dssii", $computed_subtotal, $tally_result, $new_status, $user_id, $batch_id);
     $upd->execute();
+
+    // Batch has been validated → release this user's processing lock.
+    batch_lock_release($conn, $batch_id, $user_id);
 
     // Audit log
     $al = $conn->prepare(

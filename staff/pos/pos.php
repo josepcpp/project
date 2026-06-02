@@ -54,7 +54,7 @@ $cat_filter = $cur_cat !== 'All' ? " AND p.category = '" . $conn->real_escape_st
 // CALC-2: fifo JOIN fetches price/box-prices from the earliest-expiry lot — the same lot
 // that pos_process.php will pick via ORDER BY expiry_date ASC LIMIT 1, so displayed price
 // matches what is actually charged when the product is added to cart.
-$sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
+$sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode, p_agg.box_barcode, p_agg.box_units,
         p_agg.quantity,
         COALESCE(fifo.price, 0)           AS price,
         COALESCE(fifo.price_half_box, 0)  AS price_half_box,
@@ -66,6 +66,7 @@ $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
         IF(pur_agg.cnt > 0, 1, 0) AS has_pending_price
         FROM (
             SELECT MIN(p.id) AS id, p.name, MIN(p.barcode) AS barcode,
+                   MAX(p.box_barcode) AS box_barcode, MAX(p.box_units) AS box_units,
                    SUM(p.quantity) AS quantity,
                    MAX(p.category) AS category,
                    MAX(p.bulk_qty_half) AS bulk_qty_half, MAX(p.bulk_qty_full) AS bulk_qty_full,
@@ -78,7 +79,8 @@ $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode,
         ) AS p_agg
         LEFT JOIN products AS fifo ON fifo.id = (
             SELECT p_f.id FROM products p_f
-            WHERE p_f.barcode = p_agg.barcode
+            WHERE ((p_agg.barcode IS NOT NULL AND p_f.barcode = p_agg.barcode)
+                   OR (p_agg.box_barcode IS NOT NULL AND p_f.box_barcode = p_agg.box_barcode))
               AND p_f.status = '" . PRODUCT_ACTIVE . "' AND p_f.quantity > 0
               AND (p_f.expiry_date IS NULL OR p_f.expiry_date > CURDATE())
             ORDER BY COALESCE(p_f.expiry_date, '9999-12-31') ASC LIMIT 1
@@ -210,6 +212,8 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                                      : ($has_pending ? 'border-l-amber-400' : 'border-l-transparent');
                         $row_bg      = $tiers_warn  ? 'bg-rose-50/20 hover:bg-rose-50/40'
                                      : ($has_pending ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'hover:bg-slate-50/80');
+                        // Code a tap/scan should send — per-item barcode, or the box code for box-only items.
+                        $scan_code   = $p['barcode'] ?: ($p['box_barcode'] ?? '');
                     ?>
                     <div class="item-box flex items-center gap-3 px-5 py-3 border-l-[3px] <?= $accent_bar ?> <?= $row_bg ?> transition-colors">
 
@@ -229,7 +233,7 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                                     </span>
                                 <?php endif; ?>
                             </div>
-                            <span class="product-barcode hidden"><?= $p['barcode'] ?></span>
+                            <span class="product-barcode hidden"><?= htmlspecialchars($scan_code) ?></span>
                         </div>
 
                         <!-- Stock count -->
@@ -250,7 +254,7 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                                             onclick="showFlash('Bulk pricing for &ldquo;<?= htmlspecialchars(addslashes($p['name'])) ?>&rdquo; is locked while tiers are under review. Update in the Master Price Table.', 'warning')"
                                             class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-300 font-black text-[8px] uppercase border border-slate-100 hover:bg-rose-50 hover:text-rose-400 hover:border-rose-200 transition-all cursor-pointer">½ Box</button>
                                 <?php else: ?>
-                                    <button onclick="setBulk('<?= $p['barcode'] ?>', <?= $p['bulk_qty_half'] ?>)"
+                                    <button onclick="setBulk('<?= htmlspecialchars($scan_code) ?>', <?= $p['bulk_qty_half'] ?>)"
                                             title="Half Box — <?= $p['bulk_qty_half'] ?> pcs @ ₱<?= number_format($p['price_half_box'] ?? 0, 2) ?>"
                                             class="px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-600 font-black text-[8px] uppercase border border-amber-100 hover:bg-amber-500 hover:text-white transition-all">½ Box</button>
                                 <?php endif; ?>
@@ -261,7 +265,7 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                                             onclick="showFlash('Bulk pricing for &ldquo;<?= htmlspecialchars(addslashes($p['name'])) ?>&rdquo; is locked while tiers are under review. Update in the Master Price Table.', 'warning')"
                                             class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-300 font-black text-[8px] uppercase border border-slate-100 hover:bg-rose-50 hover:text-rose-400 hover:border-rose-200 transition-all cursor-pointer">Full</button>
                                 <?php else: ?>
-                                    <button onclick="setBulk('<?= $p['barcode'] ?>', <?= $p['bulk_qty_full'] ?>)"
+                                    <button onclick="setBulk('<?= htmlspecialchars($scan_code) ?>', <?= $p['bulk_qty_full'] ?>)"
                                             title="Full Box — <?= $p['bulk_qty_full'] ?> pcs @ ₱<?= number_format($p['price_full_box'] ?? 0, 2) ?>"
                                             class="px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-600 font-black text-[8px] uppercase border border-blue-100 hover:bg-blue-500 hover:text-white transition-all">Full</button>
                                 <?php endif; ?>
@@ -269,7 +273,7 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                         </div>
 
                         <!-- Add to cart -->
-                        <button onclick="quickAdd('<?= $p['barcode'] ?>')"
+                        <button onclick="quickAdd('<?= htmlspecialchars($scan_code) ?>')"
                                 class="w-9 h-9 bg-slate-900 text-white rounded-xl flex items-center justify-center hover:bg-emerald-500 active:scale-95 transition-all shadow-md shrink-0">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path d="M12 4v16m8-8H4"/></svg>
                         </button>

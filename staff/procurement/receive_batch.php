@@ -3,6 +3,7 @@ include '../../includes/auth_check.php';
 include '../../config/db.php';
 include '../../includes/require_role.php';
 include '../../includes/csrf.php';
+require_once '../../includes/batch_lock.php';
 require_role([ROLE_RECEIVER, ROLE_ADMIN, ROLE_SUPERADMIN]);
 
 $user_id  = $_SESSION['user_id']  ?? null;
@@ -12,9 +13,12 @@ $role     = strtolower($_SESSION['role'] ?? '');
 $success = trim($_GET['success'] ?? '');
 $error   = trim($_GET['error']   ?? '');
 
-// Available vouchers — admin-created, no receiver assigned yet
+// Available vouchers — admin-created, no receiver assigned yet.
+// working_active flags a voucher someone is currently encoding (soft lock).
 $vouchers_q = $conn->query(
-    "SELECT id, supplier_name, supplier_contact, created_at
+    "SELECT id, supplier_name, supplier_contact, created_at,
+            working_username, working_role,
+            (working_by IS NOT NULL AND working_at >= (NOW() - INTERVAL " . BATCH_LOCK_TTL_MIN . " MINUTE)) AS working_active
      FROM receiving_batches
      WHERE status = 'pending_request' AND receiver_id IS NULL
      ORDER BY created_at ASC"
@@ -94,10 +98,17 @@ include '../layout_top.php';
                         <?php endif; ?>
                         <p class="text-[10px] text-slate-300 font-bold mt-0.5">Created <?= date('M j, Y g:i A', strtotime($v['created_at'])) ?></p>
                     </div>
+                    <?php if (intval($v['working_active']) === 1): ?>
+                    <div class="w-full text-center text-[10px] font-black px-5 py-2.5 rounded-xl uppercase tracking-widest bg-amber-100 text-amber-700 border border-amber-200">
+                        ⏳ On-going · @<?= htmlspecialchars($v['working_username']) ?>
+                    </div>
+                    <a href="receive_items.php?batch_id=<?= $v['id'] ?>" class="block text-center text-[10px] font-bold text-slate-400 hover:text-slate-600 mt-1">View status →</a>
+                    <?php else: ?>
                     <a href="receive_items.php?batch_id=<?= $v['id'] ?>"
                        class="btn-pos-primary w-full text-center text-xs font-black px-5 py-2.5 rounded-xl uppercase tracking-widest block">
                         Encode Items
                     </a>
+                    <?php endif; ?>
                 </div>
                 <?php endwhile; ?>
             </div>

@@ -3,6 +3,7 @@ include '../../includes/auth_check.php';
 include '../../config/db.php';
 include '../../includes/require_role.php';
 include '../../includes/csrf.php';
+require_once '../../includes/batch_lock.php';
 require_role([ROLE_RECEIVER, ROLE_ADMIN, ROLE_SUPERADMIN]);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -61,8 +62,15 @@ if ($action === 'save_items') {
             header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Each item needs at least one barcode (per-item or box)."));
             exit();
         }
-        $box_units    = max(1, intval($row['qty_per_box'] ?? 1));   // units per box
+        // Box units only matter when there's an actual box; plain items stay at 1.
+        $is_box_item  = ($box_barcode !== null) || (intval($row['box_qty'] ?? 0) >= 1);
+        $box_units    = $is_box_item ? max(1, intval($row['qty_per_box'] ?? 1)) : 1;
         $expiry_date  = trim($row['expiry_date']  ?? '') ?: null;
+        // If the row was marked "With expiry", the date is mandatory.
+        if (!empty($row['has_expiry']) && $expiry_date === null) {
+            header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("An item marked \"with expiry\" is missing its expiry date."));
+            exit();
+        }
         $damaged_qty  = max(0, intval($row['damaged_qty'] ?? 0));
         $damage_notes = trim($row['damage_notes'] ?? '') ?: null;
 
@@ -86,6 +94,9 @@ if ($action === 'save_items') {
             $ins->bind_param("issisisis", $batch_id, $v['barcode'], $v['box_barcode'], $v['box_units'], $v['desc'], $v['qty'], $v['expiry_date'], $v['damaged_qty'], $v['damage_notes']);
             $ins->execute();
         }
+
+        // Release this user's processing lock (re-acquired on the next open if still editing).
+        batch_lock_release($conn, $batch_id, $user_id);
 
         if ($submit_action === 'submit') {
             // Assign receiver + promote to pending_validation in one step

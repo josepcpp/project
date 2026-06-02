@@ -175,7 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $pid       = intval($_POST['p_id'] ?? 0);
         $new_price = floatval($_POST['selling_price'] ?? 0);
         if ($pid > 0 && $new_price > 0) {
-            $dq = $conn->prepare("SELECT id, name, barcode FROM products WHERE id = ? AND status = '" . PRODUCT_DRAFT . "' LIMIT 1");
+            $dq = $conn->prepare("SELECT id, name, barcode, box_barcode FROM products WHERE id = ? AND status = '" . PRODUCT_DRAFT . "' LIMIT 1");
             $dq->bind_param("i", $pid); $dq->execute();
             $dp = $dq->get_result()->fetch_assoc();
             if ($dp) {
@@ -214,10 +214,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $up->bind_param("dididi", $new_price, $inh['bulk_qty_half'], $inh['price_half_box'], $inh['bulk_qty_full'], $inh['price_full_box'], $pid);
                     $up->execute();
 
-                    // Keep selling price uniform across all live lots of this barcode
-                    if (!empty($dp['barcode'])) {
-                        $uu = $conn->prepare("UPDATE products SET price = ? WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND id != ?");
-                        $uu->bind_param("dsi", $new_price, $dp['barcode'], $pid); $uu->execute();
+                    // Keep selling price uniform across all live lots of this product —
+                    // match by per-item barcode AND/OR box barcode (box-only items have no per-item code).
+                    if (!empty($dp['barcode']) || !empty($dp['box_barcode'])) {
+                        $uu = $conn->prepare("UPDATE products SET price = ? WHERE status = '" . PRODUCT_ACTIVE . "' AND id != ?
+                                              AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?))");
+                        $uu->bind_param("dissss", $new_price, $pid, $dp['barcode'], $dp['barcode'], $dp['box_barcode'], $dp['box_barcode']);
+                        $uu->execute();
                     }
 
                     _log_activity($conn, $user_id, $pid,
@@ -263,6 +266,8 @@ $sql = "SELECT
             MIN(p.id) as id,
             p.name AS product_name,
             MIN(p.barcode) as barcode,
+            MAX(p.box_barcode) as box_barcode,
+            MAX(p.box_units) as box_units,
             MAX(p.category) as category,
             MAX(p.price) as price,
             MAX(p.bulk_qty_half)   as bulk_qty_half,
@@ -416,7 +421,12 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                             <td class="px-8 py-5">
                                 <p class="font-bold text-slate-800 text-base leading-tight"><?= htmlspecialchars($r['product_name']) ?></p>
                                 <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                                    <code class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded border">ID: #<?= $r['barcode'] ?></code>
+                                    <?php if (!empty($r['barcode'])): ?>
+                                    <code class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded border" title="Per-item barcode">ID: #<?= htmlspecialchars($r['barcode']) ?></code>
+                                    <?php endif; ?>
+                                    <?php if (!empty($r['box_barcode'])): ?>
+                                    <code class="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100" title="Box barcode (<?= intval($r['box_units']) ?> per box)">📦 #<?= htmlspecialchars($r['box_barcode']) ?></code>
+                                    <?php endif; ?>
                                     <span class="text-[10px] font-black text-blue-500 uppercase bg-blue-50/50 px-2 py-0.5 rounded"><?= htmlspecialchars($r['category']) ?></span>
                                     <?php if ($tiers_locked): ?>
                                         <span class="text-[9px] font-black text-rose-600 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 uppercase animate-pulse">⚠ Tiers Need Review</span>

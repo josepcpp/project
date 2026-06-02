@@ -2,15 +2,17 @@
 include '../../includes/auth_check.php';
 include '../../config/db.php';
 include '../../includes/require_role.php';
+require_once '../../includes/batch_lock.php';
 require_role([ROLE_VALIDATOR, ROLE_ADMIN, ROLE_SUPERADMIN]);
 
 $success = trim($_GET['success'] ?? '');
 $error   = trim($_GET['error']   ?? '');
 
-// Load all pending_validation batches
+// Load all pending_validation batches (working_active = someone is pricing it now)
 $pq = $conn->query(
     "SELECT rb.*, COUNT(ri.id) AS item_count,
-            u.username AS receiver_name
+            u.username AS receiver_name,
+            (rb.working_by IS NOT NULL AND rb.working_at >= (NOW() - INTERVAL " . BATCH_LOCK_TTL_MIN . " MINUTE)) AS working_active
      FROM receiving_batches rb
      LEFT JOIN receiving_items ri ON ri.batch_id = rb.id
      LEFT JOIN users u ON u.id = rb.receiver_id
@@ -58,10 +60,18 @@ include '../layout_top.php';
                         <td class="text-center font-black"><?= intval($b['item_count']) ?></td>
                         <td class="text-slate-400 text-xs"><?= $b['request_created_at'] ? date('M j, Y g:i A', strtotime($b['request_created_at'])) : '—' ?></td>
                         <td>
+                            <?php if (intval($b['working_active']) === 1): ?>
+                            <a href="validate_items.php?batch_id=<?= $b['id'] ?>"
+                               class="bg-amber-100 text-amber-700 border border-amber-200 text-xs font-black px-4 py-2 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap inline-block"
+                               title="Being priced by @<?= htmlspecialchars($b['working_username']) ?>">
+                                ⏳ On-going · @<?= htmlspecialchars($b['working_username']) ?>
+                            </a>
+                            <?php else: ?>
                             <a href="validate_items.php?batch_id=<?= $b['id'] ?>"
                                class="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black px-4 py-2 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap">
                                 Validate Prices
                             </a>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 <?php endwhile; ?>

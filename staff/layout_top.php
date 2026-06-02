@@ -136,6 +136,10 @@ $hrefs = [
 ];
 
 $pipeline_steps = ['batches_pending.php', 'discrepancy_resolve.php', 'damage_review.php', 'supplier_payments.php'];
+// Admins can also perform the Receiver / Validator / Price-Checker tasks, so their
+// Procurement nav includes those screens in pipeline order.
+$admin_pipeline = ['receive_batch.php', 'batches_pending.php', 'validate_batch.php',
+                   'discrepancy_resolve.php', 'damage_review.php', 'price_checker.php', 'supplier_payments.php'];
 
 $support_open_count = 0;
 $support_reply_count = 0;
@@ -243,7 +247,7 @@ if ($role === ROLE_STAFF) {
         'Overview'       => ['dashboard.php'],
         'Sales'          => ['pos.php', 'discount.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
-        'Procurement'    => $pipeline_steps,
+        'Procurement'    => $admin_pipeline,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
     ];
 } else { // superadmin
@@ -251,7 +255,7 @@ if ($role === ROLE_STAFF) {
         'Overview'       => ['dashboard.php'],
         'Sales'          => ['pos.php', 'discount.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
-        'Procurement'    => $pipeline_steps,
+        'Procurement'    => $admin_pipeline,
         'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
         'System'         => ['settings.php'],
     ];

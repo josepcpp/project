@@ -720,3 +720,18 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.7.1
+
+// ── v1.7.2 — Soft lock on a batch while a role-holder is processing it ────────
+// Prevents two people working the same batch (Receiver encoding / Validator pricing).
+// A lock is "active" while working_at is within the TTL (30 min); admins may take over.
+$_db_version   = '1.7.2';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE receiving_batches ADD COLUMN IF NOT EXISTS working_by       INT          DEFAULT NULL");
+    $conn->query("ALTER TABLE receiving_batches ADD COLUMN IF NOT EXISTS working_username VARCHAR(100) DEFAULT NULL");
+    $conn->query("ALTER TABLE receiving_batches ADD COLUMN IF NOT EXISTS working_role     VARCHAR(30)  DEFAULT NULL");
+    $conn->query("ALTER TABLE receiving_batches ADD COLUMN IF NOT EXISTS working_at       DATETIME     DEFAULT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.2

@@ -46,6 +46,19 @@ $items = $iq->get_result()->fetch_all(MYSQLI_ASSOC);
 $error   = trim($_GET['error']   ?? '');
 $success = trim($_GET['success'] ?? '');
 
+// ── Soft lock: claim this batch while encoding; show "on-going" if someone else holds it ──
+require_once '../../includes/batch_lock.php';
+$is_admin_role = in_array($role, [ROLE_ADMIN, ROLE_SUPERADMIN]);
+$lock_holder   = null;
+if (!$readonly) {
+    if ($is_admin_role && ($_GET['takeover'] ?? '') === '1') {
+        batch_lock_force($conn, $batch_id, $user_id, $username, $role);
+    }
+    if (!batch_lock_acquire($conn, $batch_id, $user_id, $username, $role)) {
+        $lock_holder = batch_lock_holder($conn, $batch_id);   // someone else is processing it
+    }
+}
+
 include '../layout_top.php';
 ?>
 
@@ -78,8 +91,48 @@ include '../layout_top.php';
     </div>
     <?php endif; ?>
 
+    <!-- ON-GOING PROCESS — another user is encoding this batch -->
+    <?php if ($lock_holder): ?>
+    <div class="card-modern p-8 text-center" data-batch="<?= $batch_id ?>">
+        <div class="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-amber-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+        <h3 class="serif-title text-xl font-black text-slate-800">On-going process</h3>
+        <p class="text-slate-500 font-bold mt-1">
+            Being worked on by <span class="text-slate-800">@<?= htmlspecialchars($lock_holder['working_username']) ?></span>
+            <span class="text-slate-400">(<?= htmlspecialchars(ucfirst($lock_holder['working_role'])) ?>)</span>
+        </p>
+        <p class="text-xs text-slate-400 font-bold mt-1">
+            Started <?= date('g:i A', strtotime($lock_holder['working_at'])) ?> ·
+            <span id="ongoing-idle">last active <?= intval($lock_holder['idle_secs']) ?>s ago</span>
+        </p>
+        <div class="flex gap-3 justify-center mt-6">
+            <a href="receive_batch.php" class="btn-secondary px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest">&larr; Back</a>
+            <?php if ($is_admin_role): ?>
+            <a href="receive_items.php?batch_id=<?= $batch_id ?>&takeover=1"
+               onclick="return confirm('Take over this batch from @<?= htmlspecialchars(addslashes($lock_holder['working_username'])) ?>? Their in-progress lock will be released.');"
+               class="bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all shadow-md">Take over</a>
+            <?php endif; ?>
+        </div>
+        <p class="text-[10px] text-slate-300 font-bold mt-3">This view updates automatically when the batch becomes free.</p>
+    </div>
+    <script>
+    (function () {
+        var bid = <?= (int)$batch_id ?>, idleEl = document.getElementById('ongoing-idle');
+        var t = setInterval(function () {
+            fetch('/project/staff/api/batch_lock_status.php?ids=' + bid)
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    var s = d && d[bid];
+                    if (!s || !s.locked) { clearInterval(t); window.location.href = 'receive_items.php?batch_id=' + bid; return; }
+                    if (idleEl) idleEl.textContent = 'last active ' + s.idle_secs + 's ago';
+                }).catch(function () {});
+        }, 10000);
+    })();
+    </script>
+
     <!-- Item Encoding Form -->
-    <?php if (!$readonly): ?>
+    <?php elseif (!$readonly): ?>
     <style>
         @keyframes rowFlash {
             0%, 100% { background-color: transparent; }
@@ -179,7 +232,12 @@ include '../layout_top.php';
                                 <span class="good-display font-black text-emerald-600 text-base"><?= intval($item['quantity']) ?></span>
                                 <input type="hidden" name="items[<?= $i ?>][qty]" class="qty-hidden" value="<?= intval($item['quantity']) ?>">
                             </td>
-                            <td class="pr-3 pb-2"><input type="date" name="items[<?= $i ?>][expiry_date]" class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['expiry_date'] ?? '') ?>"></td>
+                            <?php $has_exp = !empty($item['expiry_date']); ?>
+                            <td class="pr-3 pb-2 align-top">
+                                <label class="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 cursor-pointer select-none">
+                                    <input type="checkbox" name="items[<?= $i ?>][has_expiry]" value="1" class="expiry-toggle" onchange="toggleExpiry(this)" <?= $has_exp ? 'checked' : '' ?>> With expiry
+                                </label>
+                                <input type="date" name="items[<?= $i ?>][expiry_date]" class="input-modern text-sm w-full expiry-date <?= $has_exp ? '' : 'hidden' ?>" value="<?= htmlspecialchars($item['expiry_date'] ?? '') ?>"<?= $has_exp ? ' required' : '' ?>></td>
                             <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][damage_notes]" class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['damage_notes'] ?? '') ?>" placeholder="e.g. crushed packaging"></td>
                             <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>
                         </tr>
@@ -277,27 +335,29 @@ function esc(s) {
 
 function updateTotal(input) {
     const row     = input.closest('tr');
-    const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 1;
+    const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 0;
     const boxesRaw = parseInt(row.querySelector('.box-qty').value);
-    const boxes   = isNaN(boxesRaw) ? 0 : boxesRaw;          // blank → 0 (was coerced to 1)
+    const hasBox  = !isNaN(boxesRaw) && boxesRaw >= 1;       // a real box count was entered
+    const effBoxes = hasBox ? boxesRaw : 1;                   // no box → treat Qty/Box as the plain quantity
     const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
-    const total   = perBox * boxes;
+    const total   = perBox * effBoxes;
     const good    = Math.max(0, total - damaged);
     row.querySelector('.total-display').textContent = total;
     row.querySelector('.good-display').textContent  = good;
     row.querySelector('.qty-hidden').value          = good;
-    // Box Barcode field appears only when this row has at least one box.
+    // Box Barcode field appears when this row has boxes — or already holds a box code.
     const boxBc = row.querySelector('.box-barcode-input');
-    if (boxBc) boxBc.classList.toggle('hidden', !(boxes >= 1));
+    if (boxBc) boxBc.classList.toggle('hidden', !(hasBox || boxBc.value.trim() !== ''));
 }
 
 function syncQtys() {
     document.querySelectorAll('.item-row').forEach(row => {
-        const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 1;
+        const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 0;
         const boxesRaw = parseInt(row.querySelector('.box-qty').value);
-        const boxes   = isNaN(boxesRaw) ? 0 : boxesRaw;
+        const hasBox  = !isNaN(boxesRaw) && boxesRaw >= 1;
+        const effBoxes = hasBox ? boxesRaw : 1;
         const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
-        row.querySelector('.qty-hidden').value = Math.max(0, perBox * boxes - damaged);
+        row.querySelector('.qty-hidden').value = Math.max(0, perBox * effBoxes - damaged);
     });
 }
 
@@ -322,6 +382,20 @@ function beforeSubmit() {
         showFlash('Each item needs at least one barcode — per-item or box.', 'error');
         return false;
     }
+    // "With expiry" rows must carry a date — otherwise the submit is declined.
+    var expiryMissing = false;
+    document.querySelectorAll('.item-row').forEach(function (row) {
+        var cb = row.querySelector('.expiry-toggle');
+        var dt = row.querySelector('.expiry-date');
+        if (cb && cb.checked && !(dt && dt.value)) {
+            expiryMissing = true;
+            dt?.classList.add('ring-2', 'ring-rose-400');
+        }
+    });
+    if (expiryMissing) {
+        showFlash('Items marked "With expiry" need an expiry date — fill it in or untick the box.', 'error');
+        return false;
+    }
     return true;
 }
 
@@ -343,6 +417,21 @@ async function lookupBarcode(input) {
             desc.value = data.name;
             flashSynced(desc);
             showSyncPop(data.name);
+        }
+        // If a BOX code was typed into the per-item field, move it to the box field.
+        if (data.match === 'box') {
+            const boxBc  = row.querySelector('.box-barcode-input');
+            const itemBc = row.querySelector('.barcode-input');
+            if (boxBc) {
+                input.value = data.barcode || '';   // restore per-item code (often blank) here
+                boxBc.value = barcode;
+                flashSynced(boxBc);
+                const qpb = row.querySelector('.qty-per-box');
+                if (qpb && data.box_units > 0) qpb.value = data.box_units;
+                const bq = row.querySelector('.box-qty');
+                if (bq && !(parseInt(bq.value) >= 1)) bq.value = 1;
+                updateTotal(qpb || itemBc);
+            }
         }
         // Expiry is NOT carried over — each delivery sets its own expiry date.
     }
@@ -378,7 +467,8 @@ function findRowByBarcode(barcode) {
     const norm = barcode.trim().toLowerCase();
     if (!norm) return null;
     let match = null;
-    document.querySelectorAll('.item-row .barcode-input').forEach(bc => {
+    // Match either the per-item or the box barcode field already on a row.
+    document.querySelectorAll('.item-row .barcode-input, .item-row .box-barcode-input').forEach(bc => {
         if (bc.value.trim().toLowerCase() === norm) match = bc.closest('tr');
     });
     return match;
@@ -410,21 +500,38 @@ async function handleScan() {
         return;
     }
 
-    // New barcode → add a row and look it up
-    const row = addRow(barcode);
+    // Look up FIRST so we know whether this is a per-item or a BOX code.
     setHint('Looking up…', 'busy');
+    const data  = await lookupBarcodeData(barcode);
+    const isBox = data && data.found && data.match === 'box';
+
+    // Put the scanned code in the correct field (per-item, unless it's a box code).
+    const row    = addRow(isBox ? '' : barcode);
+    const desc   = row.querySelector('input[name*="[description]"]');
+    const itemBc = row.querySelector('.barcode-input');
+    const boxBc  = row.querySelector('.box-barcode-input');
     input.focus();
 
-    const data = await lookupBarcodeData(barcode);
-    const desc = row.querySelector('input[name*="[description]"]');
     if (data && data.found) {
         if (!desc.value.trim()) {
             desc.value = data.name;
             flashSynced(desc);            // green flash so the clerk sees it was auto-filled
             showSyncPop(data.name);       // "Synced from previous data" pop-up
         }
-        // Expiry is left blank — clerk enters this delivery's expiry date.
-        setHint('✓ Synced — enter qty & expiry', 'ok');
+        if (isBox) {
+            // Scanned a BOX code → fill the box field, set units/box, reveal the box field.
+            if (boxBc)  { boxBc.value = barcode; flashSynced(boxBc); }
+            if (itemBc && !itemBc.value.trim() && data.barcode) itemBc.value = data.barcode;  // known per-item code too
+            const qpb = row.querySelector('.qty-per-box');
+            if (qpb && data.box_units > 0) qpb.value = data.box_units;
+            const bq = row.querySelector('.box-qty');
+            if (bq && !(parseInt(bq.value) >= 1)) bq.value = 1;   // ensure the box field shows
+            updateTotal(qpb || itemBc);
+            setHint('✓ Box synced — enter # of boxes & expiry', 'ok');
+        } else {
+            // Expiry is left blank — clerk enters this delivery's expiry date.
+            setHint('✓ Synced — enter qty & expiry', 'ok');
+        }
         input.focus();
     } else {
         setHint('New product — type its name', 'warn');
@@ -444,7 +551,7 @@ function addRow(barcode = '') {
             <input type="text" name="items[${i}][box_barcode]" placeholder="📦 Box barcode" class="input-modern text-xs w-full mt-1 box-barcode-input hidden">
         </td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
-        <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
+        <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="0" value="0" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="0" value="0" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2 text-center"><span class="total-display font-black text-slate-800 text-base">0</span></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][damaged_qty]" min="0" value="0" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
@@ -452,7 +559,11 @@ function addRow(barcode = '') {
             <span class="good-display font-black text-emerald-600 text-base">0</span>
             <input type="hidden" name="items[${i}][qty]" class="qty-hidden" value="0">
         </td>
-        <td class="pr-3 pb-2"><input type="date" name="items[${i}][expiry_date]" class="input-modern text-sm w-full"></td>
+        <td class="pr-3 pb-2 align-top">
+            <label class="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 cursor-pointer select-none">
+                <input type="checkbox" name="items[${i}][has_expiry]" value="1" class="expiry-toggle" onchange="toggleExpiry(this)"> With expiry
+            </label>
+            <input type="date" name="items[${i}][expiry_date]" class="input-modern text-sm w-full expiry-date hidden"></td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][damage_notes]" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging"></td>
         <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>`;
     tbody.appendChild(tr);
@@ -463,6 +574,22 @@ function addRow(barcode = '') {
 function removeRow(btn) {
     btn.closest('tr').remove();
     document.getElementById('scan-input').focus();
+}
+
+// Per-row expiry toggle: "With expiry" opens (and requires) the date; off clears it.
+function toggleExpiry(cb) {
+    const date = cb.closest('td').querySelector('.expiry-date');
+    if (!date) return;
+    if (cb.checked) {
+        date.classList.remove('hidden');
+        date.required = true;
+        date.focus();
+    } else {
+        date.classList.add('hidden');
+        date.required = false;
+        date.value = '';
+        date.classList.remove('ring-2', 'ring-rose-400');
+    }
 }
 
 // ── Submit confirm modal ───────────────────────────────────────────────────
