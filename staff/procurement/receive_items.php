@@ -197,7 +197,7 @@ include '../layout_top.php';
             </div>
         </div>
 
-        <form method="POST" action="receive_process.php" id="itemsForm" onsubmit="return beforeSubmit()">
+        <form method="POST" action="receive_process.php" id="itemsForm">
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="save_items">
             <input type="hidden" name="batch_id" value="<?= $batch_id ?>">
@@ -253,15 +253,14 @@ include '../layout_top.php';
             </div>
 
             <div class="flex gap-3 mt-6">
-                <button type="submit" name="submit_action" value="save" class="btn-pos-primary px-8 py-3 text-sm font-black uppercase tracking-widest">
+                <button type="button" id="saveBtn"
+                        class="btn-pos-primary px-8 py-3 text-sm font-black uppercase tracking-widest">
                     Save Items
                 </button>
-                <button type="button" onclick="openSubmitConfirm()"
+                <button type="button" id="submitBtn" onclick="openSubmitConfirm()"
                         class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100">
                     Submit Batch
                 </button>
-                <!-- real submitter, triggered by the confirm modal -->
-                <button type="submit" name="submit_action" value="submit" id="submitBatchTrigger" class="hidden" tabindex="-1" aria-hidden="true"></button>
             </div>
         </form>
     </div>
@@ -640,14 +639,58 @@ function toggleExpiry(cb) {
     }
 }
 
-// ── Submit confirm modal ───────────────────────────────────────────────────
+// ── AJAX form submission ──────────────────────────────────────────────────────
+var _submitAction = 'save';
+
+document.getElementById('saveBtn').addEventListener('click', function () {
+    _submitAction = 'save';
+    document.getElementById('itemsForm').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+});
+
+document.getElementById('itemsForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    if (!beforeSubmit()) return;
+
+    var saveBtn   = document.getElementById('saveBtn');
+    var submitBtn = document.getElementById('submitBtn');
+    saveBtn.disabled   = true;
+    submitBtn.disabled = true;
+    var origSaveTxt   = saveBtn.textContent;
+    var origSubmitTxt = submitBtn.textContent;
+    saveBtn.textContent   = 'Saving…';
+    submitBtn.textContent = 'Submitting…';
+
+    var fd = new FormData(this);
+    fd.set('submit_action', _submitAction);
+    fd.append('_ajax', '1');
+
+    try {
+        var res  = await fetch('receive_process.php', { method: 'POST', body: fd });
+        var data = await res.json();
+        if (data.success) {
+            navigate(data.redirect);
+        } else {
+            showFlash(data.error, 'error');
+        }
+    } catch (_) {
+        showFlash('Connection error — check your network and try again.', 'error');
+    } finally {
+        saveBtn.disabled      = false;
+        submitBtn.disabled    = false;
+        saveBtn.textContent   = origSaveTxt;
+        submitBtn.textContent = origSubmitTxt;
+    }
+});
+
+// ── Submit confirm modal ──────────────────────────────────────────────────────
 function openSubmitConfirm() {
-    const count = document.querySelectorAll('.item-row').length;
+    var count = document.querySelectorAll('.item-row').length;
     if (count === 0) {
         showFlash('Scan or add at least one item before submitting.', 'error');
         document.getElementById('scan-input').focus();
         return;
     }
+    if (!beforeSubmit()) return;   // run validation before opening modal
     document.getElementById('sm-item-count').textContent = count;
     document.getElementById('submit-modal').classList.remove('hidden');
 }
@@ -657,7 +700,8 @@ function closeSubmitConfirm() {
 function confirmSubmitBatch() {
     closeSubmitConfirm();
     syncQtys();
-    document.getElementById('submitBatchTrigger').click();   // fires the real submit
+    _submitAction = 'submit';
+    document.getElementById('itemsForm').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
 }
 document.getElementById('submit-modal')?.addEventListener('click', function (e) {
     if (e.target === this) closeSubmitConfirm();

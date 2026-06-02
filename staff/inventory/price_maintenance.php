@@ -170,6 +170,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
     }
 
+    // ── Apply ALL approved / deferred requests at once ───────────────────────
+    if ($action === 'price_apply_all') {
+        $rq = $conn->query(
+            "SELECT * FROM price_update_requests
+             WHERE status IN ('" . PRICE_REQ_APPROVED . "','" . PRICE_REQ_DEFERRED . "')
+             ORDER BY created_at ASC"
+        );
+        $bulk = $rq ? $rq->fetch_all(MYSQLI_ASSOC) : [];
+        if (empty($bulk)) {
+            $msg = "<div class='bg-slate-500 text-white p-4 rounded-2xl mb-6 font-bold animate-in text-center shadow-lg'>No approved requests ready to apply.</div>";
+        } else {
+            $conn->begin_transaction();
+            try {
+                $applied = 0;
+                foreach ($bulk as $req) {
+                    $rid = intval($req['id']);
+
+                    $ph = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
+                    $ph->bind_param("idd", $req['product_id'], $req['current_price'], $req['proposed_price']); $ph->execute();
+
+                    $upd_prod = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE barcode = ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "')");
+                    $upd_prod->bind_param("ds", $req['proposed_price'], $req['barcode']); $upd_prod->execute();
+
+                    $upd_req = $conn->prepare("UPDATE price_update_requests SET status='" . PRICE_REQ_APPLIED . "', applied_by=?, applied_username=?, applied_at=NOW() WHERE id=?");
+                    $upd_req->bind_param("isi", $user_id, $uname, $rid); $upd_req->execute();
+
+                    $upd_cur = $conn->prepare("UPDATE price_update_requests SET current_price = ? WHERE barcode = ? AND id != ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
+                    $upd_cur->bind_param("dsi", $req['proposed_price'], $req['barcode'], $rid); $upd_cur->execute();
+
+                    _log_price_action($conn, $rid, 'applied', $user_id, $uname, $req['current_price'], $req['proposed_price']);
+                    _log_activity($conn, $user_id, $req['product_id'],
+                        "PRICE APPLIED (BULK): {$req['product_name']} ₱" . number_format($req['current_price'], 2) . " → ₱" . number_format($req['proposed_price'], 2),
+                        number_format($req['current_price'], 2), number_format($req['proposed_price'], 2)
+                    );
+                    $applied++;
+                }
+                $conn->commit();
+                $msg = "<div class='bg-emerald-600 text-white p-4 rounded-2xl mb-6 font-bold animate-in text-center shadow-lg'>{$applied} price update" . ($applied !== 1 ? 's' : '') . " applied to POS.</div>";
+            } catch (\Throwable $e) {
+                $conn->rollback();
+                $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold shadow-lg'>Bulk Apply Error: " . htmlspecialchars($e->getMessage()) . "</div>";
+            }
+        }
+    }
+
     // ── Set selling price on a draft (unpriced) lot → release to POS ───────────
     if ($action === 'set_selling_price') {
         $pid       = intval($_POST['p_id'] ?? 0);
@@ -288,6 +333,8 @@ $suppliers_list = $conn->query("SELECT id, name, supplier_code FROM suppliers WH
 
 $pending_rows = [];
 while ($r = $pending_requests->fetch_assoc()) $pending_rows[] = $r;
+
+$apply_ready_count = count(array_filter($pending_rows, fn($r) => in_array($r['status'], PRICE_REQ_APPLY_STATUSES)));
 
 $closed_rows = [];
 while ($r = $closed_requests->fetch_assoc()) $closed_rows[] = $r;
@@ -589,6 +636,13 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                 <span class="w-2.5 h-2.5 bg-amber-500 rounded-full shadow-sm"></span>
                 <h4 class="font-black text-slate-800 text-sm uppercase tracking-[0.15em] flex-1">Price Update Requests</h4>
                 <span class="text-[10px] font-black text-amber-700 bg-amber-100 px-3 py-1 rounded-full uppercase tracking-widest">Awaiting approval</span>
+                <?php if ($apply_ready_count > 0): ?>
+                <button onclick="applyAllPrices(<?= $apply_ready_count ?>)"
+                        class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-2 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                    Apply All (<?= $apply_ready_count ?>)
+                </button>
+                <?php endif; ?>
             </div>
             <div class="divide-y divide-slate-50">
             <?php foreach ($pending_rows as $req):
@@ -655,38 +709,38 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                     </div>
 
                     <!-- Action buttons -->
-                    <div class="flex flex-col gap-2 shrink-0 min-w-[148px]">
+                    <div class="flex flex-col gap-1.5 shrink-0 min-w-[120px]">
                         <?php if ($is_deferred): ?>
-                            <div class="flex items-center gap-1.5 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
-                                <span class="text-blue-500 text-sm">⏱</span>
-                                <span class="text-[9px] font-black text-blue-600 uppercase">Applies on stockout</span>
+                            <div class="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1.5">
+                                <span class="text-blue-500 text-xs">⏱</span>
+                                <span class="text-[9px] font-black text-blue-600 uppercase">On stockout</span>
                             </div>
                             <button onclick="applyPrice(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>', '<?= number_format($req['proposed_price'], 2) ?>')"
-                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
+                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all shadow-sm active:scale-95">
                                 Apply Now
                             </button>
                             <button onclick="cancelDefer(<?= $req['id'] ?>)"
-                                class="border border-slate-200 text-slate-500 hover:bg-slate-50 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all active:scale-95">
+                                class="border border-slate-200 text-slate-400 hover:bg-slate-50 font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all active:scale-95">
                                 Cancel Schedule
                             </button>
                         <?php elseif ($can_apply): ?>
                             <button onclick="applyPrice(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>', '<?= number_format($req['proposed_price'], 2) ?>')"
-                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
+                                class="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all shadow-sm active:scale-95">
                                 Apply Now
                             </button>
                             <button onclick="doDefer(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>')"
-                                class="bg-blue-500 hover:bg-blue-400 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all shadow-md active:scale-95">
-                                Apply on Stockout
+                                class="bg-blue-500 hover:bg-blue-400 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all shadow-sm active:scale-95">
+                                On Stockout
                             </button>
                         <?php elseif ($can_step1): ?>
                             <button onclick="doStep(<?= $req['id'] ?>, 'price_step1', 'Approve price update for <?= addslashes($req['product_name']) ?>?')"
-                                class="bg-amber-500 hover:bg-amber-400 text-white font-black text-[10px] uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95">
+                                class="bg-amber-500 hover:bg-amber-400 text-white font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all shadow-sm active:scale-95">
                                 Approve
                             </button>
                         <?php endif; ?>
                         <?php if ($can_reject && !$is_deferred): ?>
                             <button onclick="openRejectModal(<?= $req['id'] ?>, '<?= addslashes($req['product_name']) ?>')"
-                                class="border border-rose-200 text-rose-500 hover:bg-rose-50 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all active:scale-95">
+                                class="border border-rose-200 text-rose-400 hover:bg-rose-50 font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all active:scale-95">
                                 Reject
                             </button>
                         <?php endif; ?>
@@ -831,6 +885,18 @@ async function doStep(reqId, action, confirmMsg) {
     const fd = new FormData();
     fd.append('action', action);
     fd.append('req_id', reqId);
+    if (typeof navigate === 'function') navigate('price_maintenance.php', fd);
+    else window.location.reload();
+}
+
+// ── Apply ALL approved / deferred requests at once ────────────────────────────
+async function applyAllPrices(count) {
+    if (!await customConfirm(
+        count + ' approved price update' + (count !== 1 ? 's' : '') + ' will be applied to POS immediately. This cannot be undone.',
+        'Apply All Price Updates?'
+    )) return;
+    const fd = new FormData();
+    fd.append('action', 'price_apply_all');
     if (typeof navigate === 'function') navigate('price_maintenance.php', fd);
     else window.location.reload();
 }

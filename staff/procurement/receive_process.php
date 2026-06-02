@@ -21,11 +21,30 @@ if ($action === 'save_items') {
     $batch_id      = intval($_POST['batch_id'] ?? 0);
     $submit_action = trim($_POST['submit_action'] ?? 'save');
     $items_post    = $_POST['items'] ?? [];
+    $is_ajax       = !empty($_POST['_ajax']);
 
-    if (!$batch_id) {
-        header("Location: receive_batch.php?error=" . urlencode("Invalid batch."));
+    // Unified response helpers — JSON for AJAX calls, redirect otherwise.
+    $err = function (string $msg, string $fallback_url = '') use ($is_ajax, &$batch_id) {
+        if ($is_ajax) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => $msg]);
+            exit();
+        }
+        $url = $fallback_url ?: "receive_items.php?batch_id={$batch_id}";
+        header("Location: {$url}&error=" . urlencode($msg));
         exit();
-    }
+    };
+    $ok = function (string $url) use ($is_ajax) {
+        if ($is_ajax) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => true, 'redirect' => $url]);
+            exit();
+        }
+        header("Location: {$url}");
+        exit();
+    };
+
+    if (!$batch_id) $err("Invalid batch.", "receive_batch.php?");
 
     // Receiver can act on their own batches OR unclaimed admin-created vouchers
     if ($role === ROLE_RECEIVER) {
@@ -39,8 +58,7 @@ if ($action === 'save_items') {
     $batch = $bq->get_result()->fetch_assoc();
 
     if (!$batch || $batch['status'] !== 'pending_request') {
-        header("Location: receive_batch.php?error=" . urlencode("Batch is not editable."));
-        exit();
+        $err("Batch is not editable.", "receive_batch.php?");
     }
 
     // Validate items
@@ -50,36 +68,27 @@ if ($action === 'save_items') {
         $qty  = intval($row['qty'] ?? 0);
 
         if ($desc === '') continue;
-        if ($qty < 1) {
-            header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Quantity must be at least 1 for each item."));
-            exit();
-        }
+        if ($qty < 1)     $err("Quantity must be at least 1 for each item.");
 
-        $barcode      = trim($row['barcode']      ?? '') ?: null;
-        $box_barcode  = trim($row['box_barcode']  ?? '') ?: null;
-        // Each item needs at least one barcode — per-item or box (both fine, neither not).
+        $barcode     = trim($row['barcode']     ?? '') ?: null;
+        $box_barcode = trim($row['box_barcode'] ?? '') ?: null;
         if ($barcode === null && $box_barcode === null) {
-            header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Each item needs at least one barcode (per-item or box)."));
-            exit();
+            $err("Each item needs at least one barcode (per-item or box).");
         }
-        // NB- codes are system-generated; ensure no collision with an existing product.
+        // NB- codes are system-generated; guard against the near-impossible collision.
         if ($barcode !== null && str_starts_with($barcode, 'NB-')) {
             $chk = $conn->prepare("SELECT id FROM products WHERE barcode = ? LIMIT 1");
             $chk->bind_param("s", $barcode);
             $chk->execute();
             if ($chk->get_result()->num_rows > 0) {
-                header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Internal ID collision for \"$desc\" — please remove the row and re-add it to generate a new code."));
-                exit();
+                $err("Internal ID collision for \"{$desc}\" — remove the row and re-add it to generate a new code.");
             }
         }
-        // Box units only matter when there's an actual box; plain items stay at 1.
-        $is_box_item  = ($box_barcode !== null) || (intval($row['box_qty'] ?? 0) >= 1);
-        $box_units    = $is_box_item ? max(1, intval($row['qty_per_box'] ?? 1)) : 1;
-        $expiry_date  = trim($row['expiry_date']  ?? '') ?: null;
-        // If the row was marked "With expiry", the date is mandatory.
+        $is_box_item = ($box_barcode !== null) || (intval($row['box_qty'] ?? 0) >= 1);
+        $box_units   = $is_box_item ? max(1, intval($row['qty_per_box'] ?? 1)) : 1;
+        $expiry_date = trim($row['expiry_date'] ?? '') ?: null;
         if (!empty($row['has_expiry']) && $expiry_date === null) {
-            header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("An item marked \"with expiry\" is missing its expiry date."));
-            exit();
+            $err("An item marked \"with expiry\" is missing its expiry date.");
         }
         $damaged_qty  = max(0, intval($row['damaged_qty'] ?? 0));
         $damage_notes = trim($row['damage_notes'] ?? '') ?: null;
@@ -87,14 +96,10 @@ if ($action === 'save_items') {
         $validated[] = compact('barcode', 'box_barcode', 'box_units', 'desc', 'qty', 'expiry_date', 'damaged_qty', 'damage_notes');
     }
 
-    if (empty($validated)) {
-        header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Add at least one item before saving."));
-        exit();
-    }
+    if (empty($validated)) $err("Add at least one item before saving.");
 
     $conn->begin_transaction();
     try {
-        // Replace items
         $del = $conn->prepare("DELETE FROM receiving_items WHERE batch_id = ?");
         $del->bind_param("i", $batch_id);
         $del->execute();
@@ -105,15 +110,12 @@ if ($action === 'save_items') {
             $ins->execute();
         }
 
-        // Release this user's processing lock (re-acquired on the next open if still editing).
         batch_lock_release($conn, $batch_id, $user_id);
 
         if ($submit_action === 'submit') {
-            // Assign receiver + promote to pending_validation in one step
             $upd = $conn->prepare(
                 "UPDATE receiving_batches
-                 SET status = 'pending_validation',
-                     receiver_id = ?, receiver_username = ?
+                 SET status = 'pending_validation', receiver_id = ?, receiver_username = ?
                  WHERE id = ?"
             );
             $upd->bind_param("isi", $user_id, $username, $batch_id);
@@ -124,24 +126,20 @@ if ($action === 'save_items') {
             $al->execute();
 
             $conn->commit();
-            header("Location: receive_batch.php?success=" . urlencode("Batch #$batch_id submitted. Validator will review shortly."));
+            $ok("receive_batch.php?success=" . urlencode("Batch #$batch_id submitted. Validator will review shortly."));
         } else {
-            // Save draft — claim the voucher if it's still unclaimed
             if (!$batch['receiver_id']) {
                 $claim = $conn->prepare("UPDATE receiving_batches SET receiver_id = ?, receiver_username = ? WHERE id = ? AND receiver_id IS NULL");
                 $claim->bind_param("isi", $user_id, $username, $batch_id);
                 $claim->execute();
             }
-
             $conn->commit();
-            header("Location: receive_items.php?batch_id=$batch_id&success=" . urlencode("Items saved."));
+            $ok("receive_items.php?batch_id=$batch_id&success=" . urlencode("Items saved."));
         }
-        exit();
 
     } catch (Throwable $e) {
         $conn->rollback();
-        header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode($e->getMessage()));
-        exit();
+        $err($e->getMessage());
     }
 }
 
