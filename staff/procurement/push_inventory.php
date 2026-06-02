@@ -53,27 +53,45 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
 
         // Resolve an existing active/draft lot by EITHER code (per-item OR box barcode),
         // so a sealed box (no per-item code yet) still matches its prior lot on restock.
-        $active = null;
-        $draft  = null;
+        $active     = null;   // lot matching barcode + expiry exactly  → merge candidate
+        $active_ref = null;   // any active lot for this barcode         → price/tier reference
+        $draft      = null;   // draft lot matching barcode + expiry     → draft merge candidate
         if ($barcode || $box_barcode) {
-            $match = " AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?)) LIMIT 1";
-            $aq = $conn->prepare("SELECT id, name, price, cost_price, last_buy_cost, quantity FROM products WHERE status = '" . PRODUCT_ACTIVE . "'" . $match);
-            $aq->bind_param("ssss", $barcode, $barcode, $box_barcode, $box_barcode);
+            $match_bc    = " AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?))";
+            // <=> is the NULL-safe equals operator: NULL <=> NULL is TRUE, so expiry_date <=> NULL
+            // correctly finds lots with no expiry when incoming item has no expiry.
+            $match_exact = $match_bc . " AND expiry_date <=> ?";
+
+            // Exact-expiry active lot (for merge decisions)
+            $aq = $conn->prepare("SELECT id, name, price, cost_price, last_buy_cost, quantity, expiry_date FROM products WHERE status = '" . PRODUCT_ACTIVE . "'" . $match_exact . " LIMIT 1");
+            $aq->bind_param("sssss", $barcode, $barcode, $box_barcode, $box_barcode, $expiry);
             $aq->execute();
             $active = $aq->get_result()->fetch_assoc() ?: null;
 
-            $dq = $conn->prepare("SELECT id, cost_price, quantity FROM products WHERE status = '" . PRODUCT_DRAFT . "'" . $match);
-            $dq->bind_param("ssss", $barcode, $barcode, $box_barcode, $box_barcode);
+            // Any active lot — used as selling-price / bulk-tier reference when a new lot must be created
+            if ($active) {
+                $active_ref = $active;   // same row, no extra query needed
+            } else {
+                $aq_ref = $conn->prepare("SELECT id, name, price, cost_price, last_buy_cost, quantity, expiry_date FROM products WHERE status = '" . PRODUCT_ACTIVE . "'" . $match_bc . " LIMIT 1");
+                $aq_ref->bind_param("ssss", $barcode, $barcode, $box_barcode, $box_barcode);
+                $aq_ref->execute();
+                $active_ref = $aq_ref->get_result()->fetch_assoc() ?: null;
+            }
+
+            // Exact-expiry draft lot (for draft merge decisions)
+            $dq = $conn->prepare("SELECT id, cost_price, quantity, expiry_date FROM products WHERE status = '" . PRODUCT_DRAFT . "'" . $match_exact . " LIMIT 1");
+            $dq->bind_param("sssss", $barcode, $barcode, $box_barcode, $box_barcode, $expiry);
             $dq->execute();
             $draft = $dq->get_result()->fetch_assoc() ?: null;
         }
 
         if ($active) {
-            $ref_cost      = floatval($active['cost_price']) > 0 ? floatval($active['cost_price']) : floatval($active['last_buy_cost']);
-            $cost_changed  = abs($ref_cost - $cost) >= 0.01;
+            // Exact match: $active has the same barcode AND same expiry — safe to compare cost only.
+            $ref_cost     = floatval($active['cost_price']) > 0 ? floatval($active['cost_price']) : floatval($active['last_buy_cost']);
+            $cost_changed = abs($ref_cost - $cost) >= 0.01;
 
             if (!$cost_changed) {
-                // Same supplier cost → restock the live lot, keep it sellable at its current price
+                // Same cost + same expiry → merge into existing lot
                 $new_qty = intval($active['quantity']) + $qty;
                 $upd = $conn->prepare(
                     "UPDATE products SET quantity = ?, max_quantity = ?, last_buy_cost = ?, status = '" . PRODUCT_ACTIVE . "', archived_at = NULL, receiving_batch_id = ?" .
@@ -87,19 +105,43 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
                 }
                 $upd->execute();
                 _set_box_fields($conn, $active['id'], $box_barcode, $box_units);
-
-                _push_log($conn, $actor_id, $active['id'], "Pipeline push: +$qty units for \"{$active['name']}\" (Batch #$batch_id) — cost unchanged, sellable.");
+                _push_log($conn, $actor_id, $active['id'], "Pipeline push: +$qty units for \"{$active['name']}\" (Batch #$batch_id) — cost & expiry match, merged.");
             } else {
-                // Cost changed → hold the new stock as a draft lot for Admin to price
+                // Cost changed → hold as draft for Admin to price
                 $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'cost_change', $box_barcode, $box_units);
                 _notify_admin($conn, $batch_id,
                     "Cost change on delivery: \"$desc\" (barcode: $barcode) now ₱" . number_format($cost, 2)
                     . " vs previous ₱" . number_format($ref_cost, 2) . ". $qty unit(s) held in Inventory — set a selling price to release to POS.");
                 _push_log($conn, $actor_id, $new_id, "Pipeline push: $qty units of \"{$desc}\" HELD (cost change) — awaiting Admin selling price (Batch #$batch_id).");
             }
+        } elseif ($active_ref) {
+            // Product is already priced and active, but no lot with this exact expiry exists yet.
+            // Create a new active lot (FIFO lot) — copy selling price and bulk tiers from $active_ref.
+            $ref_cost     = floatval($active_ref['cost_price']) > 0 ? floatval($active_ref['cost_price']) : floatval($active_ref['last_buy_cost']);
+            $cost_changed = abs($ref_cost - $cost) >= 0.01;
+
+            if (!$cost_changed) {
+                $selling_price = floatval($active_ref['price']);
+                if ($selling_price > 0) {
+                    $new_id = _insert_active_lot($conn, $desc, $barcode, $cost, $selling_price, $qty, $expiry, $batch_id, $box_barcode, $box_units, $active_ref['id']);
+                    _push_log($conn, $actor_id, $new_id, "Pipeline push: new FIFO lot for \"{$desc}\" (Batch #$batch_id, expiry {$expiry}) — same cost, new expiry, separate lot created.");
+                } else {
+                    // Active lot exists but has no selling price — hold as draft
+                    $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new', $box_barcode, $box_units);
+                    _push_log($conn, $actor_id, $new_id, "Pipeline push: draft lot for \"{$desc}\" (Batch #$batch_id, expiry {$expiry}) — new expiry, active price missing.");
+                }
+            } else {
+                // Cost changed → hold as draft for Admin to price
+                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'cost_change', $box_barcode, $box_units);
+                _notify_admin($conn, $batch_id,
+                    "Cost change on delivery: \"$desc\" (barcode: $barcode) now ₱" . number_format($cost, 2)
+                    . " vs previous ₱" . number_format($ref_cost, 2) . ". $qty unit(s) held in Inventory — set a selling price to release to POS.");
+                _push_log($conn, $actor_id, $new_id, "Pipeline push: $qty units of \"{$desc}\" HELD (cost change, new expiry) — awaiting Admin selling price (Batch #$batch_id).");
+            }
         } elseif ($draft) {
-            // No live lot yet, but an unpriced draft lot exists — merge if same cost, else add another draft
+            // No active lot at all; a draft with this exact expiry exists — merge if cost matches
             if (abs(floatval($draft['cost_price']) - $cost) < 0.01) {
+                // Same cost + same expiry → merge into existing draft
                 $new_qty = intval($draft['quantity']) + $qty;
                 $upd = $conn->prepare(
                     "UPDATE products SET quantity = ?, max_quantity = ?, last_buy_cost = ?, receiving_batch_id = ?" .
@@ -115,6 +157,7 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
                 _set_box_fields($conn, $draft['id'], $box_barcode, $box_units);
                 _push_log($conn, $actor_id, $draft['id'], "Pipeline push: +$qty units to unpriced draft \"{$desc}\" (Batch #$batch_id).");
             } else {
+                // Different cost → new draft lot
                 $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new', $box_barcode, $box_units);
                 _notify_admin($conn, $batch_id, "New item awaiting price: \"$desc\" (barcode: " . ($barcode ?: $box_barcode ?: 'none') . ") — $qty unit(s) in Inventory. Set a selling price to release to POS.");
                 _push_log($conn, $actor_id, $new_id, "Pipeline push: NEW unpriced draft \"{$desc}\" (Batch #$batch_id).");
@@ -148,6 +191,38 @@ function _insert_draft_lot(mysqli $conn, string $desc, ?string $barcode, float $
          VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, '" . PRODUCT_DRAFT . "', ?, ?, ?)"
     );
     $ins->bind_param("sssiddiissi", $desc, $barcode, $box_barcode, $box_units, $cost, $cost, $qty, $qty, $reason, $expiry, $batch_id);
+    $ins->execute();
+    return $conn->insert_id;
+}
+
+/**
+ * Insert a new ACTIVE lot for a product that is already priced.
+ * Used when a restock has the same cost as an existing lot but a different expiry date,
+ * so both lots can live side-by-side and FIFO drains the earliest-expiry lot first.
+ * Bulk tiers are copied from the reference lot so pricing stays consistent.
+ */
+function _insert_active_lot(mysqli $conn, string $desc, ?string $barcode, float $cost, float $selling_price, int $qty, ?string $expiry, int $batch_id, ?string $box_barcode, int $box_units, int $ref_id): int
+{
+    $tq = $conn->prepare("SELECT bulk_qty_half, price_half_box, bulk_qty_full, price_full_box FROM products WHERE id = ?");
+    $tq->bind_param("i", $ref_id);
+    $tq->execute();
+    $t = $tq->get_result()->fetch_assoc() ?: ['bulk_qty_half' => 0, 'price_half_box' => 0.0, 'bulk_qty_full' => 0, 'price_full_box' => 0.0];
+
+    $ins = $conn->prepare(
+        "INSERT INTO products
+             (name, barcode, box_barcode, box_units, price, cost_price, last_buy_cost,
+              quantity, max_quantity, status, expiry_date, receiving_batch_id,
+              bulk_qty_half, price_half_box, bulk_qty_full, price_full_box)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?, ?, ?, ?, ?)"
+    );
+    $ins->bind_param("sssidddiisiidid",
+        $desc, $barcode, $box_barcode, $box_units,
+        $selling_price, $cost, $cost,
+        $qty, $qty,
+        $expiry, $batch_id,
+        $t['bulk_qty_half'], $t['price_half_box'],
+        $t['bulk_qty_full'], $t['price_full_box']
+    );
     $ins->execute();
     return $conn->insert_id;
 }
