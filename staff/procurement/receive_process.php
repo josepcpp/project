@@ -62,6 +62,16 @@ if ($action === 'save_items') {
             header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Each item needs at least one barcode (per-item or box)."));
             exit();
         }
+        // NB- codes are system-generated; ensure no collision with an existing product.
+        if ($barcode !== null && str_starts_with($barcode, 'NB-')) {
+            $chk = $conn->prepare("SELECT id FROM products WHERE barcode = ? LIMIT 1");
+            $chk->bind_param("s", $barcode);
+            $chk->execute();
+            if ($chk->get_result()->num_rows > 0) {
+                header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Internal ID collision for \"$desc\" — please remove the row and re-add it to generate a new code."));
+                exit();
+            }
+        }
         // Box units only matter when there's an actual box; plain items stay at 1.
         $is_box_item  = ($box_barcode !== null) || (intval($row['box_qty'] ?? 0) >= 1);
         $box_units    = $is_box_item ? max(1, intval($row['qty_per_box'] ?? 1)) : 1;

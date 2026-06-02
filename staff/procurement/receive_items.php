@@ -158,9 +158,15 @@ include '../layout_top.php';
     <div class="card-modern p-8">
         <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
             <h3 class="serif-title text-lg font-black text-slate-800">Encode Received Items</h3>
-            <button type="button" onclick="addRow()" class="text-slate-500 hover:text-slate-700 text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-slate-100">
-                + Blank row (no barcode)
-            </button>
+            <div class="flex items-center gap-2">
+                <button type="button" onclick="addRow()" class="text-slate-500 hover:text-slate-700 text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-slate-100">
+                    + Blank row
+                </button>
+                <button type="button" onclick="addNonBarcodeRow()"
+                        class="text-amber-600 hover:text-white text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-amber-500 border border-amber-200 hover:border-amber-500">
+                    + Non-barcode item
+                </button>
+            </div>
         </div>
 
         <!-- ── Scan Station ─────────────────────────────────────────────── -->
@@ -409,6 +415,7 @@ async function lookupBarcodeData(barcode) {
 async function lookupBarcode(input) {
     const barcode = input.value.trim();
     if (!barcode) return;
+    if (barcode.startsWith('NB-')) return;   // auto-generated internal code — no DB lookup needed
     const row  = input.closest('tr');
     const desc = row.querySelector('input[name*="[description]"]');
     const data = await lookupBarcodeData(barcode);
@@ -569,6 +576,47 @@ function addRow(barcode = '') {
     tbody.appendChild(tr);
     if (!barcode) tr.querySelector('.barcode-input').focus();
     return tr;
+}
+
+// ── Non-barcode item: generate NB-YYYYMMDD-XXXXXX and lock the barcode field ──
+function genNbCode() {
+    var now = new Date();
+    var d   = now.getFullYear().toString()
+            + String(now.getMonth() + 1).padStart(2, '0')
+            + String(now.getDate()).padStart(2, '0');
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // unambiguous charset
+    var rnd = '';
+    if (window.crypto && window.crypto.getRandomValues) {
+        var buf = new Uint8Array(6);
+        window.crypto.getRandomValues(buf);
+        buf.forEach(function(b) { rnd += chars[b % chars.length]; });
+    } else {
+        for (var n = 0; n < 6; n++) rnd += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return 'NB-' + d + '-' + rnd;
+}
+
+function addNonBarcodeRow() {
+    var code = genNbCode();
+    var row  = addRow('');
+    var bc   = row.querySelector('.barcode-input');
+
+    // Fill and lock the barcode field — the box barcode input is already hidden by default
+    bc.value    = code;
+    bc.readOnly = true;
+    bc.removeAttribute('onblur');
+    bc.classList.add('bg-amber-50', 'text-amber-800', 'cursor-not-allowed', 'font-mono', 'text-xs');
+
+    // Small badge appended BELOW the input so the column width is unchanged
+    var badge = document.createElement('span');
+    badge.className   = 'inline-block mt-1 text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest';
+    badge.textContent = 'Non-barcode item';
+    bc.parentElement.appendChild(badge);
+
+    // Jump straight to the description — clerk must name the item
+    var desc = row.querySelector('input[name*="[description]"]');
+    if (desc) desc.focus();
+    return row;
 }
 
 function removeRow(btn) {

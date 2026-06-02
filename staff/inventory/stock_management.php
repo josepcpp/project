@@ -190,12 +190,19 @@ if ($types === '') {
     $res = $q->get_result();
 }
 
-$inv_tab = ($stock_filter === 'archived') ? 'archived' : ($stock_filter === 'disposed' ? 'disposed' : 'live');
+$inv_tab = match($stock_filter) {
+    'archived' => 'archived',
+    'disposed' => 'disposed',
+    'critical' => 'critical',
+    'fast'     => 'fast',
+    'slow'     => 'slow',
+    default    => 'live',
+};
 
 // ── Master view: group per-supplier rows by product name in PHP ───────────────
 $product_groups = [];
 $product_order  = [];
-if (empty($batch_filter) && $inv_tab !== 'disposed' && $res) {
+if (empty($batch_filter) && !in_array($inv_tab, ['disposed', 'fast', 'slow']) && $res) {
     while ($row = $res->fetch_assoc()) {
         $key = mb_strtolower(trim($row['name']));
         if (!isset($product_groups[$key])) {
@@ -233,27 +240,74 @@ if (empty($batch_filter) && $inv_tab !== 'disposed' && $res) {
     }
 
     // Apply stock-level filter in PHP (replaces SQL HAVING clause)
-    if (!in_array($stock_filter, ['', 'archived'])) {
+    if (!in_array($stock_filter, ['', 'archived', 'fast', 'slow'])) {
         foreach ($product_order as $i => $key) {
             if (!isset($product_groups[$key])) continue;
             $ts = $product_groups[$key]['total_stock'];
             $tm = $product_groups[$key]['total_max'];
             $rt = $tm > 0 ? (int)floor($tm * DEFAULT_LOW_STOCK_PCT) : $threshold;
             $keep = match($stock_filter) {
-                'low'  => $ts > 0 && $ts <= $rt,
-                'zero' => $ts <= 0,
-                'in'   => $ts > 0 && $ts > $rt,
-                default => true,
+                'low'      => $ts > 0 && $ts <= $rt,
+                'zero'     => $ts <= 0,
+                'in'       => $ts > 0 && $ts > $rt,
+                'critical' => $ts <= $rt,   // zero + low combined; most urgent first
+                default    => true,
             };
             if (!$keep) { unset($product_groups[$key]); unset($product_order[$i]); }
         }
         $product_order = array_values($product_order);
+        // Critical: sort by stock level ascending so most urgent rows appear first.
+        if ($stock_filter === 'critical') {
+            usort($product_order, function ($a, $b) use ($product_groups) {
+                return ($product_groups[$a]['total_stock'] ?? 0) <=> ($product_groups[$b]['total_stock'] ?? 0);
+            });
+        }
     }
 }
 
-$result_count = empty($batch_filter) && $inv_tab !== 'disposed'
-    ? count($product_groups)
-    : ($res ? $res->num_rows : 0);
+// ── FAST / SLOW MOVING DATA (last 30 days) ───────────────────────────────────
+$fast_rows = [];
+$slow_rows = [];
+$_sales_sub = "(SELECT si.product_id, SUM(si.qty) AS sold_qty
+                FROM sales_items si
+                JOIN sales s ON s.id = si.sale_id
+                WHERE s.sale_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                GROUP BY si.product_id) AS _sa";
+if ($inv_tab === 'fast') {
+    $fq = $conn->query(
+        "SELECT MIN(p.id) AS id, p.name,
+                MIN(NULLIF(p.barcode,'')) AS barcode, MAX(p.price) AS price,
+                SUM(p.quantity) AS total_stock, COALESCE(SUM(_sa.sold_qty), 0) AS sold_30d
+         FROM products p
+         LEFT JOIN $_sales_sub ON _sa.product_id = p.id
+         WHERE p.status = '" . PRODUCT_ACTIVE . "'
+         GROUP BY LOWER(TRIM(p.name))
+         HAVING sold_30d > 0
+         ORDER BY sold_30d DESC LIMIT 30"
+    );
+    if ($fq) $fast_rows = $fq->fetch_all(MYSQLI_ASSOC);
+}
+if ($inv_tab === 'slow') {
+    $sq = $conn->query(
+        "SELECT MIN(p.id) AS id, p.name,
+                MIN(NULLIF(p.barcode,'')) AS barcode, MAX(p.price) AS price,
+                SUM(p.quantity) AS total_stock, COALESCE(SUM(_sa.sold_qty), 0) AS sold_30d
+         FROM products p
+         LEFT JOIN $_sales_sub ON _sa.product_id = p.id
+         WHERE p.status = '" . PRODUCT_ACTIVE . "'
+         GROUP BY LOWER(TRIM(p.name))
+         HAVING total_stock > 0
+         ORDER BY sold_30d ASC, total_stock DESC LIMIT 30"
+    );
+    if ($sq) $slow_rows = $sq->fetch_all(MYSQLI_ASSOC);
+}
+
+$result_count = match($inv_tab) {
+    'fast'     => count($fast_rows),
+    'slow'     => count($slow_rows),
+    'disposed' => ($res ? $res->num_rows : 0),
+    default    => (empty($batch_filter) ? count($product_groups) : ($res ? $res->num_rows : 0)),
+};
 $all_batches  = $conn->query("SELECT id, name, invoice_number, created_at FROM suppliers ORDER BY id DESC LIMIT 100");
 
 // Disposal history data
@@ -268,199 +322,48 @@ if ($inv_tab === 'disposed') {
     if ($dpr) $disposed_rows = $dpr->fetch_all(MYSQLI_ASSOC);
 }
 
-// Has any filter active?
-$has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $stock_filter !== '';
+// Show Reset button only when a keyword search is active.
+$has_filter = $search !== '';
 ?>
 
 <div class="max-w-7xl mx-auto space-y-6 animate-in pb-20">
 
-    <!-- ── SEARCH & FILTER BAR ───────────────────────────────────────────── -->
-    <div class="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-xl space-y-5">
-
-        <!-- Row 1: Keyword + batch + reset -->
-        <div class="flex flex-col lg:flex-row gap-4 items-end">
-
-            <!-- Keyword search -->
-            <form method="GET" action="stock_management.php" class="flex-1 w-full" id="searchInventoryForm">
-                <label class="label-modern ml-4">Search Inventory</label>
+    <!-- ── SEARCH BAR ────────────────────────────────────────────────────── -->
+    <div class="bg-white px-8 py-6 rounded-[3rem] border border-slate-100 shadow-xl">
+        <div class="flex gap-3 items-center">
+            <form method="GET" action="stock_management.php" class="flex-1" id="searchInventoryForm">
                 <div class="flex gap-2 p-1.5 bg-slate-50 rounded-[2rem] border border-slate-100 focus-within:ring-4 focus-within:ring-emerald-500/5 transition-all">
                     <div class="flex-1 relative">
-                        <svg class="h-6 w-6 absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                        <svg class="h-5 w-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
                         <input type="text" name="search" id="kw-input" value="<?= htmlspecialchars($search) ?>"
                                data-live="#stockRows"
-                               placeholder="Type to filter by name…"
-                               class="w-full bg-transparent border-none py-4 pl-12 pr-4 outline-none font-bold text-slate-600">
+                               placeholder="Search by product name…"
+                               class="w-full bg-transparent border-none py-3.5 pl-11 pr-4 outline-none font-bold text-slate-600 text-sm">
                     </div>
-                    <button type="submit" class="bg-slate-900 text-white px-8 rounded-[1.5rem] font-black uppercase text-xs tracking-widest hover:bg-emerald-600 transition-all">Search</button>
+                    <button type="submit" class="bg-slate-900 text-white px-6 rounded-[1.5rem] font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 transition-all">Search</button>
                 </div>
-                <!-- Hidden holders so form submit carries all current filters -->
-                <input type="hidden" name="batch_id" id="kw-batch" value="<?= htmlspecialchars($batch_filter) ?>">
-                <input type="hidden" name="cat"      id="kw-cat"   value="<?= htmlspecialchars($cat_filter) ?>">
-                <input type="hidden" name="stock"    id="kw-stock" value="<?= htmlspecialchars($stock_filter) ?>">
+                <!-- Preserve current tab when submitting a keyword search -->
+                <input type="hidden" name="stock" id="kw-stock" value="<?= htmlspecialchars($stock_filter) ?>">
             </form>
 
-            <!-- Batch / Transaction context -->
-            <div class="w-full lg:w-[360px]">
-                <label class="label-modern ml-4">Transaction Context</label>
-                <select id="filter-batch" class="input-modern w-full h-[64px] bg-white cursor-pointer font-bold text-slate-600 shadow-sm" onchange="submitFilters()">
-                    <option value="">-- All Deliveries (Master) --</option>
-                    <?php if ($all_batches): while ($b = $all_batches->fetch_assoc()): ?>
-                    <option value="<?= $b['id'] ?>" <?= ($batch_filter == $b['id']) ? 'selected' : '' ?>>
-                        <?= htmlspecialchars($b['invoice_number']) ?> — <?= htmlspecialchars($b['name']) ?> (<?= date('M d, Y', strtotime($b['created_at'])) ?>)
-                    </option>
-                    <?php endwhile; endif; ?>
-                </select>
-            </div>
+            <a href="export_inventory_csv.php" target="_blank"
+               class="flex-shrink-0 h-[52px] px-5 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-[1.5rem] font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all flex items-center gap-2 whitespace-nowrap">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                Export CSV
+            </a>
 
             <?php if ($has_filter): ?>
             <button onclick="navigate('stock_management.php')"
-                    class="h-[64px] px-8 bg-rose-50 text-rose-500 rounded-[1.5rem] hover:bg-rose-500 hover:text-white transition-all font-black uppercase text-[10px] tracking-widest flex-shrink-0">
+                    class="flex-shrink-0 h-[52px] px-5 bg-rose-50 text-rose-500 rounded-[1.5rem] hover:bg-rose-500 hover:text-white transition-all font-black uppercase text-[10px] tracking-widest">
                 Reset
             </button>
             <?php endif; ?>
         </div>
-
-        <!-- Row 2: Category + Stock Level + Import XML -->
-        <div class="flex flex-col sm:flex-row gap-4 items-end">
-
-            <!-- Category filter -->
-            <div class="flex-1">
-                <label class="label-modern ml-4">Category</label>
-                <select id="filter-cat" class="input-modern w-full h-[56px] bg-white cursor-pointer font-bold text-slate-600" onchange="submitFilters()">
-                    <option value="">All Categories</option>
-                    <?php foreach ($categories as $cat): ?>
-                    <option value="<?= htmlspecialchars($cat) ?>" <?= ($cat_filter === $cat) ? 'selected' : '' ?>>
-                        <?= htmlspecialchars($cat) ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-
-            <!-- Stock level filter -->
-            <div class="flex-1">
-                <label class="label-modern ml-4">Stock Level</label>
-                <select id="filter-stock" class="input-modern w-full h-[56px] bg-white cursor-pointer font-bold text-slate-600" onchange="submitFilters()">
-                    <option value=""         <?= $stock_filter === ''         ? 'selected' : '' ?>>All Stock</option>
-                    <option value="in"       <?= $stock_filter === 'in'       ? 'selected' : '' ?>>In Stock</option>
-                    <option value="low"      <?= $stock_filter === 'low'      ? 'selected' : '' ?>>Low Stock (≤ 10% of intake)</option>
-                    <option value="zero"     <?= $stock_filter === 'zero'     ? 'selected' : '' ?>>Out of Stock</option>
-                    <option value="archived" <?= $stock_filter === 'archived' ? 'selected' : '' ?>>Archived</option>
-                </select>
-            </div>
-
-            <!-- Import XML (admin/superadmin only) -->
-            <?php if ($role !== ROLE_STAFF): ?>
-            <div class="flex-shrink-0">
-                <label class="label-modern ml-4 opacity-0 select-none">Action</label>
-                <button onclick="toggleXmlPanel()"
-                        class="h-[56px] px-6 bg-blue-50 border border-blue-100 text-blue-600 rounded-[1.5rem] font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all flex items-center gap-2">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                    </svg>
-                    Import XML
-                </button>
-            </div>
-            <?php endif; ?>
-        </div>
     </div>
-
-    <!-- ── XML IMPORT PANEL ──────────────────────────────────────────────── -->
-    <?php if ($role !== ROLE_STAFF): ?>
-    <div id="xml-panel" class="hidden bg-white rounded-[3rem] border border-blue-100 shadow-2xl overflow-hidden">
-        <div class="p-8 border-b border-blue-50 bg-blue-50/30 flex items-center justify-between">
-            <div class="flex items-center gap-4">
-                <div class="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center flex-shrink-0">
-                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                    </svg>
-                </div>
-                <div>
-                    <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">XML Inventory Import</h4>
-                    <p class="text-slate-400 text-[10px] font-bold mt-0.5">Existing barcodes → quantity is <em>added</em>, price updated. New barcodes → inserted as active.</p>
-                </div>
-            </div>
-            <button onclick="toggleXmlPanel()" class="text-slate-300 hover:text-slate-600 transition-colors p-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-        </div>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
-
-            <!-- Format spec -->
-            <div class="p-8 space-y-4">
-                <div class="flex items-center justify-between">
-                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Required XML Format</p>
-                    <button onclick="downloadSampleXml()"
-                            class="text-[9px] font-black text-blue-500 border border-blue-100 px-3 py-1.5 rounded-xl hover:bg-blue-50 transition-all uppercase tracking-widest">
-                        ↓ Download Sample
-                    </button>
-                </div>
-                <pre class="bg-slate-900 text-emerald-400 rounded-2xl p-5 text-[11px] font-mono leading-relaxed overflow-x-auto"><?= htmlspecialchars(
-'<?xml version="1.0" encoding="UTF-8"?>
-<inventory>
-  <product>
-    <name>Product Name</name>       <!-- required -->
-    <barcode>1234567890</barcode>   <!-- required -->
-    <price>29.99</price>            <!-- required -->
-    <quantity>100</quantity>        <!-- required -->
-    <category>Beverages</category>  <!-- optional -->
-  </product>
-  <product>
-    <name>Another Product</name>
-    <barcode>0987654321</barcode>
-    <price>15.50</price>
-    <quantity>50</quantity>
-    <category>Snacks</category>
-  </product>
-</inventory>'
-                ) ?></pre>
-                <ul class="space-y-1">
-                    <?php foreach ([
-                        ['Root element', '<inventory>'],
-                        ['Each item',    '<product> or <item>'],
-                        ['Required fields', 'name, barcode, price, quantity'],
-                        ['Optional',     'category (defaults to "General")'],
-                        ['Max file size','2 MB'],
-                    ] as [$lbl, $val]): ?>
-                    <li class="flex items-center gap-3 text-[11px]">
-                        <span class="text-slate-400 font-bold w-28 flex-shrink-0"><?= $lbl ?></span>
-                        <code class="text-slate-700 font-black bg-slate-50 px-2 py-0.5 rounded"><?= $val ?></code>
-                    </li>
-                    <?php endforeach; ?>
-                </ul>
-            </div>
-
-            <!-- Upload form -->
-            <div class="p-8 flex flex-col justify-center space-y-6">
-                <form id="xmlImportForm" method="POST" action="inventory_xml_import.php" enctype="multipart/form-data">
-                    <div id="xml-drop-zone"
-                         class="border-2 border-dashed border-slate-200 rounded-3xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-all"
-                         ondragover="event.preventDefault(); this.classList.add('border-blue-400','bg-blue-50/30');"
-                         ondragleave="this.classList.remove('border-blue-400','bg-blue-50/30');"
-                         ondrop="handleXmlDrop(event)"
-                         onclick="document.getElementById('xml-file-input').click()">
-                        <svg class="w-10 h-10 text-slate-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                        </svg>
-                        <p id="xml-drop-label" class="font-black text-slate-400 text-sm">Drop .xml file here or click to browse</p>
-                        <p class="text-[10px] text-slate-300 font-bold mt-1">Maximum 2 MB</p>
-                        <input type="file" id="xml-file-input" name="xml_file" accept=".xml" class="hidden" onchange="onXmlFileSelected(this)">
-                    </div>
-
-                    <button type="submit" id="xml-submit-btn" disabled
-                            onclick="return confirmXmlImport(event)"
-                            class="mt-5 w-full py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all
-                                   disabled:bg-slate-100 disabled:text-slate-300 disabled:cursor-not-allowed
-                                   bg-blue-600 text-white hover:bg-blue-700 hidden">
-                        Import Inventory
-                    </button>
-                </form>
-            </div>
-        </div>
-    </div>
-    <?php endif; ?>
 
     <!-- ── AWAITING PRICING (draft stock held from POS) ──────────────────── -->
     <?php
@@ -523,24 +426,48 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
     <div class="bg-white rounded-[3rem] border border-slate-100 shadow-2xl overflow-hidden mb-20">
         <div class="p-8 border-b border-slate-100 bg-slate-50/20 flex justify-between items-center flex-wrap gap-3">
             <h4 class="font-black text-slate-800 text-sm uppercase tracking-[0.15em] flex items-center gap-2">
-                <span class="w-2.5 h-2.5 <?= $inv_tab === 'archived' ? 'bg-slate-400' : ($inv_tab === 'disposed' ? 'bg-orange-500' : (!empty($batch_filter) ? 'bg-blue-500' : 'bg-emerald-500')) ?> rounded-full shadow-sm"></span>
+                <?php
+                $dot_cls = match($inv_tab) {
+                    'archived' => 'bg-slate-400',
+                    'disposed' => 'bg-orange-500',
+                    'critical' => 'bg-rose-500',
+                    'fast'     => 'bg-sky-500',
+                    'slow'     => 'bg-amber-500',
+                    default    => !empty($batch_filter) ? 'bg-blue-500' : 'bg-emerald-500',
+                };
+                ?>
+                <span class="w-2.5 h-2.5 <?= $dot_cls ?> rounded-full shadow-sm"></span>
                 <?php
                 if ($inv_tab === 'disposed')       echo "Disposed Items";
                 elseif ($inv_tab === 'archived')   echo "Archived Products";
+                elseif ($inv_tab === 'critical')   echo "Critical Stock";
+                elseif ($inv_tab === 'fast')       echo "Fast Moving — Top 30 (Last 30 Days)";
+                elseif ($inv_tab === 'slow')       echo "Slow Moving — Last 30 Days";
                 elseif (!empty($batch_filter))     echo "Voucher: " . htmlspecialchars($active_batch_name);
-                elseif ($cat_filter !== '')        echo "Category: " . htmlspecialchars($cat_filter);
-                elseif ($stock_filter === 'low')   echo "Low Stock Items";
-                elseif ($stock_filter === 'zero')  echo "Out-of-Stock Items";
-                elseif ($stock_filter === 'in')    echo "In Stock Items";
                 else                               echo "Overall Store Inventory";
                 ?>
             </h4>
             <div class="flex items-center gap-3 flex-wrap">
-                <div class="flex gap-1 bg-slate-100 p-1 rounded-xl">
+                <div class="flex gap-1 bg-slate-100 p-1 rounded-xl flex-wrap">
                     <a href="stock_management.php"
                        class="px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
                               <?= $inv_tab === 'live' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600' ?>">
                         Live Stock
+                    </a>
+                    <a href="stock_management.php?stock=critical"
+                       class="px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
+                              <?= $inv_tab === 'critical' ? 'bg-rose-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600' ?>">
+                        Critical
+                    </a>
+                    <a href="stock_management.php?stock=fast"
+                       class="px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
+                              <?= $inv_tab === 'fast' ? 'bg-sky-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600' ?>">
+                        Fast Moving
+                    </a>
+                    <a href="stock_management.php?stock=slow"
+                       class="px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
+                              <?= $inv_tab === 'slow' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-400 hover:text-slate-600' ?>">
+                        Slow Moving
                     </a>
                     <?php if ($role !== ROLE_STAFF): ?>
                     <a href="stock_management.php?stock=archived"
@@ -561,7 +488,70 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
             </div>
         </div>
 
-        <?php if ($inv_tab === 'disposed'): ?>
+        <?php if (in_array($inv_tab, ['fast', 'slow'])): ?>
+        <!-- ── FAST / SLOW MOVING TABLE ────────────────────────────────────── -->
+        <?php
+        $mv_rows   = $inv_tab === 'fast' ? $fast_rows : $slow_rows;
+        $max_sold  = !empty($mv_rows) ? max(array_column($mv_rows, 'sold_30d')) : 1;
+        $max_sold  = max(1, $max_sold);
+        $mv_color  = $inv_tab === 'fast' ? ['ring' => 'bg-sky-500', 'bg' => 'bg-sky-50', 'text' => 'text-sky-700']
+                                         : ['ring' => 'bg-amber-400', 'bg' => 'bg-amber-50', 'text' => 'text-amber-700'];
+        ?>
+        <table class="table-modern text-left w-full">
+            <thead>
+                <tr class="<?= $inv_tab === 'fast' ? 'bg-sky-50/40' : 'bg-amber-50/30' ?>">
+                    <th class="px-10 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">#</th>
+                    <th class="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Product</th>
+                    <th class="px-6 py-5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Price</th>
+                    <th class="px-6 py-5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">In Stock</th>
+                    <th class="px-6 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Sold (30 days)</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50">
+            <?php if (!empty($mv_rows)): foreach ($mv_rows as $rank => $mv):
+                $sold    = intval($mv['sold_30d']);
+                $stock   = intval($mv['total_stock']);
+                $bar_pct = round($sold / $max_sold * 100);
+                $stock_cls = $stock <= 0 ? 'text-rose-500' : ($stock <= $threshold ? 'text-amber-500' : 'text-emerald-600');
+            ?>
+            <tr class="hover:bg-slate-50/40 transition-all">
+                <td class="px-10 py-5 text-[10px] font-black text-slate-300"><?= $rank + 1 ?></td>
+                <td class="px-6 py-5">
+                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($mv['name']) ?></p>
+                    <?php if (!empty($mv['barcode'])): ?>
+                    <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded mt-0.5 inline-block">#<?= htmlspecialchars($mv['barcode']) ?></code>
+                    <?php endif; ?>
+                </td>
+                <td class="px-6 py-5 text-center font-black text-slate-700">
+                    <?= floatval($mv['price']) > 0 ? '₱' . number_format(floatval($mv['price']), 2) : '<span class="text-slate-200">—</span>' ?>
+                </td>
+                <td class="px-6 py-5 text-center">
+                    <span class="text-2xl font-black <?= $stock_cls ?>"><?= number_format($stock) ?></span>
+                    <?php if ($stock <= 0): ?><p class="text-[9px] font-black text-rose-400 uppercase tracking-widest mt-0.5">Out</p>
+                    <?php elseif ($stock <= $threshold): ?><p class="text-[9px] font-black text-amber-400 uppercase tracking-widest mt-0.5">Low</p>
+                    <?php endif; ?>
+                </td>
+                <td class="px-6 py-5">
+                    <div class="flex items-center gap-3">
+                        <span class="font-black text-lg <?= $mv_color['text'] ?> w-12 text-right flex-shrink-0"><?= number_format($sold) ?></span>
+                        <div class="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div class="<?= $mv_color['ring'] ?> h-2 rounded-full transition-all" style="width:<?= $bar_pct ?>%"></div>
+                        </div>
+                        <span class="text-[10px] text-slate-400 font-bold w-8 flex-shrink-0"><?= $bar_pct ?>%</span>
+                    </div>
+                </td>
+            </tr>
+            <?php endforeach; else: ?>
+            <tr><td colspan="5" class="p-20 text-center">
+                <p class="font-black text-slate-300 uppercase tracking-widest text-sm">
+                    <?= $inv_tab === 'fast' ? 'No sales recorded in the last 30 days.' : 'No products in stock.' ?>
+                </p>
+            </td></tr>
+            <?php endif; ?>
+            </tbody>
+        </table>
+
+        <?php elseif ($inv_tab === 'disposed'): ?>
         <!-- ── DISPOSED ITEMS TABLE ─────────────────────────────────────────── -->
         <table class="table-modern text-left w-full">
             <thead>
@@ -863,108 +853,15 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
 <?php endif; ?>
 
 <script>
-// ── FILTER FORM HELPERS ──────────────────────────────────────────────────────
+// ── SEARCH FORM ──────────────────────────────────────────────────────────────
 document.getElementById('searchInventoryForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    submitFilters(this.search.value);
-});
-
-function submitFilters(keyword) {
-    var kw    = (keyword !== undefined) ? keyword : document.getElementById('kw-input').value;
-    var batch = document.getElementById('filter-batch').value;
-    var cat   = document.getElementById('filter-cat').value;
-    var stock = document.getElementById('filter-stock').value;
+    var kw    = document.getElementById('kw-input').value;
+    var stock = document.getElementById('kw-stock').value;
     var url   = 'stock_management.php?search=' + encodeURIComponent(kw)
-              + '&batch_id=' + encodeURIComponent(batch)
-              + '&cat='      + encodeURIComponent(cat)
-              + '&stock='    + encodeURIComponent(stock);
+              + (stock ? '&stock=' + encodeURIComponent(stock) : '');
     navigate(url);
-}
-
-// ── XML IMPORT PANEL ─────────────────────────────────────────────────────────
-function toggleXmlPanel() {
-    var panel = document.getElementById('xml-panel');
-    if (!panel) return;
-    panel.classList.toggle('hidden');
-    if (!panel.classList.contains('hidden')) {
-        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-}
-
-function onXmlFileSelected(input) {
-    var btn   = document.getElementById('xml-submit-btn');
-    var label = document.getElementById('xml-drop-label');
-    if (input.files && input.files[0]) {
-        label.textContent = input.files[0].name;
-        btn.disabled = false;
-        btn.classList.remove('hidden');
-    } else {
-        label.textContent = 'Drop .xml file here or click to browse';
-        btn.disabled = true;
-        btn.classList.add('hidden');
-    }
-}
-
-function handleXmlDrop(e) {
-    e.preventDefault();
-    var zone = document.getElementById('xml-drop-zone');
-    zone.classList.remove('border-blue-400', 'bg-blue-50/30');
-    var dt   = e.dataTransfer;
-    if (!dt || !dt.files || !dt.files[0]) return;
-    var file = dt.files[0];
-    if (!file.name.endsWith('.xml')) {
-        showFlash('Only .xml files are accepted.', 'error');
-        return;
-    }
-    var input  = document.getElementById('xml-file-input');
-    var dT = new DataTransfer();
-    dT.items.add(file);
-    input.files = dT.files;
-    onXmlFileSelected(input);
-}
-
-function confirmXmlImport(e) {
-    e.preventDefault();
-    customConfirm(
-        'This will add quantities to existing products (matched by barcode) and insert new ones. Proceed?',
-        'Import XML Inventory?'
-    ).then(function(ok) {
-        if (ok) {
-            var fd = new FormData(document.getElementById('xmlImportForm'));
-            navigate('inventory_xml_import.php', fd, false);
-        }
-    });
-    return false;
-}
-
-function downloadSampleXml() {
-    var sample = '<' + '?xml version="1.0" encoding="UTF-8"?>\n'
-               + '<inventory>\n'
-               + '  <product>\n'
-               + '    <name>Product Name</name>\n'
-               + '    <barcode>1234567890</barcode>\n'
-               + '    <price>29.99</price>\n'
-               + '    <quantity>100</quantity>\n'
-               + '    <category>Beverages</category>\n'
-               + '  </product>\n'
-               + '  <product>\n'
-               + '    <name>Another Product</name>\n'
-               + '    <barcode>0987654321</barcode>\n'
-               + '    <price>15.50</price>\n'
-               + '    <quantity>50</quantity>\n'
-               + '    <category>Snacks</category>\n'
-               + '  </product>\n'
-               + '</inventory>';
-    var blob = new Blob([sample], { type: 'application/xml' });
-    var url  = URL.createObjectURL(blob);
-    var a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'inventory_import_sample.xml';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-}
+});
 
 // ── SUPPLIER DETAIL TOGGLE ───────────────────────────────────────────────────
 function toggleSuppliers(id) {
