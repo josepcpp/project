@@ -55,11 +55,18 @@ if ($action === 'save_items') {
         }
 
         $barcode      = trim($row['barcode']      ?? '') ?: null;
+        $box_barcode  = trim($row['box_barcode']  ?? '') ?: null;
+        // Each item needs at least one barcode — per-item or box (both fine, neither not).
+        if ($barcode === null && $box_barcode === null) {
+            header("Location: receive_items.php?batch_id=$batch_id&error=" . urlencode("Each item needs at least one barcode (per-item or box)."));
+            exit();
+        }
+        $box_units    = max(1, intval($row['qty_per_box'] ?? 1));   // units per box
         $expiry_date  = trim($row['expiry_date']  ?? '') ?: null;
         $damaged_qty  = max(0, intval($row['damaged_qty'] ?? 0));
         $damage_notes = trim($row['damage_notes'] ?? '') ?: null;
 
-        $validated[] = compact('barcode', 'desc', 'qty', 'expiry_date', 'damaged_qty', 'damage_notes');
+        $validated[] = compact('barcode', 'box_barcode', 'box_units', 'desc', 'qty', 'expiry_date', 'damaged_qty', 'damage_notes');
     }
 
     if (empty($validated)) {
@@ -74,9 +81,9 @@ if ($action === 'save_items') {
         $del->bind_param("i", $batch_id);
         $del->execute();
 
-        $ins = $conn->prepare("INSERT INTO receiving_items (batch_id, barcode, description, quantity, expiry_date, damaged_qty, damage_notes) VALUES (?,?,?,?,?,?,?)");
+        $ins = $conn->prepare("INSERT INTO receiving_items (batch_id, barcode, box_barcode, box_units, description, quantity, expiry_date, damaged_qty, damage_notes) VALUES (?,?,?,?,?,?,?,?,?)");
         foreach ($validated as $v) {
-            $ins->bind_param("issisis", $batch_id, $v['barcode'], $v['desc'], $v['qty'], $v['expiry_date'], $v['damaged_qty'], $v['damage_notes']);
+            $ins->bind_param("issisisis", $batch_id, $v['barcode'], $v['box_barcode'], $v['box_units'], $v['desc'], $v['qty'], $v['expiry_date'], $v['damaged_qty'], $v['damage_notes']);
             $ins->execute();
         }
 

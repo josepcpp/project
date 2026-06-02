@@ -25,13 +25,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
     csrf_verify('supplier_payments.php');
 
     $batch_id  = intval($_POST['batch_id'] ?? 0);
-    $amount    = round(floatval($_POST['amount'] ?? 0), 2);
+    // The paid amount is NOT taken from the form — it is derived server-side from the
+    // Admin's voucher receipt: Net = control_subtotal − approved damage − discount.
+    // Discount may be a flat peso amount or a percentage of the receipt subtotal.
+    $disc_mode  = (($_POST['discount_mode'] ?? 'amount') === 'percent') ? 'percent' : 'amount';
+    $disc_input = max(0, round(floatval($_POST['discount_value'] ?? 0), 4));
     $reference = trim($_POST['payment_reference'] ?? '') ?: null;
     $method    = trim($_POST['payment_method'] ?? '') ?: null;
     $notes     = trim($_POST['notes'] ?? '') ?: null;
 
-    if ($batch_id < 1 || $amount <= 0) {
-        header("Location: supplier_payments.php?error=" . urlencode("A valid batch and payment amount are required."));
+    if ($batch_id < 1) {
+        header("Location: supplier_payments.php?error=" . urlencode("A valid batch is required."));
         exit();
     }
 
@@ -57,17 +61,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
 
         $receipt   = round(floatval($b['control_subtotal']), 2);
         $deduction = round(floatval($b['deduction']), 2);
-        $net       = round($receipt - $deduction, 2);
+        // Resolve percentage to a peso amount against the receipt subtotal.
+        $discount  = $disc_mode === 'percent'
+            ? round($receipt * $disc_input / 100, 2)
+            : round($disc_input, 2);
+        if ($discount < 0) $discount = 0;
+        // Discount can't exceed what's left after damage (would make net negative).
+        if ($discount > $receipt - $deduction) throw new Exception("Discount can't exceed the receipt minus damage deduction.");
+        $net       = round($receipt - $deduction - $discount, 2);
+        if ($net <= 0) throw new Exception("Net payable must be greater than zero.");
 
         $ins = $conn->prepare(
             "INSERT INTO procurement_payments
-                (batch_id, receipt_subtotal, damage_deduction, net_amount,
+                (batch_id, receipt_subtotal, damage_deduction, supplier_discount, net_amount,
                  payment_reference, payment_method, notes, status,
                  verified_by, verified_by_username, verified_at)
-             VALUES (?,?,?,?,?,?,?,'paid',?,?,NOW())"
+             VALUES (?,?,?,?,?,?,?,?,'paid',?,?,NOW())"
         );
-        $ins->bind_param("idddsssis",
-            $batch_id, $receipt, $deduction, $amount,
+        $ins->bind_param("iddddsssis",
+            $batch_id, $receipt, $deduction, $discount, $net,
             $reference, $method, $notes, $user_id, $username);
         $ins->execute();
 
@@ -75,12 +87,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['record_payment'])) {
             "INSERT INTO procurement_audit_log (batch_id, actor_id, actor_username, actor_role, action, reason)
              VALUES (?,?,?,?,'supplier_paid',?)"
         );
-        $reason = "Paid ₱" . number_format($amount, 2) . " (net of ₱" . number_format($deduction, 2) . " damage)" . ($reference ? " · Ref: $reference" : '');
+        $disc_label = $disc_mode === 'percent' ? rtrim(rtrim(number_format($disc_input, 2), '0'), '.') . "% (₱" . number_format($discount, 2) . ")" : "₱" . number_format($discount, 2);
+        $reason = "Paid ₱" . number_format($net, 2) . " (net of ₱" . number_format($deduction, 2) . " damage"
+                . ($discount > 0 ? " and $disc_label discount" : "") . ")"
+                . ($reference ? " · Ref: $reference" : '');
         $al->bind_param("iisss", $batch_id, $user_id, $username, $role, $reason);
         $al->execute();
 
         $conn->commit();
-        header("Location: supplier_payments.php?tab=paid&success=" . urlencode("Payment of ₱" . number_format($amount, 2) . " recorded for Batch #$batch_id."));
+        header("Location: supplier_payments.php?tab=paid&success=" . urlencode("Payment of ₱" . number_format($net, 2) . " recorded for Batch #$batch_id."));
         exit();
     } catch (Throwable $e) {
         $conn->rollback();
@@ -108,7 +123,8 @@ $sql = "SELECT rb.id, rb.supplier_name, rb.supplier_contact, rb.control_subtotal
                COALESCE(dd.deduction, 0)        AS damage_deduction,
                COALESCE(dd.pending_tickets, 0)  AS pending_tickets,
                sp.id AS payment_id, sp.net_amount AS paid_amount, sp.payment_reference,
-               sp.payment_method, sp.verified_by_username, sp.verified_at, sp.notes AS payment_notes
+               sp.payment_method, sp.verified_by_username, sp.verified_at, sp.notes AS payment_notes,
+               COALESCE(sp.supplier_discount, 0) AS supplier_discount
         FROM receiving_batches rb
         LEFT JOIN users u  ON u.id  = rb.receiver_id
         LEFT JOIN users vu ON vu.id = rb.validator_id
@@ -193,7 +209,7 @@ function render_payment_card(array $b, array $items, bool $is_paid): void
                 </div>
                 <div class="text-right border-l border-slate-100 pl-5">
                     <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest"><?= $is_paid ? 'Paid' : 'Net Payable' ?></p>
-                    <p class="text-2xl font-black text-emerald-600">₱<?= number_format($is_paid ? floatval($b['paid_amount']) : $net, 2) ?></p>
+                    <p id="netpay-<?= $b['id'] ?>" class="text-2xl font-black text-emerald-600">₱<?= number_format($is_paid ? floatval($b['paid_amount']) : $net, 2) ?></p>
                 </div>
                 <button type="button" onclick="openDetail(<?= $b['id'] ?>)"
                     class="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-100 font-black text-[10px] uppercase tracking-widest px-4 py-2.5 rounded-xl transition-all whitespace-nowrap">
@@ -280,22 +296,39 @@ function render_payment_card(array $b, array $items, bool $is_paid): void
         <div class="border-t border-slate-100 px-6 py-3 flex flex-wrap items-center gap-4 text-xs">
             <span class="font-black text-slate-400 uppercase tracking-widest">Payment</span>
             <?php if ($b['payment_method']): ?><span class="font-bold text-slate-600"><?= htmlspecialchars($b['payment_method']) ?></span><?php endif; ?>
+            <?php if (floatval($b['supplier_discount'] ?? 0) > 0): ?><span class="font-bold text-amber-600">Discount: −₱<?= number_format(floatval($b['supplier_discount']), 2) ?></span><?php endif; ?>
             <?php if ($b['payment_reference']): ?><span class="text-slate-400">Ref: <?= htmlspecialchars($b['payment_reference']) ?></span><?php endif; ?>
             <span class="text-slate-400">by @<?= htmlspecialchars($b['verified_by_username'] ?? '—') ?> · <?= $b['verified_at'] ? date('M j, Y g:i A', strtotime($b['verified_at'])) : '—' ?></span>
             <?php if ($b['payment_notes']): ?><span class="text-slate-400 italic ml-auto"><?= htmlspecialchars($b['payment_notes']) ?></span><?php endif; ?>
         </div>
         <?php else: ?>
-        <form method="POST" class="border-t border-slate-100 px-6 py-4 flex flex-wrap items-end gap-3"
+        <form method="POST"
+              data-receipt="<?= number_format($receipt, 2, '.', '') ?>"
+              data-damage="<?= number_format($deduction, 2, '.', '') ?>"
+              data-batch="<?= $b['id'] ?>"
+              class="border-t border-slate-100 px-6 py-4 flex flex-wrap items-end gap-3"
               onsubmit="return confirm('Record this payment to <?= htmlspecialchars($b['supplier_name'] ?? 'supplier', ENT_QUOTES) ?>?');">
             <?= csrf_field() ?>
             <input type="hidden" name="record_payment" value="1">
             <input type="hidden" name="batch_id" value="<?= $b['id'] ?>">
             <div>
-                <label class="label-modern text-xs">Amount Paid</label>
+                <label class="label-modern text-xs">Supplier Discount</label>
+                <div class="flex items-center gap-1">
+                    <button type="button" onclick="toggleDiscMode(this)"
+                        class="disc-toggle w-9 h-[42px] rounded-xl bg-slate-100 hover:bg-amber-100 text-slate-600 font-black text-sm flex-shrink-0 transition-all" title="Switch peso / percent">₱</button>
+                    <input type="number" name="discount_value" step="0.01" min="0" value="0"
+                        oninput="recalcNet(this.closest('form'))"
+                        class="input-modern text-sm w-24 text-right font-black text-amber-600">
+                    <input type="hidden" name="discount_mode" value="amount">
+                </div>
+            </div>
+            <div>
+                <label class="label-modern text-xs">Amount Paid <span class="text-slate-300 normal-case font-normal">(auto)</span></label>
                 <div class="relative">
                     <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-black text-sm">₱</span>
-                    <input type="number" name="amount" step="0.01" min="0.01" value="<?= number_format($net, 2, '.', '') ?>"
-                        class="input-modern text-sm w-32 pl-7 text-right font-black text-emerald-600">
+                    <input type="text" name="amount" readonly tabindex="-1" value="<?= number_format($net, 2, '.', '') ?>"
+                        title="Receipt − Damage − Discount (derived from the voucher)"
+                        class="input-modern text-sm w-32 pl-7 text-right font-black text-emerald-600 bg-slate-50 cursor-not-allowed">
                 </div>
             </div>
             <div>
@@ -406,6 +439,37 @@ function render_payment_card(array $b, array $items, bool $is_paid): void
 </div>
 
 <script>
+// Live net-payable: Receipt − Damage − Supplier Discount (flat ₱ or % of receipt).
+// Updates the Amount Paid field and the Net Payable figure as the discount is typed.
+function recalcNet(form) {
+    if (!form) return;
+    var receipt = parseFloat(form.dataset.receipt) || 0;
+    var damage  = parseFloat(form.dataset.damage)  || 0;
+    var mode    = form.querySelector('[name="discount_mode"]').value;
+    var val     = parseFloat(form.querySelector('[name="discount_value"]').value) || 0;
+    if (val < 0) val = 0;
+    var disc = (mode === 'percent') ? (receipt * val / 100) : val;
+    disc = Math.min(disc, Math.max(0, receipt - damage));      // never push net below 0
+    var net = Math.max(0, receipt - damage - disc);
+    var amt = form.querySelector('[name="amount"]');
+    if (amt) amt.value = net.toFixed(2);
+    var disp = document.getElementById('netpay-' + form.dataset.batch);
+    if (disp) disp.textContent = '₱' + net.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+// Toggle the discount input between flat peso (₱) and percentage (%).
+function toggleDiscMode(btn) {
+    var form  = btn.closest('form');
+    var modeEl = form.querySelector('[name="discount_mode"]');
+    var input  = form.querySelector('[name="discount_value"]');
+    if (modeEl.value === 'amount') {
+        modeEl.value = 'percent'; btn.textContent = '%';
+        if (input) { input.max = '100'; input.placeholder = '0–100'; }
+    } else {
+        modeEl.value = 'amount'; btn.textContent = '₱';
+        if (input) { input.removeAttribute('max'); input.placeholder = '0.00'; }
+    }
+    recalcNet(form);
+}
 function openDetail(id) {
     const src = document.getElementById('vpdetail-' + id);
     if (!src) return;

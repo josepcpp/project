@@ -690,3 +690,33 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.6.9
+
+// ── v1.7.0 — Supplier discount at payment time ───────────────────────────────
+// A trade/volume discount from the supplier's receipt, deducted only when the
+// payment is recorded: Net Payable = receipt subtotal − approved damage − discount.
+// The blind validation tally (computed vs control) is intentionally left untouched.
+$_db_version   = '1.7.0';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE procurement_payments ADD COLUMN IF NOT EXISTS supplier_discount DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER damage_deduction");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.0
+
+// ── v1.7.1 — Box (case) barcode support ──────────────────────────────────────
+// A product can carry TWO codes: per-item barcode (products.barcode → +1 unit) and
+// a box/case barcode (box_barcode → +box_units). Sealed boxes are received by box
+// barcode only; the per-item code is learned on first individual sale at POS.
+// Existing products get box_units=1 and box_barcode=NULL → unchanged behavior.
+$_db_version   = '1.7.1';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE products         ADD COLUMN IF NOT EXISTS box_barcode VARCHAR(50)  DEFAULT NULL AFTER barcode");
+    $conn->query("ALTER TABLE products         ADD COLUMN IF NOT EXISTS box_units   INT NOT NULL  DEFAULT 1 AFTER box_barcode");
+    $conn->query("ALTER TABLE receiving_items  ADD COLUMN IF NOT EXISTS box_barcode VARCHAR(100) DEFAULT NULL AFTER barcode");
+    $conn->query("ALTER TABLE receiving_items  ADD COLUMN IF NOT EXISTS box_units   INT NOT NULL  DEFAULT 1 AFTER box_barcode");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.1

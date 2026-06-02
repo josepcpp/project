@@ -7,6 +7,10 @@ $_role   = strtolower($_SESSION['role'] ?? 'staff');
 $role    = $_role;
 $_uname  = $_SESSION['username'] ?? 'Unknown';
 
+// Anyone who isn't a support agent (admin and up) is a ticket "requester":
+// staff + procurement roles (receiver / validator / price_checker).
+$is_requester = !in_array($role, ROLES_ADMIN_AND_UP);
+
 if (!$user_id) { header("Location: /project/auth/login.php"); exit(); }
 
 // ── POST ACTIONS ──────────────────────────────────────────────────────────────
@@ -15,7 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // B1: staff-only gate
     if ($action === 'create_ticket') {
-        if ($_role !== ROLE_STAFF) { header("Location: help.php"); exit(); }
+        if (!$is_requester) { header("Location: help.php"); exit(); }
         $subject = trim($_POST['subject'] ?? '');
         $message = trim($_POST['message'] ?? '');
         // B4: length guard
@@ -53,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit();
         }
         if ($tid > 0 && $msg !== '') {
-            if ($_role === ROLE_STAFF) {
+            if ($is_requester) {
                 $chk = $conn->prepare("SELECT id, status FROM support_tickets WHERE id = ? AND user_id = ?");
                 $chk->bind_param("ii", $tid, $user_id);
             } else {
@@ -126,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // U2: staff closes their own ticket
-    if ($action === 'close_own_ticket' && $_role === ROLE_STAFF) {
+    if ($action === 'close_own_ticket' && $is_requester) {
         $tid = intval($_POST['ticket_id'] ?? 0);
         if ($tid > 0) {
             $upd = $conn->prepare("UPDATE support_tickets SET status='" . TICKET_RESOLVED . "', resolved_at=NOW(), updated_at=NOW() WHERE id=? AND user_id=?");
@@ -146,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'poll') 
     $tid     = intval($_GET['ticket_id'] ?? 0);
     $last_id = intval($_GET['last_id']   ?? 0);
     if ($tid > 0) {
-        if ($role === ROLE_STAFF) {
+        if ($is_requester) {
             $mq = $conn->prepare("SELECT sm.* FROM support_messages sm JOIN support_tickets st ON st.id = sm.ticket_id WHERE sm.ticket_id = ? AND sm.id > ? AND st.user_id = ? ORDER BY sm.created_at ASC");
             $mq->bind_param("iii", $tid, $last_id, $user_id);
         } else {
@@ -181,7 +185,7 @@ $filter_where = match($filter_status) {
 };
 
 // U3: include message count; G3/G4: sort by last activity
-if ($role === ROLE_STAFF) {
+if ($is_requester) {
     $tq = $conn->prepare("
         SELECT st.*,
             (SELECT COUNT(*) FROM support_messages sm WHERE sm.ticket_id = st.id) AS msg_count
@@ -208,7 +212,7 @@ while ($t = $tres->fetch_assoc()) $tickets[] = $t;
 
 // Status counts for filter tab labels
 $status_counts = ['all' => 0, TICKET_OPEN => 0, TICKET_IN_PROGRESS => 0, TICKET_RESOLVED => 0];
-if ($role === ROLE_STAFF) {
+if ($is_requester) {
     $cq = $conn->prepare("SELECT status, COUNT(*) AS c FROM support_tickets WHERE user_id = ? GROUP BY status");
     $cq->bind_param("i", $user_id); $cq->execute();
     $cres = $cq->get_result();
@@ -224,7 +228,7 @@ while ($cr = $cres->fetch_assoc()) {
 $sel  = null;
 $msgs = [];
 if ($sel_id > 0) {
-    if ($role === ROLE_STAFF) {
+    if ($is_requester) {
         $sq = $conn->prepare("SELECT * FROM support_tickets WHERE id = ? AND user_id = ?");
         $sq->bind_param("ii", $sel_id, $user_id);
     } else {
@@ -268,13 +272,13 @@ function support_label(string $s): string {
             <div class="bg-white rounded-[1.5rem] border border-slate-100 shadow-sm p-5 flex items-center justify-between">
                 <div>
                     <h3 class="font-black text-slate-800 text-sm">
-                        <?= $role === ROLE_STAFF ? 'My Queries' : 'Support Inbox' ?>
+                        <?= $is_requester ? 'My Queries' : 'Support Inbox' ?>
                     </h3>
                     <p class="text-[10px] text-slate-400 font-bold mt-0.5">
                         <?= $status_counts['all'] ?> ticket<?= $status_counts['all'] !== 1 ? 's' : '' ?>
                     </p>
                 </div>
-                <?php if ($role === ROLE_STAFF): ?>
+                <?php if ($is_requester): ?>
                 <button onclick="openNewTicket()"
                         class="bg-slate-900 text-white px-4 py-2 rounded-xl text-[11px] font-black hover:bg-slate-700 transition-all flex items-center gap-1.5">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -325,7 +329,7 @@ function support_label(string $s): string {
                         <span class="px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wide border flex-shrink-0 <?= $bc ?>"><?= $bl ?></span>
                     </div>
                     <div class="flex items-center justify-between gap-2">
-                        <?php if ($role !== ROLE_STAFF && !empty($t['username'])): ?>
+                        <?php if (!$is_requester && !empty($t['username'])): ?>
                         <p class="text-[10px] text-slate-500 font-bold truncate">@<?= htmlspecialchars($t['username']) ?></p>
                         <?php else: ?>
                         <span></span>
@@ -348,7 +352,7 @@ function support_label(string $s): string {
                             ? 'No ' . support_label($filter_status) . ' tickets.'
                             : 'No tickets yet.' ?>
                     </p>
-                    <?php if ($role === ROLE_STAFF && $filter_status === 'all'): ?>
+                    <?php if ($is_requester && $filter_status === 'all'): ?>
                     <p class="text-slate-300 text-[10px] mt-1 font-bold">Click "New Query" to get started.</p>
                     <?php endif; ?>
                 </div>
@@ -363,7 +367,7 @@ function support_label(string $s): string {
                 $sel_label   = support_label($sel['status']);
                 $is_resolved = $sel['status'] === TICKET_RESOLVED;
                 $can_manage  = in_array($role, ROLES_ADMIN_AND_UP);
-                $owns_ticket = $role === ROLE_STAFF && intval($sel['user_id']) === $user_id;
+                $owns_ticket = $is_requester && intval($sel['user_id']) === $user_id;
             ?>
 
             <!-- Ticket Header -->
@@ -504,10 +508,10 @@ function support_label(string $s): string {
                     </svg>
                 </div>
                 <p class="font-black text-slate-300 text-sm mb-1">
-                    <?= $role === ROLE_STAFF ? 'No ticket selected' : 'Select a ticket to view the conversation' ?>
+                    <?= $is_requester ? 'No ticket selected' : 'Select a ticket to view the conversation' ?>
                 </p>
                 <p class="text-[10px] text-slate-300 font-bold">
-                    <?= $role === ROLE_STAFF
+                    <?= $is_requester
                         ? 'Click "New Query" to submit a support request, or select a ticket from the list.'
                         : 'Open tickets appear at the top of the list.' ?>
                 </p>
@@ -518,7 +522,7 @@ function support_label(string $s): string {
     </div>
 </div>
 
-<?php if ($role === ROLE_STAFF): ?>
+<?php if ($is_requester): ?>
 <div id="new-ticket-modal"
      class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
     <div class="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl relative">
@@ -587,7 +591,10 @@ document.getElementById('new-ticket-modal')?.addEventListener('click', function(
 });
 
 // ── initial scroll ────────────────────────────────────────────────────────────
-const _thread = document.getElementById('message-thread');
+// NOTE: top-level declarations use var (not const/let) so this inline script can
+// be re-executed by the SPA on navigation without throwing a redeclaration error
+// (which would silently kill the live polling + reply handler).
+var _thread = document.getElementById('message-thread');
 if (_thread) _thread.scrollTop = _thread.scrollHeight;
 
 // ── utilities ─────────────────────────────────────────────────────────────────
@@ -618,7 +625,7 @@ function _buildBubble(msg) {
     return outer;
 }
 
-const _adminRoles = ['admin', 'superadmin', 'owner'];
+var _adminRoles = ['admin', 'superadmin', 'owner'];
 function _buildRemoteBubble(msg) {
     const isAdmin = _adminRoles.includes((msg.sender_role || '').toLowerCase());
     const outer = document.createElement('div');
@@ -678,8 +685,8 @@ function _updateStatusBadge(newStatus) {
 }
 
 // ── background polling ────────────────────────────────────────────────────────
-const _pollThread = document.getElementById('message-thread');
-let   _lastId     = _pollThread ? parseInt(_pollThread.dataset.lastId || '0', 10) : 0;
+var _pollThread = document.getElementById('message-thread');
+var _lastId     = _pollThread ? parseInt(_pollThread.dataset.lastId || '0', 10) : 0;
 
 // Kill any zombie interval from a previous render of this page
 if (window._helpPollTimer) { clearInterval(window._helpPollTimer); window._helpPollTimer = null; }
@@ -719,8 +726,8 @@ if (_pollThread && _pollThread.dataset.ticketId) {
 }
 
 // ── reply textarea: auto-resize + Enter-to-send ───────────────────────────────
-const _replyForm = document.getElementById('reply-form');
-const _replyTA   = _replyForm?.querySelector('textarea[name="message"]');
+var _replyForm = document.getElementById('reply-form');
+var _replyTA   = _replyForm?.querySelector('textarea[name="message"]');
 
 if (_replyTA) {
     _replyTA.addEventListener('input', function () {

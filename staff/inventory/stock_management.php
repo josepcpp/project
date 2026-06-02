@@ -151,6 +151,8 @@ if (!empty($batch_filter)) {
     // Stock-level HAVING filters applied in PHP after grouping — no HAVING clause here
     $sql = "SELECT MIN(p.id) AS id, p.name,
                    MIN(p.barcode) AS barcode,
+                   MAX(p.box_barcode) AS box_barcode,
+                   MAX(p.box_units)   AS box_units,
                    SUM(p.quantity) AS total_stock,
                    SUM(p.max_quantity) AS total_max,
                    MAX(p.category) AS category,
@@ -748,7 +750,12 @@ $has_filter = $search !== '' || !empty($batch_filter) || $cat_filter !== '' || $
                 <tr class="hover:bg-slate-50/40 transition-all border-b border-slate-50 cursor-pointer" onclick="toggleSuppliers('<?= $g['id'] ?>')">
                     <td class="px-10 py-6">
                         <p class="live-name font-bold text-slate-800 text-lg tracking-tight leading-tight"><?= htmlspecialchars($g['name']) ?></p>
-                        <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded shadow-sm mt-1 inline-block">#<?= htmlspecialchars($g['barcode']) ?></code>
+                        <?php if (!empty($g['barcode'])): ?>
+                        <code class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded shadow-sm mt-1 inline-block" title="Per-item barcode">#<?= htmlspecialchars($g['barcode']) ?></code>
+                        <?php endif; ?>
+                        <?php if (!empty($g['box_barcode'])): ?>
+                        <code class="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded shadow-sm mt-1 inline-block" title="Box barcode (<?= intval($g['box_units']) ?> per box)">📦 <?= htmlspecialchars($g['box_barcode']) ?></code>
+                        <?php endif; ?>
                         <button type="button" id="sup-btn-<?= $g['id'] ?>"
                                 onclick="event.stopPropagation(); toggleSuppliers('<?= $g['id'] ?>')"
                                 class="ml-2 inline-flex items-center gap-1 text-[9px] font-black text-slate-500 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-2.5 py-1 rounded-full uppercase tracking-widest transition-all">

@@ -154,13 +154,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pid = intval($_POST['id'] ?? 0);
     $barcode = $_POST['barcode'] ?? '';
 
-    // 1. Identify Product ID
+    // 1. Identify Product ID — a scan resolves to a per-item barcode (→ 1 unit)
+    //    or, failing that, a box/case barcode (→ box_units units).
+    $is_box_scan       = false;
+    $box_units_scanned = 1;
     if ($barcode && !$pid) {
+        // a) per-item barcode → individual unit
         $p_query = $conn->prepare("SELECT id FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0 AND (expiry_date IS NULL OR expiry_date > CURDATE()) ORDER BY expiry_date ASC LIMIT 1");
         $p_query->bind_param("s", $barcode);
         $p_query->execute();
-        $res = $p_query->get_result()->fetch_assoc();
-        $pid = $res['id'] ?? 0;
+        $pid = intval($p_query->get_result()->fetch_assoc()['id'] ?? 0);
+
+        // b) else box/case barcode → a whole box
+        if (!$pid) {
+            $box_q = $conn->prepare("SELECT id, box_units FROM products WHERE box_barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0 AND (expiry_date IS NULL OR expiry_date > CURDATE()) ORDER BY expiry_date ASC LIMIT 1");
+            $box_q->bind_param("s", $barcode);
+            $box_q->execute();
+            $box_row = $box_q->get_result()->fetch_assoc();
+            if ($box_row) {
+                $pid               = intval($box_row['id']);
+                $is_box_scan       = true;
+                $box_units_scanned = max(1, intval($box_row['box_units']));
+            }
+        }
     }
 
     if ($pid > 0) {
@@ -174,8 +190,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Sum ALL active rows for this barcode — mirrors pos.php's grouped SUM(quantity).
             // Using a single row's quantity would break when multiple lots exist (e.g. cross-supplier),
             // because locked_qty spans the whole barcode but the LIMIT 1 row might be the small locked batch.
-            $tq_q = $conn->prepare("SELECT COALESCE(SUM(quantity),0) AS tq FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND (expiry_date IS NULL OR expiry_date > CURDATE())");
-            $tq_q->bind_param("s", $product['barcode']); $tq_q->execute();
+            // Sum across the product's lots by EITHER code, so box-only items (no
+            // per-item barcode yet) still total their stock correctly.
+            $pbc  = $product['barcode'];
+            $pbox = $product['box_barcode'] ?? null;
+            $tq_q = $conn->prepare("SELECT COALESCE(SUM(quantity),0) AS tq FROM products WHERE status = '" . PRODUCT_ACTIVE . "' AND (expiry_date IS NULL OR expiry_date > CURDATE()) AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?))");
+            $tq_q->bind_param("ssss", $pbc, $pbc, $pbox, $pbox); $tq_q->execute();
             $total_qty     = intval($tq_q->get_result()->fetch_assoc()['tq'] ?? 0);
 
             $lq_q = $conn->prepare("SELECT COALESCE(SUM(locked_qty),0) AS lq FROM price_update_requests WHERE barcode = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
@@ -202,9 +222,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // No usable stock — skip all cart mutations
             }
             elseif ($action === 'add' || $action === 'plus') {
-                if ($_SESSION['cart'][$pid]['qty'] < $effective_qty) {
-                    $_SESSION['cart'][$pid]['qty']++;
-                }
+                // A box scan adds box_units at once; a per-item scan adds 1.
+                $inc = $is_box_scan ? $box_units_scanned : 1;
+                $_SESSION['cart'][$pid]['qty'] = min($_SESSION['cart'][$pid]['qty'] + $inc, $effective_qty);
             }
             elseif ($action === 'bulk_set') {
                 $qty_to_set = max(0, intval($_POST['qty_override'] ?? 1));

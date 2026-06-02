@@ -299,6 +299,14 @@ $bundle_discount_display = min($bundle_discount_display, $subtotal); // can't ex
                        class="w-full pl-10 pr-4 py-2.5 bg-white border-2 border-slate-200 rounded-2xl text-sm font-mono text-slate-700 outline-none transition-colors duration-300 focus:border-emerald-400"
                        onkeydown="onScanKeydown(event)">
             </div>
+            <!-- Unrecognized-scan → learn-on-first-sale prompt -->
+            <div id="link-prompt" class="hidden bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                <p class="text-[11px] font-black text-amber-700">Can't be recognized: <span id="link-code" class="font-mono"></span></p>
+                <button type="button" onclick="openLinkModal()"
+                    class="mt-1.5 bg-amber-500 hover:bg-amber-600 text-white font-black text-[10px] uppercase tracking-widest px-3 py-1.5 rounded-lg transition-all">
+                    Search &amp; record item →
+                </button>
+            </div>
         </div>
 
         <!-- Scrollable Cart Area -->
@@ -475,22 +483,96 @@ function focusScanField() {
 
 function flashScanField(found) {
     var f = document.getElementById('barcode-scan-input');
-    if (!f || found) return;
+    if (!f) return;
+    var lp = document.getElementById('link-prompt');
+    if (found) { if (lp) lp.classList.add('hidden'); return; }   // recognized → clear any prompt
     f.style.borderColor = '#f43f5e';
     f.placeholder = 'Not found — try again';
     setTimeout(function() {
         f.style.borderColor = '';
         f.placeholder = 'Scan barcode here...';
     }, 1000);
+    // Offer to record the unrecognized code (learn-on-first-sale).
+    if (lp && _lastScanCode) {
+        document.getElementById('link-code').textContent = _lastScanCode;
+        lp.classList.remove('hidden');
+    }
 }
 
+var _lastScanCode = '';
 function onScanKeydown(e) {
     if (e.key !== 'Enter') return;
     var barcode = e.target.value.trim();
     e.target.value = '';
     if (!barcode) return;
+    _lastScanCode = barcode;
     _scanPending = true;
     quickAdd(barcode);
+}
+
+// ── LEARN-ON-FIRST-SALE: link a scanned per-item barcode to a box-only product ──
+var _lmPicked = null;
+function openLinkModal() {
+    document.getElementById('lm-code').textContent = _lastScanCode || '—';
+    document.getElementById('lm-search').value = '';
+    document.getElementById('lm-results').innerHTML = '';
+    document.getElementById('lm-confirm').classList.add('hidden');
+    _lmPicked = null;
+    document.getElementById('link-modal').classList.remove('hidden');
+    setTimeout(function(){ document.getElementById('lm-search').focus(); }, 50);
+}
+function closeLinkModal() {
+    document.getElementById('link-modal').classList.add('hidden');
+    focusScanField();
+}
+function searchLink() {
+    var q = document.getElementById('lm-search').value.trim();
+    var box = document.getElementById('lm-results');
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    fetch('/project/staff/api/link_barcode.php?action=search&q=' + encodeURIComponent(q))
+        .then(function(r){ return r.json(); })
+        .then(function(rows){
+            if (!rows || !rows.length) { box.innerHTML = '<p class="text-slate-300 text-xs font-bold p-2">No box-only items match.</p>'; return; }
+            box.innerHTML = rows.map(function(p){
+                return '<div class="lm-row px-3 py-2 rounded-xl hover:bg-violet-50 cursor-pointer flex justify-between gap-2" data-id="' + p.id + '" data-name="' + esc(p.name) + '">' +
+                    '<span class="font-bold text-slate-700 text-sm">' + esc(p.name) + '</span>' +
+                    '<span class="text-[10px] text-slate-400 whitespace-nowrap">📦 ' + esc(p.box_barcode || '') + ' · ' + (parseInt(p.qty) || 0) + ' in stock</span></div>';
+            }).join('');
+            box.querySelectorAll('.lm-row').forEach(function(el){
+                el.addEventListener('click', function(){ pickLink(parseInt(el.dataset.id), el.dataset.name); });
+            });
+        }).catch(function(){ box.innerHTML = '<p class="text-rose-400 text-xs p-2">Search failed.</p>'; });
+}
+function pickLink(id, name) {
+    _lmPicked = { id: id, name: name };
+    document.getElementById('lm-picked-name').textContent = name;
+    document.getElementById('lm-confirm-name').value = '';
+    document.getElementById('lm-scan').value = _lastScanCode || '';
+    document.getElementById('lm-confirm').classList.remove('hidden');
+    document.getElementById('lm-confirm-name').focus();
+}
+function submitLink() {
+    if (!_lmPicked) { showFlash('Pick an item first.', 'error'); return; }
+    var code = document.getElementById('lm-scan').value.trim();
+    var name = document.getElementById('lm-confirm-name').value.trim();
+    if (!code) { showFlash('Scan the item barcode to record.', 'error'); return; }
+    var fd = new FormData();
+    fd.append('action', 'record');
+    fd.append('product_id', _lmPicked.id);
+    fd.append('barcode', code);
+    fd.append('confirm_name', name);
+    fetch('/project/staff/api/link_barcode.php', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.ok) {
+                showFlash('Barcode recorded for "' + d.name + '".', 'success');
+                closeLinkModal();
+                document.getElementById('link-prompt').classList.add('hidden');
+                quickAdd(d.barcode);   // it's recognized now → add 1 to the cart
+            } else {
+                showFlash(d.error || 'Could not record barcode.', 'error');
+            }
+        }).catch(function(){ showFlash('Network error — please try again.', 'error'); });
 }
 
 focusScanField();
@@ -533,5 +615,40 @@ function addBundle(bundleId, bundleName) {
         .catch(function(e) { console.error('Bundle error:', e); showFlash('Bundle add failed.', 'error'); });
 }
 </script>
+
+<!-- ── LEARN-ON-FIRST-SALE MODAL ───────────────────────────────────────────── -->
+<div id="link-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg mx-4 p-7">
+        <h3 class="serif-title text-xl font-black text-slate-800 mb-1">Record per-item barcode</h3>
+        <p class="text-slate-400 text-xs font-bold mb-4">
+            Scanned code <span id="lm-code" class="font-mono text-slate-600"></span> isn't recognized.
+            Find the item, re-type its description to confirm, then scan the unit to record it.
+        </p>
+
+        <input type="text" id="lm-search" oninput="searchLink()" placeholder="Search item by description…"
+               autocomplete="off" class="input-modern w-full text-sm mb-2">
+        <div id="lm-results" class="max-h-44 overflow-y-auto space-y-1 mb-4"></div>
+
+        <div id="lm-confirm" class="hidden border-t border-slate-100 pt-4 space-y-3">
+            <p class="text-xs font-bold text-slate-500">Selected: <span id="lm-picked-name" class="font-black text-slate-800"></span></p>
+            <div>
+                <label class="label-modern text-xs">Re-type the description to confirm</label>
+                <input type="text" id="lm-confirm-name" placeholder="Type the exact item description"
+                       autocomplete="off" class="input-modern w-full text-sm">
+            </div>
+            <div>
+                <label class="label-modern text-xs">Scan the individual item now</label>
+                <input type="text" id="lm-scan" placeholder="Scan unit barcode…"
+                       autocomplete="off" class="input-modern w-full text-sm font-mono">
+            </div>
+            <div class="flex gap-3 pt-1">
+                <button type="button" onclick="closeLinkModal()"
+                    class="flex-1 border border-slate-200 text-slate-500 font-black text-[10px] uppercase tracking-widest py-3 rounded-2xl hover:bg-slate-50 transition-all">Cancel</button>
+                <button type="button" onclick="submitLink()"
+                    class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-2xl transition-all">Record &amp; Add</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <?php include '../layout_bottom.php'; ?>

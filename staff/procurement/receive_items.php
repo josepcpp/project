@@ -164,7 +164,10 @@ include '../layout_top.php';
                             $total_raw = intval($item['quantity']) + intval($item['damaged_qty'] ?? 0);
                         ?>
                         <tr class="item-row">
-                            <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][barcode]" class="input-modern text-sm w-full barcode-input" value="<?= htmlspecialchars($item['barcode'] ?? '') ?>" onblur="lookupBarcode(this)"></td>
+                            <td class="pr-3 pb-2 align-top">
+                                <input type="text" name="items[<?= $i ?>][barcode]" class="input-modern text-sm w-full barcode-input" value="<?= htmlspecialchars($item['barcode'] ?? '') ?>" placeholder="Per-item barcode" onblur="lookupBarcode(this)">
+                                <input type="text" name="items[<?= $i ?>][box_barcode]" value="<?= htmlspecialchars($item['box_barcode'] ?? '') ?>" placeholder="📦 Box barcode" class="input-modern text-xs w-full mt-1 box-barcode-input <?= $total_raw >= 1 ? '' : 'hidden' ?>">
+                            </td>
                             <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][description]" required class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['description']) ?>"></td>
                             <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
                             <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="1" value="<?= $total_raw ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
@@ -283,6 +286,9 @@ function updateTotal(input) {
     row.querySelector('.total-display').textContent = total;
     row.querySelector('.good-display').textContent  = good;
     row.querySelector('.qty-hidden').value          = good;
+    // Box Barcode field appears only when this row has at least one box.
+    const boxBc = row.querySelector('.box-barcode-input');
+    if (boxBc) boxBc.classList.toggle('hidden', !(boxes >= 1));
 }
 
 function syncQtys() {
@@ -300,6 +306,20 @@ function beforeSubmit() {
     if (document.querySelectorAll('.item-row').length === 0) {
         showFlash('Scan or add at least one item before saving.', 'error');
         document.getElementById('scan-input').focus();
+        return false;
+    }
+    // Each item needs at least one barcode — per-item OR box (both is fine, neither is not).
+    var missing = false;
+    document.querySelectorAll('.item-row').forEach(function (row) {
+        var unit = (row.querySelector('.barcode-input')?.value || '').trim();
+        var box  = (row.querySelector('.box-barcode-input')?.value || '').trim();
+        if (!unit && !box) {
+            missing = true;
+            row.querySelector('.barcode-input')?.classList.add('ring-2', 'ring-rose-400');
+        }
+    });
+    if (missing) {
+        showFlash('Each item needs at least one barcode — per-item or box.', 'error');
         return false;
     }
     return true;
@@ -419,7 +439,10 @@ function addRow(barcode = '') {
     const tr = document.createElement('tr');
     tr.className = 'item-row';
     tr.innerHTML = `
-        <td class="pr-3 pb-2"><input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full barcode-input" value="${esc(barcode)}" placeholder="628..." onblur="lookupBarcode(this)"></td>
+        <td class="pr-3 pb-2 align-top">
+            <input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full barcode-input" value="${esc(barcode)}" placeholder="Per-item barcode" onblur="lookupBarcode(this)">
+            <input type="text" name="items[${i}][box_barcode]" placeholder="📦 Box barcode" class="input-modern text-xs w-full mt-1 box-barcode-input hidden">
+        </td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="0" value="0" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
