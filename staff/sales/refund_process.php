@@ -81,8 +81,11 @@ try {
     $items_q->execute();
     $rows = $items_q->get_result()->fetch_all(MYSQLI_ASSOC);
 
-    // RR-1: account for already-processed refunds to block double-refunding
-    $already_q = $conn->prepare("SELECT COALESCE(SUM(qty), 0) AS already FROM refunds WHERE sale_id = ? AND product_id = ? AND status != '" . REFUND_REJECTED . "'");
+    // RR-1: soft-reserve PENDING refunds only.
+    // Approved refunds already decremented sales_items.qty, so counting them again would
+    // double-subtract and produce a wrong tier-pricing recalculation.
+    // Pending refunds have not touched sales_items.qty yet, so they must be reserved here.
+    $already_q = $conn->prepare("SELECT COALESCE(SUM(qty), 0) AS already FROM refunds WHERE sale_id = ? AND product_id = ? AND status = '" . REFUND_PENDING . "'");
     $already_q->bind_param("ii", $sale_id, $product_id);
     $already_q->execute();
     $already_refunded = intval($already_q->get_result()->fetch_assoc()['already'] ?? 0);

@@ -641,6 +641,7 @@ function toggleExpiry(cb) {
 
 // ── AJAX form submission ──────────────────────────────────────────────────────
 var _submitAction = 'save';
+var _isSubmitting = false;   // re-entrancy guard — blocks accidental double submits
 
 document.getElementById('saveBtn').addEventListener('click', function () {
     _submitAction = 'save';
@@ -649,7 +650,9 @@ document.getElementById('saveBtn').addEventListener('click', function () {
 
 document.getElementById('itemsForm').addEventListener('submit', async function (e) {
     e.preventDefault();
+    if (_isSubmitting) return;          // a request is already in flight — ignore the repeat
     if (!beforeSubmit()) return;
+    _isSubmitting = true;
 
     var saveBtn   = document.getElementById('saveBtn');
     var submitBtn = document.getElementById('submitBtn');
@@ -664,10 +667,14 @@ document.getElementById('itemsForm').addEventListener('submit', async function (
     fd.set('submit_action', _submitAction);
     fd.append('_ajax', '1');
 
+    var navigated = false;
     try {
         var res  = await fetch('receive_process.php', { method: 'POST', body: fd });
         var data = await res.json();
-        if (data.success) {
+        // Success → go to the success page. Failure with a redirect (e.g. the batch is
+        // no longer editable) → land on the live batch list instead of a dead page.
+        if (data.success || data.redirect) {
+            navigated = true;
             navigate(data.redirect);
         } else {
             showFlash(data.error, 'error');
@@ -675,10 +682,15 @@ document.getElementById('itemsForm').addEventListener('submit', async function (
     } catch (_) {
         showFlash('Connection error — check your network and try again.', 'error');
     } finally {
-        saveBtn.disabled      = false;
-        submitBtn.disabled    = false;
-        saveBtn.textContent   = origSaveTxt;
-        submitBtn.textContent = origSubmitTxt;
+        // Re-enable only when staying on this page; if navigating away, keep the
+        // buttons locked so a stale click can't fire another request mid-transition.
+        if (!navigated) {
+            saveBtn.disabled      = false;
+            submitBtn.disabled    = false;
+            saveBtn.textContent   = origSaveTxt;
+            submitBtn.textContent = origSubmitTxt;
+            _isSubmitting = false;
+        }
     }
 });
 
@@ -698,6 +710,7 @@ function closeSubmitConfirm() {
     document.getElementById('submit-modal').classList.add('hidden');
 }
 function confirmSubmitBatch() {
+    if (_isSubmitting) return;          // already submitting — ignore a repeat confirm click
     closeSubmitConfirm();
     syncQtys();
     _submitAction = 'submit';

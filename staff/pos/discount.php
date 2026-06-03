@@ -1,6 +1,7 @@
 <?php
 include '../../config/db.php';
 include '../../includes/admin_only.php';
+include '../../includes/csrf.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 if (!isset($conn)) {
@@ -17,6 +18,7 @@ $msg = '';
 
 // ── POST HANDLERS ─────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrf_verify('discount.php');
     $action = $_POST['action'] ?? '';
 
     if ($action === 'save_discount') {
@@ -35,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $conflict_rule      = in_array($_POST['conflict_rule'] ?? '', ['best_for_customer','priority_order','stack']) ? $_POST['conflict_rule'] : 'best_for_customer';
 
         $stmt = $conn->prepare("INSERT INTO discounts (name, promo_code, type, value, is_active, usage_limit, start_date, end_date, scope, target_product_id, target_category, priority, conflict_rule) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("sssdisssissis", $name, $promo_code, $type, $val, $max_uses, $start_date, $end_date, $scope, $target_product_id, $target_category, $priority, $conflict_rule);
+        $stmt->bind_param("sssdisssssis", $name, $promo_code, $type, $val, $max_uses, $start_date, $end_date, $scope, $target_product_id, $target_category, $priority, $conflict_rule);
 
         if ($stmt->execute()) {
             $limit_note  = $max_uses > 0 ? " (limit: {$max_uses} uses)" : " (unlimited uses)";
@@ -54,12 +56,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute();
         $msg = "<div class='bg-blue-500 text-white p-4 rounded-2xl mb-6 font-bold animate-in shadow-lg text-center'>Promotion status toggled.</div>";
     }
+
+    if ($action === 'delete_discount') {
+        $id     = intval($_POST['id']);
+        $uc_q   = $conn->prepare("SELECT used_count FROM discounts WHERE id = ? LIMIT 1");
+        $uc_q->bind_param("i", $id); $uc_q->execute();
+        $uc_row = $uc_q->get_result()->fetch_assoc();
+        $used   = intval($uc_row['used_count'] ?? 0);
+        if ($used > 0) {
+            $msg = "<div class='bg-amber-500 text-white p-4 rounded-2xl mb-6 font-bold animate-in shadow-lg text-center'>Cannot delete — this promotion has been used {$used} time(s). Deactivate it instead to keep the sales history intact.</div>";
+        } else {
+            $del = $conn->prepare("DELETE FROM discounts WHERE id = ?");
+            $del->bind_param("i", $id);
+            $del->execute();
+            $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold animate-in shadow-lg text-center'>Promotion deleted.</div>";
+        }
+    }
 }
 
 include '../layout_top.php';
 
 // ── DATA ──────────────────────────────────────────────────────────────────────
-$discounts   = $conn->query("SELECT * FROM discounts ORDER BY id DESC");
+$discounts   = $conn->query("SELECT d.*, p.name AS target_product_name FROM discounts d LEFT JOIN products p ON p.id = d.target_product_id ORDER BY d.id DESC");
 $categories  = $conn->query("SELECT DISTINCT category FROM products WHERE status = '" . PRODUCT_ACTIVE . "' ORDER BY category");
 $cat_list    = [];
 while ($c = $categories->fetch_assoc()) $cat_list[] = $c['category'];
@@ -92,6 +110,7 @@ $today = date('Y-m-d');
         </div>
 
         <form method="POST" action="">
+            <?= csrf_field() ?>
             <input type="hidden" name="action" value="save_discount">
 
             <!-- Row 1: Core fields -->
@@ -217,15 +236,7 @@ $today = date('Y-m-d');
                                     <p class="text-[10px] font-bold text-slate-500 mt-1"><?= htmlspecialchars($d['target_category'] ?? '—') ?></p>
                                 <?php elseif ($d['scope'] === 'product'): ?>
                                     <span class="bg-blue-50 text-blue-600 text-[10px] font-black px-3 py-1 rounded-full border border-blue-100 uppercase">Product</span>
-                                    <?php
-                                    $pn = '—';
-                                    if ($d['target_product_id']) {
-                                        $pnq = $conn->prepare("SELECT name FROM products WHERE id = ?");
-                                        $pnq->bind_param("i", $d['target_product_id']); $pnq->execute();
-                                        $pn = $pnq->get_result()->fetch_assoc()['name'] ?? '—';
-                                    }
-                                    ?>
-                                    <p class="text-[10px] font-bold text-slate-500 mt-1 max-w-[120px] truncate"><?= htmlspecialchars($pn) ?></p>
+                                    <p class="text-[10px] font-bold text-slate-500 mt-1 max-w-[120px] truncate"><?= htmlspecialchars($d['target_product_name'] ?? '—') ?></p>
                                 <?php else: ?>
                                     <span class="bg-emerald-50 text-emerald-600 text-[10px] font-black px-3 py-1 rounded-full border border-emerald-100 uppercase">Store-wide</span>
                                 <?php endif; ?>
@@ -268,7 +279,8 @@ $today = date('Y-m-d');
                                 <?php
                                 $status_label = $d['is_active'] ? 'ACTIVE' : 'INACTIVE';
                                 $status_class = $d['is_active'] ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400';
-                                if ($expired)     { $status_label = 'EXPIRED'; $status_class = 'bg-rose-50 text-rose-400'; }
+                                if ($maxed)       { $status_label = 'MAXED';    $status_class = 'bg-rose-50 text-rose-400'; }
+                                if ($expired)     { $status_label = 'EXPIRED';  $status_class = 'bg-rose-50 text-rose-400'; }
                                 if ($not_started) { $status_label = 'UPCOMING'; $status_class = 'bg-amber-50 text-amber-500'; }
                                 ?>
                                 <span class="px-3 py-1.5 rounded-full text-[9px] font-black uppercase <?= $status_class ?>">
@@ -276,13 +288,24 @@ $today = date('Y-m-d');
                                 </span>
                             </td>
                             <td class="px-8 py-6 text-right">
-                                <form method="POST" action="">
-                                    <input type="hidden" name="action" value="toggle_status">
-                                    <input type="hidden" name="id" value="<?= $d['id'] ?>">
-                                    <button type="submit" class="text-[9px] font-black text-slate-300 hover:text-emerald-500 transition-colors uppercase tracking-widest">
-                                        [ Switch Status ]
-                                    </button>
-                                </form>
+                                <div class="flex items-center justify-end gap-3">
+                                    <form method="POST" action="">
+                                        <?= csrf_field() ?>
+                                        <input type="hidden" name="action" value="toggle_status">
+                                        <input type="hidden" name="id" value="<?= $d['id'] ?>">
+                                        <button type="submit" class="text-[9px] font-black text-slate-300 hover:text-emerald-500 transition-colors uppercase tracking-widest">
+                                            [ Switch Status ]
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="" onsubmit="return confirm('Delete \'<?= htmlspecialchars(addslashes($d['name'])) ?>\'? This cannot be undone.')">
+                                        <?= csrf_field() ?>
+                                        <input type="hidden" name="action" value="delete_discount">
+                                        <input type="hidden" name="id" value="<?= $d['id'] ?>">
+                                        <button type="submit" class="text-[9px] font-black text-slate-200 hover:text-rose-500 transition-colors uppercase tracking-widest">
+                                            [ Delete ]
+                                        </button>
+                                    </form>
+                                </div>
                             </td>
                         </tr>
                         <?php endwhile; ?>

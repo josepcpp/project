@@ -30,15 +30,16 @@ foreach ($_SESSION['cart'] as $pid => $item) {
 }
 $tax_rate = TAX_RATE;
 
-// F-11: Load price rounding rule from settings
-$rounding_rule = 'none';
-$rr_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='price_rounding_rule' LIMIT 1");
-if ($rr_q && $rr_row = $rr_q->fetch_assoc()) $rounding_rule = $rr_row['setting_value'] ?? 'none';
-
-// F-14: Load tax display mode
+// F-11 / F-14: Load rounding rule and tax display mode in one query
+$rounding_rule    = 'none';
 $tax_display_mode = 'exclusive';
-$tdm_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='tax_display_mode' LIMIT 1");
-if ($tdm_q && $tdm_row = $tdm_q->fetch_assoc()) $tax_display_mode = $tdm_row['setting_value'] ?? 'exclusive';
+$sys_q = $conn->query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('price_rounding_rule','tax_display_mode')");
+if ($sys_q) {
+    while ($sr = $sys_q->fetch_assoc()) {
+        if ($sr['setting_key'] === 'price_rounding_rule') $rounding_rule    = $sr['setting_value'] ?? 'none';
+        if ($sr['setting_key'] === 'tax_display_mode')    $tax_display_mode = $sr['setting_value'] ?? 'exclusive';
+    }
+}
 
 // F-13: Bundle discount total from session (for JS display)
 $bundle_discount_total_php = 0.0;
@@ -140,7 +141,8 @@ if ($grp_q) {
             </div>
 
             <!-- 🏷️ PROMO & DISCOUNT SECTION -->
-            <input type="hidden" name="discount_id" value="0">
+            <input type="hidden" name="discount_id" id="discount_id_field" value="0">
+            <input type="hidden" name="stacked_discount_ids" id="stacked_ids_field" value="">
             <div class="space-y-2 pt-4">
                 <label class="label-modern ml-2">Promo Code</label>
                 <div class="relative">
@@ -311,15 +313,21 @@ function autoResolvePromos() {
     const sorted  = [...applicable].sort((a,b) => parseInt(b.priority||0) - parseInt(a.priority||0));
     const topRule = sorted[0]?.conflict_rule || 'best_for_customer';
 
+    var discIdField     = document.getElementById('discount_id_field');
+    var stackedField    = document.getElementById('stacked_ids_field');
+
     let chosen = null;
     if (topRule === 'priority_order') {
-        chosen = sorted[0]; // highest priority wins
+        chosen = sorted[0];
     } else if (topRule === 'stack') {
-        // Stack: synthesise a virtual discount equal to the sum of all applicable amounts
+        // Stack: sum all applicable discounts client-side for display,
+        // and pass all IDs to the server so it applies and tracks each one.
         const totalAmt = applicable.reduce((s, p) => s + calcAmt(p), 0);
         if (totalAmt > 0) {
             activeDiscount = { type: 'Fixed', value: Math.min(totalAmt, afterGroup), scope: 'store', target_product_id: 0, target_category: '' };
             promoValid = true;
+            if (discIdField)  discIdField.value  = 0;
+            if (stackedField) stackedField.value = applicable.map(function(p) { return p.id; }).join(',');
         }
         return;
     } else {
@@ -336,6 +344,9 @@ function autoResolvePromos() {
         target_category:   chosen.target_category || '',
     };
     promoValid = true;
+    // Tell the server which discount was selected so it applies and tracks it.
+    if (discIdField)  discIdField.value  = chosen.id;
+    if (stackedField) stackedField.value = '';
 }
 
 // Returns the subtotal eligible for the active discount based on its scope
@@ -364,9 +375,14 @@ function applyTypedPromo() {
     feedback.textContent = '';
     feedback.className = 'text-[11px] font-bold ml-2 hidden';
 
+    var discIdField2  = document.getElementById('discount_id_field');
+    var stackedField2 = document.getElementById('stacked_ids_field');
+
     if (!code) {
         activeDiscount = { type: 'Fixed', value: 0 };
         promoValid = false;
+        if (discIdField2)  discIdField2.value  = 0;
+        if (stackedField2) stackedField2.value = '';
         updateTotals();
         return;
     }
@@ -417,6 +433,9 @@ function applyTypedPromo() {
             activeDiscount.target_product_id = parseInt(match.target_product_id) || 0;
             activeDiscount.target_category  = match.target_category || '';
             promoValid = true;
+            // Sync to form so the server knows exactly which discount to apply.
+            if (discIdField2)  discIdField2.value  = match.id;
+            if (stackedField2) stackedField2.value = '';
             input.style.borderColor = '#10b981';
             statusIcon.classList.remove('hidden');
             const discLabel = match.type === DISC_PCT

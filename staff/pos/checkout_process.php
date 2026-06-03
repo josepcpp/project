@@ -22,6 +22,12 @@ $payment_mode      = $_POST['payment_mode'] ?? 'Cash';
 $reference_no      = !empty($_POST['reference_no']) ? trim($_POST['reference_no']) : null;
 $discount_id       = intval($_POST['discount_id'] ?? 0);
 $promo_typed       = trim($_POST['promo_code'] ?? '');
+// Stack mode: comma-separated discount IDs sent when conflict_rule = 'stack'
+$stacked_discount_ids = [];
+$raw_stacked = trim($_POST['stacked_discount_ids'] ?? '');
+if ($raw_stacked !== '' && $discount_id === 0 && $promo_typed === '') {
+    $stacked_discount_ids = array_values(array_filter(array_map('intval', explode(',', $raw_stacked))));
+}
 $tax_enabled       = intval($_POST['tax_enabled'] ?? 1); // 1 = VAT on, 0 = exempt
 $customer_group_id = intval($_POST['customer_group_id'] ?? 0); // F-06
 
@@ -30,10 +36,16 @@ $target_discount_id = 0;
 $discount_type      = 'Fixed';
 $discount_value     = 0.0;
 
-// F-11: Load price rounding rule
-$rounding_rule = 'none';
-$rr_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='price_rounding_rule' LIMIT 1");
-if ($rr_q && $rr_row = $rr_q->fetch_assoc()) $rounding_rule = $rr_row['setting_value'] ?? 'none';
+// F-11 / F-14: Load rounding rule and tax display mode in one query
+$rounding_rule    = 'none';
+$tax_display_mode = 'exclusive';
+$sys_q = $conn->query("SELECT setting_key, setting_value FROM system_settings WHERE setting_key IN ('price_rounding_rule','tax_display_mode')");
+if ($sys_q) {
+    while ($sr = $sys_q->fetch_assoc()) {
+        if ($sr['setting_key'] === 'price_rounding_rule') $rounding_rule    = $sr['setting_value'] ?? 'none';
+        if ($sr['setting_key'] === 'tax_display_mode')    $tax_display_mode = $sr['setting_value'] ?? 'exclusive';
+    }
+}
 
 // F-11: Rounding helper — mirrors JS applyRounding() in checkout.php.
 // GAP-20: Both implementations MUST stay in sync. When adding a new rounding case
@@ -206,8 +218,11 @@ try {
     }
 
     // 6b. Server-side promo discount — applied on post-bundle subtotal, scope-aware (POS-1)
-    $discount_amt = 0.0;
+    $discount_amt        = 0.0;
+    $stacked_applied_ids = [];   // IDs of stacked discounts actually applied (for usage increment)
+
     if ($target_discount_id > 0) {
+        // Single discount (normal / typed-code flow)
         if ($discount_scope === 'product' && $discount_target_product_id > 0) {
             $discountable = 0.0;
             foreach ($items_to_insert as $e) {
@@ -219,11 +234,57 @@ try {
                 if (($e['data']['category'] ?? '') === $discount_target_category) $discountable += $e['line_total'];
             }
         } else {
-            $discountable = $after_bundle_subtotal; // store-wide on post-bundle subtotal
+            $discountable = $after_bundle_subtotal;
         }
         $discount_amt = ($discount_type === DISCOUNT_PERCENTAGE)
             ? $discountable * ($discount_value / 100)
             : min($discount_value, $discountable);
+    } elseif (!empty($stacked_discount_ids)) {
+        // Stack mode: apply and validate every listed discount, sum their amounts
+        foreach ($stacked_discount_ids as $sid) {
+            $sq = $conn->prepare(
+                "SELECT id, type, value, usage_limit, used_count, start_date, end_date,
+                        scope, target_product_id, target_category, name
+                 FROM discounts WHERE id = ? AND is_active = 1 FOR UPDATE"
+            );
+            $sq->bind_param("i", $sid); $sq->execute();
+            $srow = $sq->get_result()->fetch_assoc();
+            if (!$srow) continue;
+
+            // Schedule / usage / value validation
+            if ($srow['type'] === DISCOUNT_PERCENTAGE && floatval($srow['value']) > 100) continue;
+            if ($srow['usage_limit'] > 0 && $srow['used_count'] >= $srow['usage_limit']) continue;
+            if (!empty($srow['start_date']) && $today_date < $srow['start_date']) continue;
+            if (!empty($srow['end_date'])   && $today_date > $srow['end_date'])   continue;
+
+            // Scope-aware discountable base
+            $s_scope      = $srow['scope'] ?? 'store';
+            $s_target_pid = intval($srow['target_product_id'] ?? 0);
+            $s_target_cat = $srow['target_category'] ?? '';
+            if ($s_scope === 'product' && $s_target_pid > 0) {
+                $s_discountable = 0.0;
+                foreach ($items_to_insert as $e) {
+                    if ($e['pid'] === $s_target_pid) $s_discountable += $e['line_total'];
+                }
+            } elseif ($s_scope === 'category' && $s_target_cat !== '') {
+                $s_discountable = 0.0;
+                foreach ($items_to_insert as $e) {
+                    if (($e['data']['category'] ?? '') === $s_target_cat) $s_discountable += $e['line_total'];
+                }
+            } else {
+                $s_discountable = $after_bundle_subtotal;
+            }
+            $this_amt = ($srow['type'] === DISCOUNT_PERCENTAGE)
+                ? $s_discountable * ($srow['value'] / 100)
+                : min($srow['value'], $s_discountable);
+
+            $discount_amt += $this_amt;
+            $stacked_applied_ids[] = intval($srow['id']);
+        }
+        $discount_amt = min($discount_amt, $after_bundle_subtotal);
+        if (!empty($stacked_applied_ids)) {
+            $discount_name = 'Stacked Promos (' . count($stacked_applied_ids) . ')';
+        }
     }
 
     // 6c. Compose readable discount label for the receipt
@@ -238,10 +299,7 @@ try {
     // 6d. F-14: Tax calculation — exclusive (default) or inclusive mode
     // exclusive: tax is added on top of prices → total = net + tax
     // inclusive: tax is already embedded in prices → total unchanged (VAT ON), or strip VAT (exempt)
-    $tax_display_mode = 'exclusive';
-    $tdm_q = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key='tax_display_mode' LIMIT 1");
-    if ($tdm_q && $tdm_row = $tdm_q->fetch_assoc()) $tax_display_mode = $tdm_row['setting_value'] ?? 'exclusive';
-
+    // $tax_display_mode already loaded above (single combined settings query).
     if ($tax_display_mode === 'inclusive') {
         // VAT already embedded in every price
         $tax_amt = $tax_enabled
@@ -284,6 +342,11 @@ try {
         $stmt_disc = $conn->prepare("UPDATE discounts SET used_count = used_count + 1 WHERE id = ?");
         $stmt_disc->bind_param("i", $target_discount_id);
         $stmt_disc->execute();
+    }
+    foreach ($stacked_applied_ids as $sid) {
+        $stmt_stack = $conn->prepare("UPDATE discounts SET used_count = used_count + 1 WHERE id = ?");
+        $stmt_stack->bind_param("i", $sid);
+        $stmt_stack->execute();
     }
 
     // 10. Second pass: insert sales_items, deduct stock, auto-apply deferred price

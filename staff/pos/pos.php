@@ -393,6 +393,7 @@ function cartAction(fd) {
 }
 
 function renderCart(data) {
+    if (data.warning) showFlash(data.warning, 'warning');
     var cartEl      = document.getElementById('cart-items');
     var totalEl     = document.getElementById('cart-total');
     var savingsRow  = document.getElementById('bundle-savings-row');

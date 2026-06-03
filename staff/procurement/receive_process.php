@@ -24,10 +24,14 @@ if ($action === 'save_items') {
     $is_ajax       = !empty($_POST['_ajax']);
 
     // Unified response helpers — JSON for AJAX calls, redirect otherwise.
-    $err = function (string $msg, string $fallback_url = '') use ($is_ajax, &$batch_id) {
+    // $ajax_redirect (optional): when set, the AJAX client is told to navigate there
+    // instead of just showing the error inline (used for "no longer editable" cases).
+    $err = function (string $msg, string $fallback_url = '', string $ajax_redirect = '') use ($is_ajax, &$batch_id) {
         if ($is_ajax) {
             header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'error' => $msg]);
+            $out = ['success' => false, 'error' => $msg];
+            if ($ajax_redirect !== '') $out['redirect'] = $ajax_redirect;
+            echo json_encode($out);
             exit();
         }
         $url = $fallback_url ?: "receive_items.php?batch_id={$batch_id}";
@@ -57,8 +61,16 @@ if ($action === 'save_items') {
     $bq->execute();
     $batch = $bq->get_result()->fetch_assoc();
 
-    if (!$batch || $batch['status'] !== 'pending_request') {
-        $err("Batch is not editable.", "receive_batch.php?");
+    // Distinct, accurate messages so the receiver knows WHY (and that an earlier
+    // submit likely already succeeded) instead of a vague "not editable".
+    if (!$batch) {
+        $err("This batch belongs to another receiver or is no longer available.",
+             "receive_batch.php?",
+             "receive_batch.php?error=" . urlencode("This batch belongs to another receiver or is no longer available."));
+    }
+    if ($batch['status'] !== 'pending_request') {
+        $msg = "Batch #{$batch_id} was already submitted (now in the '{$batch['status']}' stage) and can no longer be edited.";
+        $err($msg, "receive_batch.php?", "receive_batch.php?error=" . urlencode($msg));
     }
 
     // Validate items

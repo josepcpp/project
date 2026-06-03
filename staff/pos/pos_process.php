@@ -150,9 +150,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'bundl
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
-    $pid = intval($_POST['id'] ?? 0);
-    $barcode = $_POST['barcode'] ?? '';
+    $action            = $_POST['action'] ?? '';
+    $pid               = intval($_POST['id'] ?? 0);
+    $barcode           = $_POST['barcode'] ?? '';
+    $_cart_clamp_name  = '';   // set if a qty request was silently capped to available stock
 
     // 1. Identify Product ID — a scan resolves to a per-item barcode (→ 1 unit)
     //    or, failing that, a box/case barcode (→ box_units units).
@@ -228,18 +229,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // No usable stock — skip all cart mutations
             }
             elseif ($action === 'add' || $action === 'plus') {
-                // A box scan adds box_units at once; a per-item scan adds 1.
-                $inc = $is_box_scan ? $box_units_scanned : 1;
-                $_SESSION['cart'][$pid]['qty'] = min($_SESSION['cart'][$pid]['qty'] + $inc, $effective_qty);
+                $inc       = $is_box_scan ? $box_units_scanned : 1;
+                $requested = intval($_SESSION['cart'][$pid]['qty']) + $inc;
+                $clamped   = min($requested, $effective_qty);
+                if ($clamped < $requested) $_cart_clamp_name = $product['name'] ?? '';
+                $_SESSION['cart'][$pid]['qty'] = $clamped;
             }
             elseif ($action === 'bulk_set') {
                 $qty_to_set = max(0, intval($_POST['qty_override'] ?? 1));
-                $_SESSION['cart'][$pid]['qty'] = min($qty_to_set, $effective_qty);
+                $clamped    = min($qty_to_set, $effective_qty);
+                if ($clamped < $qty_to_set) $_cart_clamp_name = $product['name'] ?? '';
+                $_SESSION['cart'][$pid]['qty'] = $clamped;
             }
             elseif ($action === 'bulk_add') {
-                $add_qty = max(1, intval($_POST['qty_override'] ?? 1));
-                $current = intval($_SESSION['cart'][$pid]['qty'] ?? 0);
-                $_SESSION['cart'][$pid]['qty'] = min($current + $add_qty, $effective_qty);
+                $add_qty   = max(1, intval($_POST['qty_override'] ?? 1));
+                $current   = intval($_SESSION['cart'][$pid]['qty'] ?? 0);
+                $requested = $current + $add_qty;
+                $clamped   = min($requested, $effective_qty);
+                if ($clamped < $requested) $_cart_clamp_name = $product['name'] ?? '';
+                $_SESSION['cart'][$pid]['qty'] = $clamped;
             }
             elseif ($action === 'set_qty') {
                 $new_qty = max(0, intval($_POST['qty'] ?? 0));
@@ -346,11 +354,15 @@ $bd_total = 0.0;
 foreach ($_SESSION['bundle_discounts'] ?? [] as $bd) { $bd_total += floatval($bd['amount']); }
 $bd_total = min($bd_total, $subtotal);
 
-echo json_encode([
+$response = [
     'cart'             => $cart_rows,
     'subtotal'         => number_format($subtotal, 2),
     'bundle_discount'  => number_format($bd_total, 2),
     'display_subtotal' => number_format(max(0.0, $subtotal - $bd_total), 2),
     'found'            => !$skip_locked && isset($pid) && $pid > 0,
-]);
+];
+if ($_cart_clamp_name !== '') {
+    $response['warning'] = "Only " . ($effective_qty ?? 0) . " unit(s) available for \"" . $_cart_clamp_name . "\" — quantity capped.";
+}
+echo json_encode($response);
 exit();
