@@ -12,6 +12,7 @@ $role     = strtolower($_SESSION['role'] ?? '');
 
 $success = trim($_GET['success'] ?? '');
 $error   = trim($_GET['error']   ?? '');
+$warning = trim($_GET['warning'] ?? '');
 
 // Available vouchers — admin-created, no receiver assigned yet.
 // working_active flags a voucher someone is currently encoding (soft lock).
@@ -70,6 +71,9 @@ include '../layout_top.php';
 
     <?php if ($error): ?>
     <div class="bg-red-50 border border-red-200 text-red-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($error) ?></div>
+    <?php endif; ?>
+    <?php if ($warning): ?>
+    <div class="bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($warning) ?></div>
     <?php endif; ?>
     <?php if ($success): ?>
     <div class="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($success) ?></div>

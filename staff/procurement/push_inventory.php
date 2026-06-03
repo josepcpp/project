@@ -46,10 +46,11 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
         $barcode     = $item['barcode']     ?: null;
         $box_barcode = $item['box_barcode'] ?: null;
         $box_units   = max(1, intval($item['box_units'] ?? 1));
-        $cost    = floatval($item['base_price']);   // supplier cost
-        $qty     = intval($item['quantity']);
-        $expiry  = $item['expiry_date'] ?: null;
-        $desc    = $item['description'];
+        $cost     = floatval($item['base_price']);   // supplier cost
+        $qty      = intval($item['quantity']);
+        $expiry   = $item['expiry_date'] ?: null;
+        $desc     = $item['description'];
+        $category = $item['category']    ?: null;
 
         // Resolve an existing active/draft lot by EITHER code (per-item OR box barcode),
         // so a sealed box (no per-item code yet) still matches its prior lot on restock.
@@ -108,7 +109,7 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
                 _push_log($conn, $actor_id, $active['id'], "Pipeline push: +$qty units for \"{$active['name']}\" (Batch #$batch_id) — cost & expiry match, merged.");
             } else {
                 // Cost changed → hold as draft for Admin to price
-                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'cost_change', $box_barcode, $box_units);
+                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'cost_change', $box_barcode, $box_units, $category);
                 _notify_admin($conn, $batch_id,
                     "Cost change on delivery: \"$desc\" (barcode: $barcode) now ₱" . number_format($cost, 2)
                     . " vs previous ₱" . number_format($ref_cost, 2) . ". $qty unit(s) held in Inventory — set a selling price to release to POS.");
@@ -123,16 +124,16 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
             if (!$cost_changed) {
                 $selling_price = floatval($active_ref['price']);
                 if ($selling_price > 0) {
-                    $new_id = _insert_active_lot($conn, $desc, $barcode, $cost, $selling_price, $qty, $expiry, $batch_id, $box_barcode, $box_units, $active_ref['id']);
+                    $new_id = _insert_active_lot($conn, $desc, $barcode, $cost, $selling_price, $qty, $expiry, $batch_id, $box_barcode, $box_units, $active_ref['id'], $category);
                     _push_log($conn, $actor_id, $new_id, "Pipeline push: new FIFO lot for \"{$desc}\" (Batch #$batch_id, expiry {$expiry}) — same cost, new expiry, separate lot created.");
                 } else {
                     // Active lot exists but has no selling price — hold as draft
-                    $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new', $box_barcode, $box_units);
+                    $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new', $box_barcode, $box_units, $category);
                     _push_log($conn, $actor_id, $new_id, "Pipeline push: draft lot for \"{$desc}\" (Batch #$batch_id, expiry {$expiry}) — new expiry, active price missing.");
                 }
             } else {
                 // Cost changed → hold as draft for Admin to price
-                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'cost_change', $box_barcode, $box_units);
+                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'cost_change', $box_barcode, $box_units, $category);
                 _notify_admin($conn, $batch_id,
                     "Cost change on delivery: \"$desc\" (barcode: $barcode) now ₱" . number_format($cost, 2)
                     . " vs previous ₱" . number_format($ref_cost, 2) . ". $qty unit(s) held in Inventory — set a selling price to release to POS.");
@@ -158,7 +159,7 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
                 _push_log($conn, $actor_id, $draft['id'], "Pipeline push: +$qty units to unpriced draft \"{$desc}\" (Batch #$batch_id).");
             } else {
                 // Different cost → new draft lot
-                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new', $box_barcode, $box_units);
+                $new_id = _insert_draft_lot($conn, $desc, $barcode, $cost, $qty, $expiry, $batch_id, 'new', $box_barcode, $box_units, $category);
                 _notify_admin($conn, $batch_id, "New item awaiting price: \"$desc\" (barcode: " . ($barcode ?: $box_barcode ?: 'none') . ") — $qty unit(s) in Inventory. Set a selling price to release to POS.");
                 _push_log($conn, $actor_id, $new_id, "Pipeline push: NEW unpriced draft \"{$desc}\" (Batch #$batch_id).");
             }
@@ -184,13 +185,13 @@ function push_inventory(int $batch_id, ?int $actor_id, string $actor_username, s
 }
 
 /** Insert a draft (unpriced) product lot. Returns the new product id. */
-function _insert_draft_lot(mysqli $conn, string $desc, ?string $barcode, float $cost, int $qty, ?string $expiry, int $batch_id, string $reason, ?string $box_barcode = null, int $box_units = 1): int
+function _insert_draft_lot(mysqli $conn, string $desc, ?string $barcode, float $cost, int $qty, ?string $expiry, int $batch_id, string $reason, ?string $box_barcode = null, int $box_units = 1, ?string $category = null): int
 {
     $ins = $conn->prepare(
-        "INSERT INTO products (supplier_id, name, barcode, box_barcode, box_units, price, cost_price, last_buy_cost, quantity, max_quantity, status, draft_reason, expiry_date, receiving_batch_id)
-         VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, '" . PRODUCT_DRAFT . "', ?, ?, ?)"
+        "INSERT INTO products (supplier_id, name, barcode, box_barcode, box_units, price, cost_price, last_buy_cost, quantity, max_quantity, status, draft_reason, expiry_date, receiving_batch_id, category)
+         VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, '" . PRODUCT_DRAFT . "', ?, ?, ?, ?)"
     );
-    $ins->bind_param("sssiddiissi", $desc, $barcode, $box_barcode, $box_units, $cost, $cost, $qty, $qty, $reason, $expiry, $batch_id);
+    $ins->bind_param("sssiddiississ", $desc, $barcode, $box_barcode, $box_units, $cost, $cost, $qty, $qty, $reason, $expiry, $batch_id, $category);
     $ins->execute();
     return $conn->insert_id;
 }
@@ -201,7 +202,7 @@ function _insert_draft_lot(mysqli $conn, string $desc, ?string $barcode, float $
  * so both lots can live side-by-side and FIFO drains the earliest-expiry lot first.
  * Bulk tiers are copied from the reference lot so pricing stays consistent.
  */
-function _insert_active_lot(mysqli $conn, string $desc, ?string $barcode, float $cost, float $selling_price, int $qty, ?string $expiry, int $batch_id, ?string $box_barcode, int $box_units, int $ref_id): int
+function _insert_active_lot(mysqli $conn, string $desc, ?string $barcode, float $cost, float $selling_price, int $qty, ?string $expiry, int $batch_id, ?string $box_barcode, int $box_units, int $ref_id, ?string $category = null): int
 {
     // Copy supplier_id and bulk tiers from the reference lot for full traceability.
     $tq = $conn->prepare("SELECT supplier_id, bulk_qty_half, price_half_box, bulk_qty_full, price_full_box FROM products WHERE id = ?");
@@ -213,17 +214,18 @@ function _insert_active_lot(mysqli $conn, string $desc, ?string $barcode, float 
         "INSERT INTO products
              (supplier_id, name, barcode, box_barcode, box_units, price, cost_price, last_buy_cost,
               quantity, max_quantity, status, expiry_date, receiving_batch_id,
-              bulk_qty_half, price_half_box, bulk_qty_full, price_full_box)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?, ?, ?, ?, ?)"
+              bulk_qty_half, price_half_box, bulk_qty_full, price_full_box, category)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?, ?, ?, ?, ?, ?)"
     );
-    $ins->bind_param("isssidddiisiidid",
+    $ins->bind_param("isssidddiisiidids",
         $t['supplier_id'],
         $desc, $barcode, $box_barcode, $box_units,
         $selling_price, $cost, $cost,
         $qty, $qty,
         $expiry, $batch_id,
         $t['bulk_qty_half'], $t['price_half_box'],
-        $t['bulk_qty_full'], $t['price_full_box']
+        $t['bulk_qty_full'], $t['price_full_box'],
+        $category
     );
     $ins->execute();
     return $conn->insert_id;

@@ -69,8 +69,17 @@ if ($action === 'save_items') {
              "receive_batch.php?error=" . urlencode("This batch belongs to another receiver or is no longer available."));
     }
     if ($batch['status'] !== 'pending_request') {
-        $msg = "Batch #{$batch_id} was already submitted (now in the '{$batch['status']}' stage) and can no longer be edited.";
-        $err($msg, "receive_batch.php?", "receive_batch.php?error=" . urlencode($msg));
+        $status_labels = [
+            'pending_validation'    => 'In Review',
+            'validated_tally'       => 'Validated',
+            'validated_discrepancy' => 'Discrepancy Found',
+            'on_hold'               => 'On Hold',
+            'completed'             => 'Completed',
+            'rejected'              => 'Rejected',
+        ];
+        $status_label = $status_labels[$batch['status']] ?? ucwords(str_replace('_', ' ', $batch['status']));
+        $msg = "Batch #{$batch_id} is already in \"{$status_label}\" stage and can no longer be edited.";
+        $err($msg, "receive_batch.php?", "receive_batch.php?warning=" . urlencode($msg));
     }
 
     // Validate items
@@ -105,7 +114,12 @@ if ($action === 'save_items') {
         $damaged_qty  = max(0, intval($row['damaged_qty'] ?? 0));
         $damage_notes = trim($row['damage_notes'] ?? '') ?: null;
 
-        $validated[] = compact('barcode', 'box_barcode', 'box_units', 'desc', 'qty', 'expiry_date', 'damaged_qty', 'damage_notes');
+        $category = trim($row['category'] ?? '');
+        if ($category === '' || !array_key_exists($category, PRODUCT_CATEGORIES)) {
+            $err("Select a valid category for \"{$desc}\".");
+        }
+
+        $validated[] = compact('barcode', 'box_barcode', 'box_units', 'desc', 'qty', 'expiry_date', 'damaged_qty', 'damage_notes', 'category');
     }
 
     if (empty($validated)) $err("Add at least one item before saving.");
@@ -116,9 +130,9 @@ if ($action === 'save_items') {
         $del->bind_param("i", $batch_id);
         $del->execute();
 
-        $ins = $conn->prepare("INSERT INTO receiving_items (batch_id, barcode, box_barcode, box_units, description, quantity, expiry_date, damaged_qty, damage_notes) VALUES (?,?,?,?,?,?,?,?,?)");
+        $ins = $conn->prepare("INSERT INTO receiving_items (batch_id, barcode, box_barcode, box_units, description, category, quantity, expiry_date, damaged_qty, damage_notes) VALUES (?,?,?,?,?,?,?,?,?,?)");
         foreach ($validated as $v) {
-            $ins->bind_param("issisisis", $batch_id, $v['barcode'], $v['box_barcode'], $v['box_units'], $v['desc'], $v['qty'], $v['expiry_date'], $v['damaged_qty'], $v['damage_notes']);
+            $ins->bind_param("ississisis", $batch_id, $v['barcode'], $v['box_barcode'], $v['box_units'], $v['desc'], $v['category'], $v['qty'], $v['expiry_date'], $v['damaged_qty'], $v['damage_notes']);
             $ins->execute();
         }
 

@@ -24,6 +24,23 @@ function _log_activity(mysqli $conn, int $user_id, int $item_id, string $message
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
 
+    // ── Toggle VAT exempt flag for all active lots of a product ──────────────
+    if ($action === 'toggle_vat_exempt') {
+        $item_name  = trim($_POST['item_name'] ?? '');
+        $new_exempt = intval($_POST['vat_exempt'] ?? 0) ? 1 : 0;
+        $is_ajax    = !empty($_POST['_ajax']);
+        if ($item_name !== '') {
+            $upd = $conn->prepare("UPDATE products SET vat_exempt = ? WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'");
+            $upd->bind_param("is", $new_exempt, $item_name);
+            $upd->execute();
+        }
+        if ($is_ajax) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => true, 'vat_exempt' => $new_exempt]);
+            exit();
+        }
+    }
+
     // ── Manual global price update (existing feature) ─────────────────────────
     if ($action === 'update_unit_price') {
         $pid          = intval($_POST['p_id']);
@@ -33,6 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $t1_price     = max(0, floatval($_POST['t1_price'] ?? 0));
         $t2_qty       = max(0, intval($_POST['t2_qty']    ?? 0));
         $t2_price     = max(0, floatval($_POST['t2_price'] ?? 0));
+        $is_ajax      = !empty($_POST['_ajax']);
 
         $conn->begin_transaction();
         try {
@@ -65,9 +83,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
 
             $conn->commit();
+            if ($is_ajax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true]);
+                exit();
+            }
             $msg = "<div class='bg-emerald-500 text-white p-4 rounded-2xl mb-6 font-bold animate-in text-center shadow-lg'>Prices updated and synced across all active batches.</div>";
         } catch (\Throwable $e) {
             $conn->rollback();
+            if ($is_ajax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                exit();
+            }
             $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold shadow-lg'>Transaction Error: " . htmlspecialchars($e->getMessage()) . "</div>";
         }
     }
@@ -354,6 +382,9 @@ $sql = "SELECT
             MAX(p.box_units) as box_units,
             MAX(p.category) as category,
             MAX(p.price) as price,
+            MAX(p.cost_price) as cost_price,
+            MAX(p.last_buy_cost) as last_buy_cost,
+            MAX(p.vat_exempt) as vat_exempt,
             MAX(p.bulk_qty_half)   as bulk_qty_half,
             MAX(p.price_half_box)  as price_half_box,
             MAX(p.bulk_qty_full)   as bulk_qty_full,
@@ -502,8 +533,11 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                             $first_req      = $reqs[0] ?? null;
                             $has_pending    = !empty($reqs);
                             $tiers_locked   = intval($r['tiers_locked']) === 1;
+                            $is_exempt      = intval($r['vat_exempt']) === 1;
+                            $eff_cost       = floatval($r['cost_price']) > 0 ? floatval($r['cost_price']) : floatval($r['last_buy_cost']);
+                            $markup_pct     = $eff_cost > 0 ? round(((floatval($r['price']) - $eff_cost) / $eff_cost) * 100, 1) : null;
                         ?>
-                        <tr class="hover:bg-slate-50/30 transition-all <?= $tiers_locked ? 'bg-rose-50/40' : ($has_pending ? 'bg-amber-50/40' : '') ?>">
+                        <tr id="live-row-<?= $r['id'] ?>" class="hover:bg-slate-50/30 transition-all <?= $tiers_locked ? 'bg-rose-50/40' : ($has_pending ? 'bg-amber-50/40' : '') ?>">
                             <td class="px-8 py-5">
                                 <p class="font-bold text-slate-800 text-base leading-tight"><?= htmlspecialchars($r['product_name']) ?></p>
                                 <div class="mt-1.5 flex items-center gap-1.5 flex-wrap">
@@ -514,8 +548,13 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                                     <code class="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100" title="Box barcode (<?= intval($r['box_units']) ?> per box)">📦 #<?= htmlspecialchars($r['box_barcode']) ?></code>
                                     <?php endif; ?>
                                     <span class="text-[10px] font-black text-blue-500 uppercase bg-blue-50/50 px-2 py-0.5 rounded"><?= htmlspecialchars($r['category']) ?></span>
+                                    <button id="vat-badge-<?= $r['id'] ?>"
+                                        onclick="toggleVatExempt(<?= $r['id'] ?>, '<?= addslashes($r['product_name']) ?>', <?= $is_exempt ? 1 : 0 ?>)"
+                                        class="text-[9px] font-black px-2 py-0.5 rounded-full border uppercase transition-all <?= $is_exempt ? 'text-amber-700 bg-amber-100 border-amber-200' : 'text-emerald-700 bg-emerald-50 border-emerald-200' ?>">
+                                        <?= $is_exempt ? 'Non-VAT' : 'VAT 12%' ?>
+                                    </button>
                                     <?php if ($tiers_locked): ?>
-                                        <span class="text-[9px] font-black text-rose-600 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 uppercase animate-pulse">⚠ Tiers Need Review</span>
+                                        <span id="live-badge-locked-<?= $r['id'] ?>" class="text-[9px] font-black text-rose-600 bg-rose-100 px-2 py-0.5 rounded-full border border-rose-200 uppercase animate-pulse">⚠ Tiers Need Review</span>
                                     <?php elseif ($has_pending): ?>
                                         <span onclick="showPriceTab('pending')" class="cursor-pointer text-[9px] font-black text-amber-600 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-full border border-amber-200 uppercase transition-all"><?= count($reqs) > 1 ? count($reqs) . ' Price Updates Pending' : 'Price Update Pending' ?> →</span>
                                     <?php endif; ?>
@@ -526,17 +565,27 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                                 <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Retail Price</p>
                                 <div class="relative inline-block">
                                     <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-black text-sm pointer-events-none">₱</span>
-                                    <input type="number" step="0.01" min="0" id="retail_<?= $r['id'] ?>" value="<?= number_format($r['price'], 2, '.', '') ?>"
+                                    <input type="number" step="0.01" min="0" id="retail_<?= $r['id'] ?>"
+                                        value="<?= number_format($r['price'], 2, '.', '') ?>"
+                                        data-cost="<?= $eff_cost ?>"
+                                        oninput="updateMarkupBadge(<?= $r['id'] ?>, parseFloat(this.value)||0, parseFloat(this.dataset.cost)||0)"
                                         class="w-28 bg-white border border-slate-200 rounded-xl pl-7 pr-2 py-2 text-right font-black <?= $has_pending ? 'text-amber-500' : 'text-emerald-600' ?> text-base outline-none focus:border-emerald-400 transition-all">
                                 </div>
+                                <?php if ($markup_pct !== null): ?>
+                                <p id="markup-badge-<?= $r['id'] ?>" class="text-[8px] font-black mt-1 <?= $markup_pct >= 30 ? 'text-emerald-600' : ($markup_pct >= 10 ? 'text-amber-500' : 'text-rose-500') ?>">
+                                    <?= $markup_pct >= 0 ? '+' : '' ?><?= $markup_pct ?>% markup
+                                </p>
+                                <?php else: ?>
+                                <p id="markup-badge-<?= $r['id'] ?>" class="text-[8px] font-black mt-1 text-slate-300">— no cost data</p>
+                                <?php endif; ?>
                                 <?php if ($first_req): ?>
                                     <p class="text-[8px] font-black text-slate-300 mt-1">Pending → <span class="text-rose-500">₱<?= number_format($first_req['proposed_price'], 2) ?></span><?= count($reqs) > 1 ? ' <span class="text-slate-300">+' . (count($reqs) - 1) . ' more</span>' : '' ?></p>
                                 <?php endif; ?>
                             </td>
 
-                            <td class="px-4 py-4 <?= $tiers_locked ? 'bg-rose-50/60' : '' ?>">
+                            <td id="live-tiers-cell-<?= $r['id'] ?>" class="px-4 py-4 <?= $tiers_locked ? 'bg-rose-50/60' : '' ?>">
                                 <?php if ($tiers_locked): ?>
-                                    <p class="text-[8px] font-black text-rose-500 uppercase tracking-widest mb-2">Update tiers to unlock POS</p>
+                                    <p id="live-tiers-warning-<?= $r['id'] ?>" class="text-[8px] font-black text-rose-500 uppercase tracking-widest mb-2">Update tiers to unlock POS</p>
                                 <?php endif; ?>
                                 <form id="p_form_<?= $r['id'] ?>" class="flex flex-col gap-2" style="min-width:270px">
                                     <!-- Tiers side-by-side -->
@@ -584,7 +633,7 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                             </td>
 
                             <td class="px-8 py-5 text-right">
-                                <button onclick="saveGlobalPrice(<?= $r['id'] ?>, '<?= addslashes($r['product_name']) ?>')"
+                                <button id="live-btn-<?= $r['id'] ?>" onclick="saveGlobalPrice(<?= $r['id'] ?>, '<?= addslashes($r['product_name']) ?>')"
                                     class="<?= $tiers_locked ? 'bg-rose-600 hover:bg-rose-500 animate-pulse' : 'bg-slate-900 hover:bg-emerald-600' ?> text-white px-6 py-2.5 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md active:scale-95">
                                     <?= $tiers_locked ? 'Update Tiers ↑' : 'Apply Changes' ?>
                                 </button>
@@ -941,26 +990,72 @@ async function setSellingPrice(pid, name) {
 
 // ── Global price manual update ────────────────────────────────────────────────
 async function saveGlobalPrice(pid, itemName) {
-    const form = document.getElementById('p_form_' + pid);
+    const form     = document.getElementById('p_form_' + pid);
     const retailEl = document.getElementById('retail_' + pid);
     const retailVal = retailEl ? parseFloat(retailEl.value) : 0;
-    if (retailEl && (!retailVal || retailVal <= 0)) { alert('Retail price must be greater than ₱0.00.'); retailEl.focus(); return; }
+    if (retailEl && (!retailVal || retailVal <= 0)) { showFlash('Retail price must be greater than ₱0.00.', 'error'); retailEl.focus(); return; }
     if (!await customConfirm('Retail price and bulk tiers will be updated across all active batches and applied to POS immediately.', "Apply pricing for '" + itemName + "'?")) return;
 
-    const fd = new FormData();
-    fd.append('action',    'update_unit_price');
-    fd.append('p_id',      pid);
-    fd.append('item_name', itemName);
-    if (retailEl) fd.append('retail_price', retailVal);
-    fd.append('t1_qty',    form.querySelector('[name="t1_qty"]').value);
-    fd.append('t1_price',  form.querySelector('[name="t1_price"]').value);
-    fd.append('t2_qty',    form.querySelector('[name="t2_qty"]').value);
-    fd.append('t2_price',  form.querySelector('[name="t2_price"]').value);
+    const btn     = document.getElementById('live-btn-' + pid);
+    const origTxt = btn.textContent.trim();
+    btn.disabled  = true;
+    btn.classList.remove('animate-pulse');
+    btn.textContent = 'Saving…';
 
-    if (typeof navigate === 'function') {
-        navigate('price_maintenance.php', fd);
-    } else {
-        window.location.reload();
+    try {
+        const fd = new FormData();
+        fd.append('action',      'update_unit_price');
+        fd.append('p_id',        pid);
+        fd.append('item_name',   itemName);
+        if (retailEl) fd.append('retail_price', retailVal);
+        fd.append('t1_qty',   form.querySelector('[name="t1_qty"]').value);
+        fd.append('t1_price', form.querySelector('[name="t1_price"]').value);
+        fd.append('t2_qty',   form.querySelector('[name="t2_qty"]').value);
+        fd.append('t2_price', form.querySelector('[name="t2_price"]').value);
+        fd.append('_ajax', '1');
+
+        const res  = await fetch('price_maintenance.php', { method: 'POST', body: fd });
+        const data = await res.json();
+
+        if (!data.success) {
+            showFlash(data.error || 'Failed to update pricing.', 'error');
+            btn.disabled    = false;
+            btn.textContent = origTxt;
+            return;
+        }
+
+        // Remove tiers-locked visual state from the row and tiers cell
+        const row = document.getElementById('live-row-' + pid);
+        if (row) row.classList.remove('bg-rose-50/40');
+
+        const tiersCell = document.getElementById('live-tiers-cell-' + pid);
+        if (tiersCell) tiersCell.classList.remove('bg-rose-50/60');
+
+        const badge = document.getElementById('live-badge-locked-' + pid);
+        if (badge) badge.remove();
+
+        const warning = document.getElementById('live-tiers-warning-' + pid);
+        if (warning) warning.remove();
+
+        // Reset button to normal Apply Changes state
+        btn.classList.remove('bg-rose-600', 'hover:bg-rose-500', 'animate-pulse');
+        btn.classList.add('bg-slate-900', 'hover:bg-emerald-600');
+        btn.disabled    = false;
+        btn.textContent = 'Apply Changes';
+
+        // Brief success flash on the button itself
+        btn.classList.add('bg-emerald-600');
+        btn.classList.remove('bg-slate-900');
+        setTimeout(function() {
+            btn.classList.remove('bg-emerald-600');
+            btn.classList.add('bg-slate-900');
+        }, 1200);
+
+        showFlash(itemName + ' pricing updated — POS synced.', 'success');
+    } catch (_) {
+        showFlash('Connection error. Try again.', 'error');
+        btn.disabled    = false;
+        btn.textContent = origTxt;
     }
 }
 
@@ -1046,6 +1141,55 @@ async function submitReject() {
 document.getElementById('reject-modal').addEventListener('click', function(e) {
     if (e.target === this) closeRejectModal();
 });
+
+// ── Live markup badge (updates as price input changes) ────────────────────────
+function updateMarkupBadge(pid, price, cost) {
+    const badge = document.getElementById('markup-badge-' + pid);
+    if (!badge) return;
+    if (!cost || cost <= 0) {
+        badge.textContent = '— no cost data';
+        badge.className = 'text-[8px] font-black mt-1 text-slate-300';
+        return;
+    }
+    const pct = ((price - cost) / cost) * 100;
+    badge.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% markup';
+    badge.className = 'text-[8px] font-black mt-1 ' +
+        (pct >= 30 ? 'text-emerald-600' : pct >= 10 ? 'text-amber-500' : 'text-rose-500');
+}
+
+// ── VAT / Exempt toggle (AJAX, no page reload) ────────────────────────────────
+async function toggleVatExempt(pid, name, currentExempt) {
+    const newExempt = currentExempt ? 0 : 1;
+    const badge = document.getElementById('vat-badge-' + pid);
+    if (badge) badge.style.opacity = '0.5';
+
+    try {
+        const fd = new FormData();
+        fd.append('action',     'toggle_vat_exempt');
+        fd.append('item_name',  name);
+        fd.append('vat_exempt', newExempt);
+        fd.append('_ajax',      '1');
+        const res  = await fetch('price_maintenance.php', { method: 'POST', body: fd });
+        const data = await res.json();
+
+        if (!data.success) {
+            showFlash('Failed to update VAT status.', 'error');
+        } else if (badge) {
+            badge.style.opacity  = '';
+            badge.textContent    = newExempt ? 'Non-VAT' : 'VAT 12%';
+            badge.className      = newExempt
+                ? 'text-[9px] font-black px-2 py-0.5 rounded-full border uppercase transition-all text-amber-700 bg-amber-100 border-amber-200'
+                : 'text-[9px] font-black px-2 py-0.5 rounded-full border uppercase transition-all text-emerald-700 bg-emerald-50 border-emerald-200';
+            badge.setAttribute('onclick',
+                "toggleVatExempt(" + pid + ", '" + name.replace(/'/g, "\\'") + "', " + newExempt + ")"
+            );
+            showFlash(name + (newExempt ? ' marked Non-VAT.' : ' marked VAT 12%.'), 'success');
+        }
+    } catch (_) {
+        showFlash('Connection error. Try again.', 'error');
+        if (badge) badge.style.opacity = '';
+    }
+}
 </script>
 
 <?php include '../layout_bottom.php'; ?>

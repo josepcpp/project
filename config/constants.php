@@ -38,18 +38,16 @@ define('PRODUCT_DRAFT',    'draft');
 define('PRODUCT_LIVE_STATUSES', [PRODUCT_ACTIVE, PRODUCT_ARCHIVED]);
 
 // ── PRODUCT CATEGORIES ────────────────────────────────────────────────────────
-define('CAT_GENERAL',   'General');
-define('CAT_FOOD',      'Food');
-define('CAT_BEVERAGE',  'Beverage');
-define('CAT_SUPPLIES',  'Supplies');
-define('CAT_MEDICINE',  'Medicine');
+define('CAT_FRESH',    'Fresh & Perishable');
+define('CAT_DRY',      'Packed & Dry Goods');
+define('CAT_BEVERAGE', 'Beverages');
+define('CAT_NONFOOD',  'Non-food & Household');
 
 define('PRODUCT_CATEGORIES', [
-    CAT_GENERAL  => 'General Items',
-    CAT_FOOD     => 'Food Products',
-    CAT_BEVERAGE => 'Beverages',
-    CAT_SUPPLIES => 'Daily Supplies',
-    CAT_MEDICINE => 'Medical/First Aid',
+    CAT_FRESH    => CAT_FRESH,
+    CAT_DRY      => CAT_DRY,
+    CAT_BEVERAGE => CAT_BEVERAGE,
+    CAT_NONFOOD  => CAT_NONFOOD,
 ]);
 
 // ── PAYMENT METHODS ───────────────────────────────────────────────────────────

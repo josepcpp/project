@@ -206,16 +206,17 @@ include '../layout_top.php';
                 <table class="w-full text-sm" id="items-table">
                     <thead>
                         <tr class="text-left">
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-36">Barcode</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3">Description <span class="text-rose-500">*</span></th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-20 text-center">Qty/Box</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-20 text-center">Boxes</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-24 text-center">Total Qty</th>
-                            <th class="pb-3 text-[10px] font-black text-rose-400 uppercase tracking-widest pr-3 w-20 text-center">Damaged</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-24 text-center">Good Qty</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-36">Expiry Date</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3">Damage Notes</th>
-                            <th class="pb-3 w-8"></th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-32">Barcode</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 min-w-[130px]">Description <span class="text-rose-500">*</span></th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-36">Category <span class="text-rose-500">*</span></th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-16 text-center">Qty/Box</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-16 text-center">Boxes</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-14 text-center">Total</th>
+                            <th class="pb-3 text-[10px] font-black text-rose-400 uppercase tracking-widest pr-3 w-16 text-center">Damaged</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-14 text-center">Good</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-32">Expiry Date</th>
+                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 min-w-[100px]">Damage Notes</th>
+                            <th class="pb-3 w-6"></th>
                         </tr>
                     </thead>
                     <tbody id="items-body">
@@ -228,6 +229,14 @@ include '../layout_top.php';
                                 <input type="text" name="items[<?= $i ?>][box_barcode]" value="<?= htmlspecialchars($item['box_barcode'] ?? '') ?>" placeholder="📦 Box barcode" class="input-modern text-xs w-full mt-1 box-barcode-input <?= $total_raw >= 1 ? '' : 'hidden' ?>">
                             </td>
                             <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][description]" required class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['description']) ?>"></td>
+                            <td class="pr-3 pb-2">
+                                <select name="items[<?= $i ?>][category]" required class="input-modern text-sm w-full category-select">
+                                    <option value="">— select —</option>
+                                    <?php foreach (PRODUCT_CATEGORIES as $val => $label): ?>
+                                    <option value="<?= $val ?>" <?= ($item['category'] ?? '') === $val ? 'selected' : '' ?>><?= $label ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
                             <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
                             <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="1" value="<?= $total_raw ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
                             <td class="pr-3 pb-2 text-center">
@@ -308,6 +317,7 @@ include '../layout_top.php';
                         <th>#</th>
                         <th>Barcode</th>
                         <th>Description</th>
+                        <th>Category</th>
                         <th>Total Qty</th>
                         <th>Expiry</th>
                     </tr>
@@ -318,6 +328,7 @@ include '../layout_top.php';
                         <td class="text-slate-400"><?= $i + 1 ?></td>
                         <td class="font-mono text-xs"><?= htmlspecialchars($item['barcode'] ?? '—') ?></td>
                         <td class="font-bold"><?= htmlspecialchars($item['description']) ?></td>
+                        <td class="text-slate-500"><?= htmlspecialchars($item['category'] ?? '—') ?></td>
                         <td class="text-center font-black"><?= intval($item['quantity']) ?></td>
                         <td class="text-slate-400"><?= $item['expiry_date'] ? date('M j, Y', strtotime($item['expiry_date'])) : '—' ?></td>
                     </tr>
@@ -333,6 +344,10 @@ include '../layout_top.php';
 
 <script>
 let _rowIdx = <?= count($items) ?>;
+const _catSelectOptions = <?= json_encode(
+    '<option value="">— select —</option>' .
+    implode('', array_map(fn($v) => "<option value=\"{$v}\">{$v}</option>", array_keys(PRODUCT_CATEGORIES)))
+) ?>;
 
 function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -399,6 +414,19 @@ function beforeSubmit() {
     });
     if (expiryMissing) {
         showFlash('Items marked "With expiry" need an expiry date — fill it in or untick the box.', 'error');
+        return false;
+    }
+    // Category is required for every row
+    var catMissing = false;
+    document.querySelectorAll('.item-row').forEach(function(row) {
+        var cat = row.querySelector('.category-select');
+        if (cat && !cat.value) {
+            catMissing = true;
+            cat.classList.add('ring-2', 'ring-rose-400');
+        }
+    });
+    if (catMissing) {
+        showFlash('Select a category for each item.', 'error');
         return false;
     }
     return true;
@@ -557,6 +585,7 @@ function addRow(barcode = '') {
             <input type="text" name="items[${i}][box_barcode]" placeholder="📦 Box barcode" class="input-modern text-xs w-full mt-1 box-barcode-input hidden">
         </td>
         <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
+        <td class="pr-3 pb-2"><select name="items[${i}][category]" required class="input-modern text-sm w-full category-select">${_catSelectOptions}</select></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="0" value="0" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="0" value="0" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
         <td class="pr-3 pb-2 text-center"><span class="total-display font-black text-slate-800 text-base">0</span></td>
@@ -608,8 +637,8 @@ function addNonBarcodeRow() {
 
     // Small badge appended BELOW the input so the column width is unchanged
     var badge = document.createElement('span');
-    badge.className   = 'inline-block mt-1 text-[9px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest';
-    badge.textContent = 'Non-barcode item';
+    badge.className   = 'inline-block mt-1 text-[7.7px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest';
+    badge.textContent = 'Non-barcode Item';
     bc.parentElement.appendChild(badge);
 
     // Jump straight to the description — clerk must name the item

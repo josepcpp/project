@@ -558,6 +558,12 @@ function renderPage(htmlText, isSilent = false) {
             flashUrl.searchParams.delete('error');
             history.replaceState({}, '', flashUrl.toString());
         }
+        var wm = flashUrl.searchParams.get('warning');
+        if (wm && typeof showFlash === 'function') {
+            showFlash(wm, 'warning');
+            flashUrl.searchParams.delete('warning');
+            history.replaceState({}, '', flashUrl.toString());
+        }
     }
 }
 

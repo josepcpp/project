@@ -749,3 +749,23 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.7.3
+
+// ── v1.7.4 — Product category on receiving items ─────────────────────────────
+$_db_version   = '1.7.4';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE receiving_items ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT NULL AFTER description");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.4
+
+// ── v1.7.5 — Per-product VAT exempt flag ─────────────────────────────────────
+$_db_version   = '1.7.5';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS vat_exempt TINYINT(1) NOT NULL DEFAULT 0");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.5

@@ -20,6 +20,13 @@ if (empty($_SESSION['cart'])) {
 $cash              = floatval($_POST['cash'] ?? 0);
 $payment_mode      = $_POST['payment_mode'] ?? 'Cash';
 $reference_no      = !empty($_POST['reference_no']) ? trim($_POST['reference_no']) : null;
+
+// Server-side guard: digital payment methods must carry a reference number
+if (in_array($payment_mode, [PAY_METHOD_GCASH, PAY_METHOD_MAYA]) && $reference_no === null) {
+    header("Location: checkout.php?error=" . urlencode("Reference number is required for {$payment_mode} payments."));
+    exit();
+}
+
 $discount_id       = intval($_POST['discount_id'] ?? 0);
 $promo_typed       = trim($_POST['promo_code'] ?? '');
 // Stack mode: comma-separated discount IDs sent when conflict_rule = 'stack'
@@ -28,7 +35,6 @@ $raw_stacked = trim($_POST['stacked_discount_ids'] ?? '');
 if ($raw_stacked !== '' && $discount_id === 0 && $promo_typed === '') {
     $stacked_discount_ids = array_values(array_filter(array_map('intval', explode(',', $raw_stacked))));
 }
-$tax_enabled       = intval($_POST['tax_enabled'] ?? 1); // 1 = VAT on, 0 = exempt
 $customer_group_id = intval($_POST['customer_group_id'] ?? 0); // F-06
 
 $discount_name      = "None";
@@ -110,13 +116,15 @@ try {
 
     // 5. First pass: re-fetch live prices from DB, validate stock, recalculate line totals (POS-2)
     $server_subtotal = 0.0;
+    $vatable_raw     = 0.0;  // sum of line_totals for VAT-applicable items
+    $exempt_raw      = 0.0;  // sum of line_totals for VAT-exempt items
     $items_to_insert = [];
 
     foreach ($_SESSION['cart'] as $pid => $item) {
         // POS-2: FOR UPDATE locks the row so two concurrent checkouts can't both
         // pass the stock check and oversell the last unit(s).
         $p_query = $conn->prepare(
-            "SELECT name, quantity, barcode, price, bulk_qty_full, bulk_qty_half, price_full_box, price_half_box
+            "SELECT name, quantity, barcode, price, bulk_qty_full, bulk_qty_half, price_full_box, price_half_box, vat_exempt
              FROM products WHERE id = ? FOR UPDATE"
         );
         $p_query->bind_param("i", $pid);
@@ -171,6 +179,12 @@ try {
 
         $effective_unit = ($cart_qty > 0) ? ($line_total / $cart_qty) : $retail;
         $server_subtotal += $line_total;
+
+        if (!empty($product_data['vat_exempt'])) {
+            $exempt_raw += $line_total;
+        } else {
+            $vatable_raw += $line_total;
+        }
 
         $items_to_insert[] = [
             'pid'        => intval($pid),
@@ -296,20 +310,22 @@ try {
 
     $net_subtotal = max(0.0, $after_bundle_subtotal - $discount_amt);
 
-    // 6d. F-14: Tax calculation — exclusive (default) or inclusive mode
-    // exclusive: tax is added on top of prices → total = net + tax
-    // inclusive: tax is already embedded in prices → total unchanged (VAT ON), or strip VAT (exempt)
-    // $tax_display_mode already loaded above (single combined settings query).
+    // 6d. F-14: Tax calculation — VAT (12%) is always on.
+    // Discounts are distributed proportionally: vatable share = net * (vatable_raw / total_raw).
+    // VAT is applied only to the vatable share; exempt share carries no tax.
+    $total_raw     = $vatable_raw + $exempt_raw;
+    $vatable_ratio = $total_raw > 0 ? $vatable_raw / $total_raw : 1.0;
+    $vatable_net   = $net_subtotal * $vatable_ratio;
+    $exempt_net    = $net_subtotal - $vatable_net;
+
     if ($tax_display_mode === 'inclusive') {
-        // VAT already embedded in every price
-        $tax_amt = $tax_enabled
-            ? $net_subtotal * (TAX_RATE / (1 + TAX_RATE))   // extract embedded VAT for audit
-            : 0.0;
-        $pre_round_total = $tax_enabled ? $net_subtotal : $net_subtotal / (1 + TAX_RATE); // exempt strips it
+        // Prices already embed VAT — extract the component for audit; total unchanged
+        $tax_amt         = $vatable_net * (TAX_RATE / (1 + TAX_RATE));
+        $pre_round_total = $net_subtotal;
     } else {
-        // Exclusive (default): add VAT on top
-        $tax_amt         = $tax_enabled ? $net_subtotal * TAX_RATE : 0.0;
-        $pre_round_total = $net_subtotal + $tax_amt;
+        // Exclusive (default): add VAT on top of vatable portion only
+        $tax_amt         = $vatable_net * TAX_RATE;
+        $pre_round_total = $vatable_net + $tax_amt + $exempt_net;
     }
 
     // 6e. F-11: Apply price rounding rule

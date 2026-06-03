@@ -16,15 +16,16 @@ foreach ($_SESSION['cart'] as $pid => $item) {
     $lt        = floatval($item['line_total'] ?? ($item['price'] * $item['qty']));
     $subtotal += $lt;
 
-    // Fetch category for this item (needed for category-scoped promos)
-    $cat_q = $conn->prepare("SELECT category FROM products WHERE id = ? LIMIT 1");
+    // Fetch category and vat_exempt for this item
+    $cat_q = $conn->prepare("SELECT category, vat_exempt FROM products WHERE id = ? LIMIT 1");
     $cat_q->bind_param("i", $pid);
     $cat_q->execute();
     $cat_row = $cat_q->get_result()->fetch_assoc();
 
     $cart_composition[] = [
         'product_id' => (int)$pid,
-        'category'   => $cat_row['category'] ?? '',
+        'category'   => $cat_row['category']   ?? '',
+        'vat_exempt' => (int)($cat_row['vat_exempt'] ?? 0),
         'line_total' => $lt,
     ];
 }
@@ -94,7 +95,6 @@ if ($grp_q) {
                 </div>
                 <!-- Hidden inputs for backend processing -->
                 <input type="hidden" name="total" id="final-total-hidden" value="<?= $subtotal ?>">
-                <input type="hidden" name="tax_enabled" id="tax-enabled-hidden" value="1">
                 <input type="hidden" name="customer_group_id" id="group-id-hidden" value="0">
                 <!-- Rounding notice (shown when rule != none) -->
                 <p id="rounding-note" class="text-[9px] text-slate-400 font-bold uppercase tracking-widest hidden mt-2"></p>
@@ -126,19 +126,6 @@ if ($grp_q) {
                 <p id="group-discount-line" class="text-[11px] font-bold text-blue-600 ml-2 hidden"></p>
             </div>
             <?php endif; ?>
-
-            <!-- ⚙️ TAX SWITCH (Feature 10) -->
-            <div class="flex items-center justify-between bg-slate-50 p-6 rounded-[2rem] border border-slate-100 px-10">
-                <div>
-                    <span class="block text-slate-700 font-bold">Value Added Tax (12%)</span>
-                    <span class="text-[10px] text-slate-400 font-black uppercase">Tax status affects the final total</span>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer group">
-                    <input type="checkbox" id="tax-toggle" class="sr-only peer" checked onchange="updateTotals()">
-                    <div class="w-14 h-7 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[4px] after:start-[4px] after:bg-white after:rounded-full after:h-5 after:w-6 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
-                    <span id="tax-label" class="ml-3 text-[11px] font-black text-emerald-600 w-8">YES</span>
-                </label>
-            </div>
 
             <!-- 🏷️ PROMO & DISCOUNT SECTION -->
             <input type="hidden" name="discount_id" id="discount_id_field" value="0">
@@ -452,8 +439,6 @@ function applyTypedPromo() {
 }
 
 function updateTotals() {
-    const taxToggle  = document.getElementById('tax-toggle');
-    const isTaxOn    = taxToggle.checked;
     const totalDisplay = document.getElementById('display-total');
     const detailText   = document.getElementById('tax-detail-text');
     const hiddenInput  = document.getElementById('final-total-hidden');
@@ -482,22 +467,31 @@ function updateTotals() {
     if (discountAmt > 0) savings.push(`<span class="text-amber-600">Promo −₱${discountAmt.toFixed(2)}</span>`);
     let runningTotal = Math.max(0, afterBundleSubtotal - discountAmt);
 
-    // 4. F-14: Tax — exclusive (add on top) or inclusive (already embedded)
+    // 4. Split into vatable / exempt portions using raw line-total ratios.
+    // Discounts are proportionally distributed across both groups.
+    let vatableRaw = 0, exemptRaw = 0;
+    cartItems.forEach(function(item) {
+        if (item.vat_exempt) exemptRaw  += item.line_total;
+        else                 vatableRaw += item.line_total;
+    });
+    const totalRaw     = vatableRaw + exemptRaw;
+    const vatableRatio = totalRaw > 0 ? vatableRaw / totalRaw : 1;
+    const vatableNet   = runningTotal * vatableRatio;
+    const exemptNet    = runningTotal - vatableNet;
+
+    // 4b. F-14: Tax — exclusive (add on top) or inclusive (already embedded),
+    //     applied only to the vatable portion. VAT is always on (12% fixed).
     let calculatedTax, preRoundTotal;
     if (TAX_DISPLAY_MODE === 'inclusive') {
-        // Prices already include VAT
-        calculatedTax = isTaxOn
-            ? runningTotal * (taxRate / (1 + taxRate))   // extract embedded component
-            : 0;
-        preRoundTotal = isTaxOn ? runningTotal : runningTotal / (1 + taxRate); // exempt strips VAT
+        calculatedTax = vatableNet * (taxRate / (1 + taxRate));
+        preRoundTotal = runningTotal; // inclusive: total unchanged
     } else {
-        // Exclusive (default): add on top
-        calculatedTax = isTaxOn ? runningTotal * taxRate : 0;
-        preRoundTotal = runningTotal + calculatedTax;
+        calculatedTax = vatableNet * taxRate;
+        preRoundTotal = vatableNet + calculatedTax + exemptNet;
     }
 
-    // 4. F-11: Price rounding
-    let finalTotal    = applyRounding(preRoundTotal, ROUNDING_RULE);
+    // 5. F-11: Price rounding
+    let finalTotal = applyRounding(preRoundTotal, ROUNDING_RULE);
     const roundingNote = document.getElementById('rounding-note');
     if (roundingNote) {
         if (ROUNDING_RULE !== 'none' && Math.abs(finalTotal - preRoundTotal) > 0.001) {
@@ -509,18 +503,21 @@ function updateTotals() {
         }
     }
 
-    // 5. UI Update
+    // 6. UI Update
     totalDisplay.innerText = '₱' + finalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    document.getElementById('tax-label').innerText = isTaxOn ? 'YES' : 'NO';
 
-    let info = isTaxOn
-        ? `Includes ${(taxRate * 100).toFixed(0)}% Tax (₱${calculatedTax.toFixed(2)})`
-        : 'Non-VAT / Tax Exempt';
-    if (savings.length) info = savings.join(' • ') + ' • ' + info;
+    let taxInfo;
+    if (exemptRaw > 0 && vatableRaw > 0) {
+        taxInfo = `VAT (${(taxRate * 100).toFixed(0)}%) on ₱${vatableNet.toFixed(2)} = ₱${calculatedTax.toFixed(2)} · ₱${exemptNet.toFixed(2)} exempt`;
+    } else if (exemptRaw > 0) {
+        taxInfo = 'VAT Exempt';
+    } else {
+        taxInfo = `Includes ${(taxRate * 100).toFixed(0)}% Tax (₱${calculatedTax.toFixed(2)})`;
+    }
+    let info = savings.length ? savings.join(' • ') + ' • ' + taxInfo : taxInfo;
     detailText.innerHTML = info;
 
     hiddenInput.value = finalTotal.toFixed(2);
-    document.getElementById('tax-enabled-hidden').value = isTaxOn ? '1' : '0';
 
     // Sync amount if digital payment
     if (document.querySelector('input[name="payment_mode"]:checked').value !== PAY_CASH) {
