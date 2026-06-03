@@ -125,6 +125,33 @@ if ($action === 'terminate') {
     exit();
 }
 
+// ── FORCE LOGOUT ──────────────────────────────────────────────────────────────
+if ($action === 'force_logout') {
+    $id          = intval($_POST['id']);
+    $target_role = get_target_role($conn, $id);
+    $actor_uname = $_SESSION['username'] ?? 'admin';
+
+    if ($id == $user_id) {
+        header("Location: users.php?error=" . urlencode("You cannot force-logout your own account."));
+        exit();
+    }
+    // Admin → any non-protected role. Superadmin → those plus admin, but never another
+    // superadmin or owner. can_act() already blocks admin from protected roles.
+    if (!can_act($role, $target_role) || in_array($target_role, [ROLE_SUPERADMIN, ROLE_OWNER])) {
+        header("Location: users.php?error=" . urlencode("You don't have permission to force-logout this account."));
+        exit();
+    }
+
+    $now  = date('Y-m-d H:i:s');
+    $stmt = $conn->prepare("UPDATE users SET force_logout_at = ?, force_logout_by = ?, force_logout_by_role = ? WHERE id = ? AND status != '" . USER_TERMINATED . "'");
+    $stmt->bind_param("sssi", $now, $actor_uname, $role, $id);
+    $stmt->execute();
+
+    log_action($conn, $user_id, "Force-logged-out user ID {$id} ({$target_role}).");
+    header("Location: users.php?success=" . urlencode("Account has been signed out. They will be notified."));
+    exit();
+}
+
 // ── REINSTATE (superadmin only) ───────────────────────────────────────────────
 if ($action === 'reinstate') {
     if ($role !== ROLE_SUPERADMIN) {

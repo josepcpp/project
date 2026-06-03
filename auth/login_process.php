@@ -44,6 +44,14 @@ if (isset($_POST['username']) && isset($_POST['password'])) {
             // SUCCESS: Set Session Variables
             $_SESSION['user_id']  = $user['id'];
             $_SESSION['username'] = $user['username'];
+            // Anchor for force-logout: a session is only killed when force_logout_at
+            // is newer than this. Re-login refreshes it, so an old kick never re-fires.
+            $_SESSION['login_at'] = time();
+
+            // Clear any stale force-logout marker now that the user has re-authenticated.
+            $clr = $conn->prepare("UPDATE users SET force_logout_at = NULL, force_logout_by = NULL, force_logout_by_role = NULL WHERE id = ?");
+            $clr->bind_param("i", $user['id']);
+            $clr->execute();
             
             // Normalize role to lowercase for consistent logic checks
             $user_role = strtolower($user['role']);

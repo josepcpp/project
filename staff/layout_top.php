@@ -419,6 +419,25 @@ $page_title = $titles[$current_page] ?? 'Business ERP';
         </div>
     </header>
 
+    <!-- ── FORCE LOGOUT MODAL (shown when this account is signed out by an admin) ── -->
+    <div id="force-logout-modal" class="hidden fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm">
+        <div class="bg-white rounded-3xl shadow-2xl p-10 max-w-md w-full mx-4 text-center">
+            <div class="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center mx-auto mb-5">
+                <svg class="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+            </div>
+            <h3 class="serif-title text-2xl font-black text-slate-800 mb-2">You've been signed out</h3>
+            <p class="text-slate-500 font-bold text-sm mb-1">
+                Logged out by <span id="fl-by" class="text-slate-800">an administrator</span>
+                <span id="fl-role-badge" class="ml-1 align-middle inline-block px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-500"></span>
+            </p>
+            <p class="text-slate-400 text-xs font-bold mb-6">Redirecting to the login page in <span id="fl-countdown">3</span>s…</p>
+            <button onclick="window.location.href='/project/auth/logout.php'"
+                class="w-full bg-orange-500 hover:bg-orange-600 text-white font-black text-sm uppercase tracking-widest py-3.5 rounded-2xl transition-all shadow-lg shadow-orange-100">
+                Log out now
+            </button>
+        </div>
+    </div>
+
     <div id="page-content" class="p-8 animate-in"><div id="spa-state" data-batch="<?= isset($_SESSION['active_batch_id']) ? '1' : '0' ?>" data-sig="<?= $session_sig ?>" class="hidden"></div>
 
 <script>
@@ -781,6 +800,68 @@ function openNotifFromPop() {
     document.addEventListener('visibilitychange', function () {
         if (!document.hidden) safeBadgePoll();
     });
+})();
+
+// ── REALTIME: force-logout detection ──────────────────────────────────────────
+// Polls session_status.php; if this account was signed out by an admin, shows a
+// blocking modal naming who did it and redirects to login. Self-contained so it
+// runs for every role (not just those with the notification bell).
+(function () {
+    var FL_POLL_MS = 12000;
+    var ROLE_LABELS = {
+        superadmin: 'Super Admin', admin: 'Administrator', owner: 'Owner',
+        staff: 'Staff', receiver: 'Receiver', validator: 'Validator', price_checker: 'Price Checker'
+    };
+
+    function triggerForceLogout(by, byRole) {
+        if (window._forceLogoutShown) return;     // only ever fire once
+        window._forceLogoutShown = true;
+
+        var modal = document.getElementById('force-logout-modal');
+        if (!modal) { window.location.href = '/project/auth/logout.php'; return; }
+
+        var byEl = document.getElementById('fl-by');
+        if (byEl) byEl.textContent = by ? ('@' + by) : 'an administrator';
+        var badge = document.getElementById('fl-role-badge');
+        if (badge) {
+            var lbl = ROLE_LABELS[byRole] || '';
+            if (lbl) { badge.textContent = lbl; badge.classList.remove('hidden'); }
+            else     { badge.classList.add('hidden'); }
+        }
+        modal.classList.remove('hidden');
+
+        // Stop background pollers so nothing else fires mid-redirect.
+        if (window._notifBadgeTimer)  clearInterval(window._notifBadgeTimer);
+        if (window._forceLogoutTimer) clearInterval(window._forceLogoutTimer);
+
+        var n = 3;
+        var cd = document.getElementById('fl-countdown');
+        var t = setInterval(function () {
+            n -= 1;
+            if (cd) cd.textContent = String(Math.max(0, n));
+            if (n <= 0) { clearInterval(t); window.location.href = '/project/auth/logout.php'; }
+        }, 1000);
+    }
+
+    function checkForceLogout() {
+        if (document.hidden) return;
+        fetch('/project/staff/api/session_status.php', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (r) {
+                var ct = r.headers.get('content-type') || '';
+                return (r.ok && ct.indexOf('application/json') !== -1) ? r.json() : null;
+            })
+            .then(function (d) {
+                if (d && d.forced) triggerForceLogout(d.by, d.by_role);
+            })
+            .catch(function () {});   // silent on network blips
+    }
+
+    if (window._forceLogoutTimer) clearInterval(window._forceLogoutTimer);
+    window._forceLogoutTimer = setInterval(checkForceLogout, FL_POLL_MS);
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) checkForceLogout();
+    });
+    checkForceLogout();   // run once on load too
 })();
 
 // ── IDLE SESSION WARNING (M-01) ───────────────────────────────────────────────

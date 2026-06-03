@@ -70,3 +70,38 @@ if (!isset($_SESSION['user_id'])) {
         exit();
     }
 })();
+
+// ── FORCE LOGOUT CHECK ────────────────────────────────────────────────────────
+// An admin/superadmin can sign another account out. The marker (force_logout_at)
+// only invalidates sessions that started BEFORE it — a fresh login is never kicked.
+// The poll endpoint defines SUPPRESS_FORCE_LOGOUT_REDIRECT so it can report as JSON
+// instead of triggering this hard redirect.
+(function() {
+    global $conn;
+    if (!isset($conn) || !($conn instanceof mysqli)) return;
+    if (!isset($_SESSION['user_id'])) return;
+
+    // Grandfather sessions created before this feature existed — never kick them
+    // retroactively; just anchor them from now on.
+    if (!isset($_SESSION['login_at'])) { $_SESSION['login_at'] = time(); return; }
+
+    $uid = intval($_SESSION['user_id']);
+    $q = $conn->prepare("SELECT force_logout_at, force_logout_by, force_logout_by_role FROM users WHERE id = ? LIMIT 1");
+    if (!$q) return;
+    $q->bind_param("i", $uid);
+    $q->execute();
+    $row = $q->get_result()->fetch_assoc();
+    if (!$row || empty($row['force_logout_at'])) return;
+
+    $forced_ts = strtotime($row['force_logout_at']);
+    if ($forced_ts === false || $forced_ts <= intval($_SESSION['login_at'])) return; // stale / pre-login marker
+
+    if (defined('SUPPRESS_FORCE_LOGOUT_REDIRECT')) return; // poll endpoint handles it as JSON
+
+    $by   = $row['force_logout_by']      ?? '';
+    $role = $row['force_logout_by_role'] ?? '';
+    session_unset();
+    session_destroy();
+    header("Location: /project/auth/login.php?forced=1&by=" . urlencode($by) . "&by_role=" . urlencode($role));
+    exit();
+})();

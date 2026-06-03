@@ -2,6 +2,17 @@
 session_start();
 $error = $_SESSION['error'] ?? "";
 unset($_SESSION['error']);
+
+// Force-logout fallback banner (set by auth_check.php when an admin signs you out
+// and JS didn't already show the in-app modal).
+$forced       = isset($_GET['forced']) && $_GET['forced'] === '1';
+$forced_by    = trim($_GET['by'] ?? '');
+$forced_role  = trim($_GET['by_role'] ?? '');
+$role_labels  = [
+    'superadmin' => 'Super Admin', 'admin' => 'Administrator', 'owner' => 'Owner',
+    'staff' => 'Staff', 'receiver' => 'Receiver', 'validator' => 'Validator', 'price_checker' => 'Price Checker',
+];
+$forced_role_label = $role_labels[strtolower($forced_role)] ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -17,6 +28,19 @@ unset($_SESSION['error']);
 
     <div class="w-full max-w-[480px] bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/60 p-12">
         
+        <!-- Force-logout notice -->
+        <?php if ($forced): ?>
+            <div class="mb-8 bg-orange-50 border border-orange-200 rounded-2xl px-5 py-4 flex items-start gap-3">
+                <svg class="h-5 w-5 text-orange-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                <div>
+                    <p class="text-sm font-bold text-orange-700">You were signed out
+                        <?php if ($forced_by !== ''): ?>by <span class="font-black">@<?= htmlspecialchars($forced_by, ENT_QUOTES, 'UTF-8') ?></span><?php if ($forced_role_label): ?> (<?= htmlspecialchars($forced_role_label, ENT_QUOTES, 'UTF-8') ?>)<?php endif; ?><?php else: ?>by an administrator<?php endif; ?>.
+                    </p>
+                    <p class="text-xs font-bold text-orange-500 mt-0.5">You can sign back in below.</p>
+                </div>
+            </div>
+        <?php endif; ?>
+
         <!-- Header Section -->
         <div class="mb-10">
             <h1 class="text-3xl font-bold text-slate-800">Welcome Back</h1>

@@ -735,3 +735,17 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.7.2
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v1.7.3 — Force logout (admin/superadmin can sign out other accounts)
+// A session is invalid once force_logout_at is newer than the session's login_at.
+$_db_version   = '1.7.3';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS force_logout_at      DATETIME     DEFAULT NULL");
+    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS force_logout_by      VARCHAR(100) DEFAULT NULL");
+    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS force_logout_by_role VARCHAR(30)  DEFAULT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.3

@@ -675,6 +675,11 @@ document.getElementById('itemsForm').addEventListener('submit', async function (
         // no longer editable) → land on the live batch list instead of a dead page.
         if (data.success || data.redirect) {
             navigated = true;
+            // Bust the SPA cache for this page — the batch state just changed on the
+            // server (status moved to pending_validation). Serving stale cached HTML
+            // would show the editable form even though the batch is now read-only,
+            // causing the "already submitted" error if the user navigates back here.
+            if (typeof pageCache !== 'undefined') pageCache.clear();
             navigate(data.redirect);
         } else {
             showFlash(data.error, 'error');

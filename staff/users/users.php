@@ -273,6 +273,14 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
                                     <?= $u['reset_requested'] ? 'Set PW ●' : 'Reset PW' ?>
                                 </button>
 
+                                <!-- Force Logout — active/inactive accounts the actor may act on; never self, superadmin, or owner -->
+                                <?php if (!$is_self && !in_array($u_role, [ROLE_SUPERADMIN, ROLE_OWNER])): ?>
+                                <button onclick="openForceLogoutModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['full_name'] ?? $u['username'])) ?>', '<?= htmlspecialchars(addslashes($u['username'])) ?>')"
+                                    class="text-[10px] font-black text-orange-400 hover:text-orange-600 uppercase tracking-widest transition-colors">
+                                    Force Logout
+                                </button>
+                                <?php endif; ?>
+
                                 <!-- Terminate -->
                                 <?php if (!$is_self): ?>
                                 <button onclick="openTerminateModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['full_name'] ?? $u['username'])) ?>')"
@@ -310,6 +318,26 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
             <div class="flex gap-3">
                 <button type="button" onclick="closeModals()" class="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-2xl hover:bg-slate-200 transition-all">Cancel</button>
                 <button type="submit" class="flex-1 bg-red-500 text-white font-bold py-3 rounded-2xl hover:bg-red-600 transition-all shadow-lg shadow-red-100">Confirm Terminate</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ── FORCE LOGOUT MODAL ────────────────────────────────────────────────────── -->
+<div id="forcelogout-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] hidden flex items-center justify-center p-6">
+    <div class="bg-white rounded-3xl shadow-2xl p-10 max-w-md w-full">
+        <div class="w-14 h-14 bg-orange-100 rounded-2xl flex items-center justify-center mx-auto mb-5">
+            <svg class="w-7 h-7 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        </div>
+        <h3 class="serif-title text-2xl font-bold text-slate-800 text-center mb-1">Force Logout</h3>
+        <p id="forcelogout-name" class="text-slate-400 text-sm text-center font-bold mb-2"></p>
+        <p class="text-slate-500 text-xs text-center mb-6">This account will be signed out within a few seconds and shown who logged them out. They can log back in normally afterward.</p>
+        <form method="POST" action="users_process.php">
+            <input type="hidden" name="action" value="force_logout">
+            <input type="hidden" name="id" id="forcelogout-id">
+            <div class="flex gap-3">
+                <button type="button" onclick="closeModals()" class="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-2xl hover:bg-slate-200 transition-all">Cancel</button>
+                <button type="submit" class="flex-1 bg-orange-500 text-white font-bold py-3 rounded-2xl hover:bg-orange-600 transition-all shadow-lg shadow-orange-100">Force Logout</button>
             </div>
         </form>
     </div>
@@ -416,8 +444,16 @@ function openTerminateModal(id, name) {
     modal.classList.add('flex');
 }
 
+function openForceLogoutModal(id, name, username) {
+    document.getElementById('forcelogout-id').value = id;
+    document.getElementById('forcelogout-name').textContent = name + ' (@' + username + ')';
+    const modal = document.getElementById('forcelogout-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
 function closeModals() {
-    ['terminate-modal', 'reset-modal'].forEach(id => {
+    ['terminate-modal', 'reset-modal', 'forcelogout-modal'].forEach(id => {
         const m = document.getElementById(id);
         if (m) { m.classList.add('hidden'); m.classList.remove('flex'); }
     });
@@ -448,7 +484,7 @@ document.getElementById('reset-confirm').addEventListener('input', function() {
 });
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModals(); });
-['terminate-modal', 'reset-modal'].forEach(id => {
+['terminate-modal', 'reset-modal', 'forcelogout-modal'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', function(e) { if (e.target === this) closeModals(); });
 });
