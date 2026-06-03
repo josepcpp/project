@@ -234,6 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($action === 'set_selling_price') {
         $pid       = intval($_POST['p_id'] ?? 0);
         $new_price = floatval($_POST['selling_price'] ?? 0);
+        $is_ajax   = !empty($_POST['_ajax']);
         if ($pid > 0 && $new_price > 0) {
             $dq = $conn->prepare("SELECT id, name, barcode, box_barcode FROM products WHERE id = ? AND status = '" . PRODUCT_DRAFT . "' LIMIT 1");
             $dq->bind_param("i", $pid); $dq->execute();
@@ -296,13 +297,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         number_format($old_price, 2), number_format($new_price, 2));
 
                     $conn->commit();
+                    if ($is_ajax) {
+                        header('Content-Type: application/json');
+                        echo json_encode(['success' => true, 'name' => $dp['name'], 'price' => $new_price]);
+                        exit();
+                    }
                     $msg = "<div class='bg-emerald-600 text-white p-4 rounded-2xl mb-6 font-bold animate-in text-center shadow-lg'>Selling price set. Stock released to POS.</div>";
                 } catch (\Throwable $e) {
                     $conn->rollback();
+                    if ($is_ajax) {
+                        header('Content-Type: application/json');
+                        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                        exit();
+                    }
                     $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold shadow-lg'>Error: " . htmlspecialchars($e->getMessage()) . "</div>";
                 }
             }
         } else {
+            if ($is_ajax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Enter a selling price greater than ₱0.00.']);
+                exit();
+            }
             $msg = "<div class='bg-rose-500 text-white p-4 rounded-2xl mb-6 font-bold shadow-lg'>Enter a selling price greater than ₱0.00.</div>";
         }
     }
@@ -593,6 +609,7 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
 
             <?php if (!empty($draft_rows)): ?>
             <!-- Awaiting Selling Price (draft lots from procurement) -->
+            <div id="draft-section">
             <div class="px-8 pt-6 pb-3 flex items-center gap-3 flex-wrap">
                 <span class="w-2.5 h-2.5 bg-sky-500 rounded-full shadow-sm"></span>
                 <h4 class="font-black text-slate-800 text-sm uppercase tracking-[0.15em] flex-1">Awaiting Selling Price</h4>
@@ -604,7 +621,7 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                 $cost    = floatval($dr['cost_price']) > 0 ? floatval($dr['cost_price']) : floatval($dr['last_buy_cost']);
                 $suggest = (!$is_new && $dr['active_price'] !== null) ? floatval($dr['active_price']) : 0.0;
             ?>
-            <div class="px-8 py-5 flex flex-col lg:flex-row lg:items-center gap-4 border-l-4 border-sky-400 bg-sky-50/30">
+            <div id="draft-row-<?= $dr['id'] ?>" class="px-8 py-5 flex flex-col lg:flex-row lg:items-center gap-4 border-l-4 border-sky-400 bg-sky-50/30 transition-all duration-300">
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 flex-wrap mb-1">
                         <p class="font-bold text-slate-800"><?= htmlspecialchars($dr['name']) ?></p>
@@ -651,6 +668,7 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
             </div>
             <?php endforeach; ?>
             </div>
+            </div><!-- /draft-section -->
             <?php endif; ?>
 
             <?php if (!empty($pending_rows)): ?>
@@ -863,18 +881,62 @@ function showPriceTab(which) {
 // ── Set selling price on a draft lot → release to POS ─────────────────────────
 async function setSellingPrice(pid, name) {
     const input = document.getElementById('sell_' + pid);
-    const val = parseFloat(input.value);
-    if (!val || val <= 0) { alert('Enter a selling price greater than ₱0.00.'); input.focus(); return; }
+    const val   = parseFloat(input.value);
+    if (!val || val <= 0) { showFlash('Enter a selling price greater than ₱0.00.', 'error'); input.focus(); return; }
     if (!await customConfirm(
         'This sets the selling price to ₱' + val.toFixed(2) + ' and releases the stock to POS.',
         "Price '" + name + "'?"
     )) return;
-    const fd = new FormData();
-    fd.append('action',        'set_selling_price');
-    fd.append('p_id',          pid);
-    fd.append('selling_price', val);
-    if (typeof navigate === 'function') navigate('price_maintenance.php', fd);
-    else window.location.reload();
+
+    const btn = input.closest('.flex').querySelector('button');
+    const origTxt = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Activating…';
+
+    try {
+        const fd = new FormData();
+        fd.append('action',        'set_selling_price');
+        fd.append('p_id',          pid);
+        fd.append('selling_price', val);
+        fd.append('_ajax',         '1');
+        const res  = await fetch('price_maintenance.php', { method: 'POST', body: fd });
+        const data = await res.json();
+
+        if (!data.success) {
+            showFlash(data.error || 'Failed to set price.', 'error');
+            btn.disabled    = false;
+            btn.textContent = origTxt;
+            return;
+        }
+
+        // Animate the row out, then remove it and clean up the section if empty
+        const row = document.getElementById('draft-row-' + pid);
+        if (row) {
+            row.style.opacity   = '0';
+            row.style.transform = 'translateX(16px)';
+            setTimeout(function() {
+                row.remove();
+                const section = document.getElementById('draft-section');
+                if (section && !section.querySelector('[id^="draft-row-"]')) {
+                    section.style.transition = 'opacity 0.2s';
+                    section.style.opacity    = '0';
+                    setTimeout(function() { section.remove(); }, 220);
+                }
+                // Decrement the tab badge
+                var badge = document.querySelector('#ptab-btn-pending span');
+                if (badge) {
+                    var n = parseInt(badge.textContent, 10) - 1;
+                    if (n > 0) badge.textContent = n;
+                    else badge.remove();
+                }
+            }, 280);
+        }
+        showFlash(name + ' priced at ₱' + parseFloat(val).toFixed(2) + ' — released to POS.', 'success');
+    } catch (_) {
+        showFlash('Connection error. Try again.', 'error');
+        btn.disabled    = false;
+        btn.textContent = origTxt;
+    }
 }
 
 // ── Global price manual update ────────────────────────────────────────────────
