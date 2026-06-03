@@ -3,7 +3,8 @@ include '../config/db.php';
 include '../includes/header.php';
 
 $stmt = $conn->prepare("SELECT * FROM products WHERE status = ?");
-$stmt->bind_param("s", PRODUCT_ACTIVE);
+$status = PRODUCT_ACTIVE;            // bind_param needs a variable (by-reference), not a constant
+$stmt->bind_param("s", $status);
 $stmt->execute();
 $result = $stmt->get_result();
 ?>
