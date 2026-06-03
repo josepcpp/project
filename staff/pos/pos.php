@@ -65,7 +65,15 @@ $sql = "SELECT p_agg.id, p_agg.name, p_agg.barcode, p_agg.box_barcode, p_agg.box
         COALESCE(pur_agg.total_locked, 0) AS locked_qty,
         IF(pur_agg.cnt > 0, 1, 0) AS has_pending_price
         FROM (
-            SELECT MIN(p.id) AS id, p.name, MIN(p.barcode) AS barcode,
+            SELECT MIN(p.id) AS id, p.name,
+                   -- Use the FIFO-first lot's barcode (earliest non-expired, then smallest id)
+                   -- so the barcode chip on the tile matches what a scanner would resolve to.
+                   (SELECT p2.barcode FROM products p2
+                    WHERE LOWER(TRIM(p2.name)) = LOWER(TRIM(p.name))
+                      AND p2.status = 'active' AND p2.quantity > 0
+                      AND (p2.expiry_date IS NULL OR p2.expiry_date > CURDATE())
+                    ORDER BY (p2.expiry_date IS NULL) ASC, p2.expiry_date ASC, p2.id ASC
+                    LIMIT 1) AS barcode,
                    MAX(p.box_barcode) AS box_barcode, MAX(p.box_units) AS box_units,
                    SUM(p.quantity) AS quantity,
                    MAX(p.category) AS category,

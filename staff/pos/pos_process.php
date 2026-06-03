@@ -160,14 +160,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $box_units_scanned = 1;
     if ($barcode && !$pid) {
         // a) per-item barcode → individual unit
-        $p_query = $conn->prepare("SELECT id FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0 AND (expiry_date IS NULL OR expiry_date > CURDATE()) ORDER BY expiry_date ASC LIMIT 1");
+        $p_query = $conn->prepare("SELECT id FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0 AND (expiry_date IS NULL OR expiry_date > CURDATE()) ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, id ASC LIMIT 1");
         $p_query->bind_param("s", $barcode);
         $p_query->execute();
         $pid = intval($p_query->get_result()->fetch_assoc()['id'] ?? 0);
 
         // b) else box/case barcode → a whole box
         if (!$pid) {
-            $box_q = $conn->prepare("SELECT id, box_units FROM products WHERE box_barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0 AND (expiry_date IS NULL OR expiry_date > CURDATE()) ORDER BY expiry_date ASC LIMIT 1");
+            $box_q = $conn->prepare("SELECT id, box_units FROM products WHERE box_barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0 AND (expiry_date IS NULL OR expiry_date > CURDATE()) ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, id ASC LIMIT 1");
             $box_q->bind_param("s", $barcode);
             $box_q->execute();
             $box_row = $box_q->get_result()->fetch_assoc();
@@ -198,9 +198,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $tq_q->bind_param("ssss", $pbc, $pbc, $pbox, $pbox); $tq_q->execute();
             $total_qty     = intval($tq_q->get_result()->fetch_assoc()['tq'] ?? 0);
 
-            $lq_q = $conn->prepare("SELECT COALESCE(SUM(locked_qty),0) AS lq FROM price_update_requests WHERE barcode = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
-            $lq_q->bind_param("s", $product['barcode']); $lq_q->execute();
-            $locked_qty    = intval($lq_q->get_result()->fetch_assoc()['lq'] ?? 0);
+            // price_update_requests are keyed by per-item barcode; box-only products (pbc = NULL)
+            // have no records there, so their locked_qty is always 0.
+            if ($pbc !== null && $pbc !== '') {
+                $lq_q = $conn->prepare("SELECT COALESCE(SUM(locked_qty),0) AS lq FROM price_update_requests WHERE barcode = ? AND status NOT IN ('" . PRICE_REQ_APPLIED . "','" . PRICE_REQ_REJECTED . "')");
+                $lq_q->bind_param("s", $pbc); $lq_q->execute();
+                $locked_qty = intval($lq_q->get_result()->fetch_assoc()['lq'] ?? 0);
+            } else {
+                $locked_qty = 0;
+            }
             $effective_qty = max(0, $total_qty - $locked_qty);
 
             // CALC-6: Only create a new cart entry when effective stock exists.

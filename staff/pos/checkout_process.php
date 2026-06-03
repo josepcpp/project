@@ -114,12 +114,15 @@ try {
         if (!$product_data) throw new Exception("Product ID $pid was recently deleted.");
 
         $cart_qty = intval($item['qty']);
-        if ($product_data['quantity'] < $cart_qty)
+        $bc = $product_data['barcode'] ?? '';
+
+        // For no-barcode items there is no FIFO pool — the cart row IS the only lot.
+        // For barcoded items, the total-stock check below covers all lots correctly.
+        if ($bc === '' && $product_data['quantity'] < $cart_qty)
             throw new Exception("Not enough stock for " . $product_data['name']);
 
-        // CALC-5: Also check effective_qty (total across lots minus price-locked units)
-        // This prevents selling stock that is reserved for a pending price update.
-        $bc = $product_data['barcode'] ?? '';
+        // CALC-5: Check effective_qty across all FIFO lots (minus price-locked units).
+        // This is the authoritative guard for barcoded items.
         if ($bc !== '') {
             $eff_chk = $conn->prepare(
                 "SELECT COALESCE(SUM(quantity),0) AS tq FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "'"
@@ -347,7 +350,8 @@ try {
                     $ph_s = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
                     $ph_s->bind_param("idd", $def_req['product_id'], $def_req['current_price'], $def_req['proposed_price']); $ph_s->execute();
 
-                    $upd_p = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE barcode = ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "')");
+                    // Only update ACTIVE lots — archived lots are sold out and don't need pricing flags.
+                    $upd_p = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "'");
                     $upd_p->bind_param("ds", $def_req['proposed_price'], $bc_check); $upd_p->execute();
 
                     $upd_r = $conn->prepare("UPDATE price_update_requests SET status='" . PRICE_REQ_APPLIED . "', applied_by=?, applied_username=?, applied_at=NOW() WHERE id=?");

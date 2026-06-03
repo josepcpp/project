@@ -29,9 +29,36 @@ if (!$disposal) {
 if ($action === 'approve') {
     $conn->begin_transaction();
     try {
-        $upd = $conn->prepare("UPDATE products SET quantity = GREATEST(0, quantity - ?) WHERE id = ? AND status = '" . PRODUCT_ACTIVE . "'");
-        $upd->bind_param("ii", $disposal['qty'], $disposal['product_id']);
-        $upd->execute();
+        $barcode   = $disposal['barcode'] ?? '';
+        $remaining = intval($disposal['qty']);
+
+        if ($barcode !== '') {
+            // FIFO deduction: drain earliest-expiry active lots first (same order as POS checkout).
+            $lots_q = $conn->prepare(
+                "SELECT id, quantity FROM products
+                 WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND quantity > 0
+                 ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, id ASC
+                 FOR UPDATE"
+            );
+            $lots_q->bind_param("s", $barcode);
+            $lots_q->execute();
+            $lots = $lots_q->get_result()->fetch_all(MYSQLI_ASSOC);
+            foreach ($lots as $lot) {
+                if ($remaining <= 0) break;
+                $take  = min($remaining, intval($lot['quantity']));
+                $new_q = intval($lot['quantity']) - $take;
+                $new_s = ($new_q <= 0) ? PRODUCT_ARCHIVED : PRODUCT_ACTIVE;
+                $upd_l = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
+                $upd_l->bind_param("isis", $new_q, $new_s, $new_s, $lot['id']);
+                $upd_l->execute();
+                $remaining -= $take;
+            }
+        } else {
+            // No barcode (box-only item recorded without per-item code) — deduct directly.
+            $upd = $conn->prepare("UPDATE products SET quantity = GREATEST(0, quantity - ?) WHERE id = ? AND status = '" . PRODUCT_ACTIVE . "'");
+            $upd->bind_param("ii", $disposal['qty'], $disposal['product_id']);
+            $upd->execute();
+        }
 
         $app = $conn->prepare("UPDATE product_disposals SET status = '" . DISPOSAL_APPROVED . "', approved_by = ?, approved_username = ?, approved_at = NOW() WHERE id = ?");
         $app->bind_param("isi", $uid, $uname, $disposal_id);

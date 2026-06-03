@@ -10,9 +10,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
     if ($role !== ROLE_STAFF) {
         if ($action === 'confirm_archive') {
-            $p_name = $_POST['product_name'];
-            $st = $conn->prepare("UPDATE products SET status='" . PRODUCT_ARCHIVED . "', archived_at = IF(archived_at IS NULL, NOW(), archived_at) WHERE name=?");
-            $st->bind_param("s", $p_name);
+            $p_name    = $_POST['product_name'];
+            $p_barcode = trim($_POST['product_barcode'] ?? '');
+            // Scope by barcode when available to avoid archiving unrelated products sharing the same name.
+            if ($p_barcode !== '') {
+                $st = $conn->prepare("UPDATE products SET status='" . PRODUCT_ARCHIVED . "', archived_at = IF(archived_at IS NULL, NOW(), archived_at) WHERE name = ? AND (barcode = ? OR box_barcode = ?)");
+                $st->bind_param("sss", $p_name, $p_barcode, $p_barcode);
+            } else {
+                $st = $conn->prepare("UPDATE products SET status='" . PRODUCT_ARCHIVED . "', archived_at = IF(archived_at IS NULL, NOW(), archived_at) WHERE name = ?");
+                $st->bind_param("s", $p_name);
+            }
             $st->execute();
         } elseif ($action === 'unarchive') {
             $p_id = intval($_POST['product_id']);

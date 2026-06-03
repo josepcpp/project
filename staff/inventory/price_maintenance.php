@@ -128,8 +128,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $ph = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
                 $ph->bind_param("idd", $req['product_id'], $req['current_price'], $req['proposed_price']); $ph->execute();
 
-                $upd_prod = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE barcode = ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "')");
-                $upd_prod->bind_param("ds", $req['proposed_price'], $req['barcode']); $upd_prod->execute();
+                // Fetch box_barcode for box-only products (their barcode column is NULL in price_update_requests).
+                $bxq = $conn->prepare("SELECT box_barcode FROM products WHERE id = ? LIMIT 1");
+                $bxq->bind_param("i", $req['product_id']); $bxq->execute();
+                $box_bc = $bxq->get_result()->fetch_assoc()['box_barcode'] ?? null;
+
+                $upd_prod = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1
+                    WHERE status = '" . PRODUCT_ACTIVE . "'
+                    AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?))");
+                $upd_prod->bind_param("dssss", $req['proposed_price'], $req['barcode'], $req['barcode'], $box_bc, $box_bc);
+                $upd_prod->execute();
 
                 $upd_req = $conn->prepare("UPDATE price_update_requests SET status='" . PRICE_REQ_APPLIED . "', applied_by=?, applied_username=?, applied_at=NOW() WHERE id=?");
                 $upd_req->bind_param("isi", $user_id, $uname, $req_id); $upd_req->execute();
@@ -190,8 +198,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $ph = $conn->prepare("INSERT INTO price_history (product_id, old_price, new_price) VALUES (?, ?, ?)");
                     $ph->bind_param("idd", $req['product_id'], $req['current_price'], $req['proposed_price']); $ph->execute();
 
-                    $upd_prod = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1 WHERE barcode = ? AND status IN ('" . PRODUCT_ACTIVE . "','" . PRODUCT_ARCHIVED . "')");
-                    $upd_prod->bind_param("ds", $req['proposed_price'], $req['barcode']); $upd_prod->execute();
+                    $bxq2 = $conn->prepare("SELECT box_barcode FROM products WHERE id = ? LIMIT 1");
+                    $bxq2->bind_param("i", $req['product_id']); $bxq2->execute();
+                    $box_bc2 = $bxq2->get_result()->fetch_assoc()['box_barcode'] ?? null;
+
+                    $upd_prod = $conn->prepare("UPDATE products SET price = ?, tiers_locked = 1
+                        WHERE status = '" . PRODUCT_ACTIVE . "'
+                        AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?))");
+                    $upd_prod->bind_param("dssss", $req['proposed_price'], $req['barcode'], $req['barcode'], $box_bc2, $box_bc2);
+                    $upd_prod->execute();
 
                     $upd_req = $conn->prepare("UPDATE price_update_requests SET status='" . PRICE_REQ_APPLIED . "', applied_by=?, applied_username=?, applied_at=NOW() WHERE id=?");
                     $upd_req->bind_param("isi", $user_id, $uname, $rid); $upd_req->execute();
@@ -230,17 +245,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 // carries the same bulk rule (FIFO only decides which lot is sold; the
                 // bulk price must be uniform across all active lots of a product).
                 $inh = ['bulk_qty_half' => 0, 'price_half_box' => 0.0, 'bulk_qty_full' => 0, 'price_full_box' => 0.0];
-                if (!empty($dp['barcode'])) {
-                    $oq = $conn->prepare("SELECT price FROM products WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "' AND price IS NOT NULL LIMIT 1");
-                    $oq->bind_param("s", $dp['barcode']); $oq->execute();
+                // Inherit from existing active lots matching EITHER per-item OR box barcode.
+                // This covers box-only products whose barcode column is NULL.
+                $bc_val  = $dp['barcode']     ?? null;
+                $box_val = $dp['box_barcode'] ?? null;
+                if ($bc_val !== null || $box_val !== null) {
+                    $oq = $conn->prepare("SELECT price FROM products
+                        WHERE status = '" . PRODUCT_ACTIVE . "' AND price IS NOT NULL
+                        AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?))
+                        LIMIT 1");
+                    $oq->bind_param("ssss", $bc_val, $bc_val, $box_val, $box_val); $oq->execute();
                     $orow = $oq->get_result()->fetch_assoc();
                     if ($orow) $old_price = floatval($orow['price']);
 
                     $tq = $conn->prepare("SELECT bulk_qty_half, price_half_box, bulk_qty_full, price_full_box
                                           FROM products
-                                          WHERE barcode = ? AND status = '" . PRODUCT_ACTIVE . "'
+                                          WHERE status = '" . PRODUCT_ACTIVE . "'
+                                            AND ((? IS NOT NULL AND barcode = ?) OR (? IS NOT NULL AND box_barcode = ?))
                                             AND (bulk_qty_half > 0 OR bulk_qty_full > 0) LIMIT 1");
-                    $tq->bind_param("s", $dp['barcode']); $tq->execute();
+                    $tq->bind_param("ssss", $bc_val, $bc_val, $box_val, $box_val); $tq->execute();
                     if ($trow = $tq->get_result()->fetch_assoc()) {
                         $inh['bulk_qty_half']  = intval($trow['bulk_qty_half']);
                         $inh['price_half_box'] = floatval($trow['price_half_box']);

@@ -203,19 +203,21 @@ function _insert_draft_lot(mysqli $conn, string $desc, ?string $barcode, float $
  */
 function _insert_active_lot(mysqli $conn, string $desc, ?string $barcode, float $cost, float $selling_price, int $qty, ?string $expiry, int $batch_id, ?string $box_barcode, int $box_units, int $ref_id): int
 {
-    $tq = $conn->prepare("SELECT bulk_qty_half, price_half_box, bulk_qty_full, price_full_box FROM products WHERE id = ?");
+    // Copy supplier_id and bulk tiers from the reference lot for full traceability.
+    $tq = $conn->prepare("SELECT supplier_id, bulk_qty_half, price_half_box, bulk_qty_full, price_full_box FROM products WHERE id = ?");
     $tq->bind_param("i", $ref_id);
     $tq->execute();
-    $t = $tq->get_result()->fetch_assoc() ?: ['bulk_qty_half' => 0, 'price_half_box' => 0.0, 'bulk_qty_full' => 0, 'price_full_box' => 0.0];
+    $t = $tq->get_result()->fetch_assoc() ?: ['supplier_id' => null, 'bulk_qty_half' => 0, 'price_half_box' => 0.0, 'bulk_qty_full' => 0, 'price_full_box' => 0.0];
 
     $ins = $conn->prepare(
         "INSERT INTO products
-             (name, barcode, box_barcode, box_units, price, cost_price, last_buy_cost,
+             (supplier_id, name, barcode, box_barcode, box_units, price, cost_price, last_buy_cost,
               quantity, max_quantity, status, expiry_date, receiving_batch_id,
               bulk_qty_half, price_half_box, bulk_qty_full, price_full_box)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '" . PRODUCT_ACTIVE . "', ?, ?, ?, ?, ?, ?)"
     );
-    $ins->bind_param("sssidddiisiidid",
+    $ins->bind_param("isssidddiisiidid",
+        $t['supplier_id'],
         $desc, $barcode, $box_barcode, $box_units,
         $selling_price, $cost, $cost,
         $qty, $qty,
