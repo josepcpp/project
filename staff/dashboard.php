@@ -11,6 +11,14 @@ $user_q->execute();
 $user = $user_q->get_result()->fetch_assoc();
 $role = $user['role'] ?? ROLE_STAFF;
 
+// Presence stamp — keeps the viewer on the Who's Online list while on the dashboard.
+// Defensive (@) so it no-ops if the v1.7.7 columns aren't migrated yet.
+if ($_dash_seen = @$conn->prepare("UPDATE users SET last_seen_at = NOW(), last_seen_page = ? WHERE id = ?")) {
+    $_dash_page = substr($_SERVER['PHP_SELF'] ?? '', 0, 200);
+    @$_dash_seen->bind_param("si", $_dash_page, $user_id);
+    @$_dash_seen->execute();
+}
+
 // ── Security flag dismiss handler (before HTML) ───────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['dismiss_flag'])) {
     if (empty($_POST['csrf_token']) || $_POST['csrf_token'] !== ($_SESSION['csrf_token'] ?? '')) {
@@ -49,8 +57,415 @@ if ($dup_detect) {
 
 include 'layout_top.php';
 
+$_dash_uname = htmlspecialchars($_SESSION['username'] ?? 'User', ENT_QUOTES, 'UTF-8');
+$_dash_hour  = (int)date('G');
+$_dash_greet = $_dash_hour < 12 ? 'Good morning' : ($_dash_hour < 18 ? 'Good afternoon' : 'Good evening');
+
+// ── RECEIVER DASHBOARD ────────────────────────────────────────────────────────
+if ($role === ROLE_RECEIVER):
+    // Vouchers the Admin created that no Receiver has claimed yet
+    $rv_vouchers_q = $conn->query("SELECT COUNT(*) AS c FROM receiving_batches WHERE status = 'pending_request' AND receiver_id IS NULL");
+    $rv_vouchers   = intval($rv_vouchers_q->fetch_assoc()['c'] ?? 0);
+
+    // My in-progress batch (claimed but not submitted)
+    $rv_active_q = $conn->prepare("SELECT rb.id, rb.supplier_name, rb.created_at, COUNT(ri.id) AS item_count FROM receiving_batches rb LEFT JOIN receiving_items ri ON ri.batch_id = rb.id WHERE rb.receiver_id = ? AND rb.status = 'pending_request' GROUP BY rb.id LIMIT 1");
+    $rv_active_q->bind_param("i", $user_id); $rv_active_q->execute();
+    $rv_active = $rv_active_q->get_result()->fetch_assoc();
+
+    // My recent batch history
+    $rv_hist_q = $conn->prepare("SELECT rb.id, rb.supplier_name, rb.status, rb.created_at, COUNT(ri.id) AS item_count FROM receiving_batches rb LEFT JOIN receiving_items ri ON ri.batch_id = rb.id WHERE rb.receiver_id = ? GROUP BY rb.id ORDER BY rb.created_at DESC LIMIT 10");
+    $rv_hist_q->bind_param("i", $user_id); $rv_hist_q->execute();
+    $rv_history = $rv_hist_q->get_result()->fetch_all(MYSQLI_ASSOC);
+
+    // This month's stats
+    $rv_mon_q = $conn->prepare("SELECT COUNT(*) AS batches FROM receiving_batches WHERE receiver_id = ? AND YEAR(created_at) = YEAR(NOW()) AND MONTH(created_at) = MONTH(NOW())");
+    $rv_mon_q->bind_param("i", $user_id); $rv_mon_q->execute();
+    $rv_mon = $rv_mon_q->get_result()->fetch_assoc();
+
+    $rv_items_q = $conn->prepare("SELECT COALESCE(SUM(ic.cnt),0) AS items FROM receiving_batches rb LEFT JOIN (SELECT batch_id, COUNT(*) AS cnt FROM receiving_items GROUP BY batch_id) ic ON ic.batch_id = rb.id WHERE rb.receiver_id = ? AND YEAR(rb.created_at) = YEAR(NOW()) AND MONTH(rb.created_at) = MONTH(NOW())");
+    $rv_items_q->bind_param("i", $user_id); $rv_items_q->execute();
+    $rv_items = intval($rv_items_q->get_result()->fetch_assoc()['items'] ?? 0);
+
+    $rv_notifs_q = $conn->prepare("SELECT message, created_at FROM notifications WHERE recipient_id = ? AND is_read = 0 ORDER BY created_at DESC LIMIT 5");
+    $rv_notifs_q->bind_param("i", $user_id); $rv_notifs_q->execute();
+    $rv_notifs = $rv_notifs_q->get_result()->fetch_all(MYSQLI_ASSOC);
+
+    $rv_status_map = ['pending_request'=>['Encoding','bg-sky-100 text-sky-700'],'pending_validation'=>['In Review','bg-amber-100 text-amber-700'],'validated_tally'=>['Validated','bg-emerald-100 text-emerald-700'],'on_hold'=>['On Hold','bg-rose-100 text-rose-700'],'completed'=>['Completed','bg-slate-100 text-slate-500'],'rejected'=>['Rejected','bg-rose-200 text-rose-800']];
+?>
+<div class="max-w-4xl mx-auto space-y-6 pb-20 animate-in">
+
+    <!-- Greeting -->
+    <div class="bg-slate-900 rounded-[3rem] p-8 flex flex-wrap items-center justify-between gap-4 text-white shadow-2xl">
+        <div>
+            <p class="text-[10px] font-black text-sky-400 uppercase tracking-[0.2em] mb-1">Receiver Workspace</p>
+            <h2 class="serif-title text-3xl font-bold"><?= $_dash_greet ?>, <?= $_dash_uname ?>.</h2>
+            <p class="text-slate-400 text-sm font-bold mt-1"><?= date('l, F j, Y') ?></p>
+        </div>
+        <div class="flex gap-3">
+            <div class="text-center bg-white/5 border border-white/10 rounded-2xl px-5 py-3">
+                <p class="text-2xl font-black text-white"><?= intval($rv_mon['batches'] ?? 0) ?></p>
+                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Batches This Month</p>
+            </div>
+            <div class="text-center bg-white/5 border border-white/10 rounded-2xl px-5 py-3">
+                <p class="text-2xl font-black text-white"><?= $rv_items ?></p>
+                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Items Encoded</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Batch + Available Vouchers -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div class="bg-white rounded-[2.5rem] border <?= $rv_active ? 'border-sky-200 bg-sky-50/30' : 'border-slate-100' ?> shadow-xl p-6">
+            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">My Active Batch</p>
+            <?php if ($rv_active): ?>
+                <p class="font-black text-slate-800 text-lg leading-tight"><?= htmlspecialchars($rv_active['supplier_name'] ?? '—') ?></p>
+                <p class="text-[10px] text-slate-400 font-bold mt-1">Batch #<?= $rv_active['id'] ?> · <?= intval($rv_active['item_count']) ?> item<?= $rv_active['item_count'] != 1 ? 's' : '' ?> encoded</p>
+                <a href="procurement/receive_items.php?batch_id=<?= $rv_active['id'] ?>" class="mt-4 inline-block bg-sky-600 hover:bg-sky-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all shadow-md">
+                    Continue Encoding →
+                </a>
+            <?php else: ?>
+                <p class="text-slate-400 font-bold text-sm">No batch in progress.</p>
+                <a href="procurement/receive_batch.php" class="mt-3 inline-block text-sky-600 font-black text-[10px] uppercase tracking-widest hover:underline">View Available Vouchers →</a>
+            <?php endif; ?>
+        </div>
+        <div class="bg-white rounded-[2.5rem] border <?= $rv_vouchers > 0 ? 'border-emerald-200' : 'border-slate-100' ?> shadow-xl p-6">
+            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">Available Vouchers</p>
+            <p class="text-4xl font-black <?= $rv_vouchers > 0 ? 'text-emerald-600' : 'text-slate-300' ?>"><?= $rv_vouchers ?></p>
+            <p class="text-[10px] text-slate-400 font-bold mt-1">Admin-created, unclaimed</p>
+            <?php if ($rv_vouchers > 0): ?>
+            <a href="procurement/receive_batch.php" class="mt-3 inline-block bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest px-5 py-2.5 rounded-xl transition-all shadow-md">
+                Claim Voucher →
+            </a>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Notifications -->
+    <?php if (!empty($rv_notifs)): ?>
+    <div class="bg-amber-50 border border-amber-200 rounded-[2.5rem] overflow-hidden">
+        <div class="px-6 py-4 border-b border-amber-100 flex items-center gap-2">
+            <span class="w-2 h-2 bg-amber-500 rounded-full"></span>
+            <p class="font-black text-amber-800 text-sm uppercase tracking-widest"><?= count($rv_notifs) ?> Unread Notification<?= count($rv_notifs) != 1 ? 's' : '' ?></p>
+        </div>
+        <div class="divide-y divide-amber-100">
+        <?php foreach ($rv_notifs as $n): ?>
+            <div class="px-6 py-3 text-sm text-amber-800 font-bold flex items-start gap-3">
+                <span class="text-amber-400 mt-0.5 flex-shrink-0">•</span>
+                <div class="flex-1 min-w-0">
+                    <p><?= htmlspecialchars($n['message']) ?></p>
+                    <p class="text-[9px] text-amber-500 font-bold mt-0.5"><?= date('M j, Y g:i A', strtotime($n['created_at'])) ?></p>
+                </div>
+            </div>
+        <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Batch History -->
+    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+        <div class="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
+            <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">My Batch History</h4>
+            <a href="procurement/receive_batch.php" class="text-[9px] font-black text-sky-600 bg-sky-50 px-3 py-1.5 rounded-xl border border-sky-100 hover:bg-sky-100 transition-all uppercase tracking-widest">All Batches →</a>
+        </div>
+        <div class="divide-y divide-slate-50">
+        <?php if (empty($rv_history)): ?>
+            <p class="px-6 py-12 text-center text-slate-300 font-black italic text-sm">No batches submitted yet.</p>
+        <?php else: foreach ($rv_history as $b):
+            [$slabel, $scls] = $rv_status_map[$b['status']] ?? ['Unknown', 'bg-slate-100 text-slate-400'];
+        ?>
+            <div class="px-6 py-4 flex items-center gap-4 hover:bg-slate-50/50 transition-colors">
+                <div class="flex-1 min-w-0">
+                    <p class="font-bold text-slate-800 text-sm truncate"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></p>
+                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">Batch #<?= $b['id'] ?> · <?= intval($b['item_count']) ?> items · <?= date('M j, Y', strtotime($b['created_at'])) ?></p>
+                </div>
+                <span class="text-[9px] font-black px-2.5 py-1 rounded-full <?= $scls ?> uppercase tracking-widest whitespace-nowrap"><?= $slabel ?></span>
+                <?php if ($b['status'] === 'pending_request'): ?>
+                <a href="procurement/receive_items.php?batch_id=<?= $b['id'] ?>" class="text-[9px] font-black text-sky-600 hover:underline uppercase tracking-widest">Open →</a>
+                <?php endif; ?>
+            </div>
+        <?php endforeach; endif; ?>
+        </div>
+    </div>
+</div>
+
+<?php
+// ── VALIDATOR DASHBOARD ───────────────────────────────────────────────────────
+elseif ($role === ROLE_VALIDATOR):
+    require_once '../includes/batch_lock.php';   // provides BATCH_LOCK_TTL_MIN
+    // Pending validation queue
+    $vl_pending_q = $conn->query("SELECT rb.id, rb.supplier_name, rb.created_at, COUNT(ri.id) AS item_count, (rb.working_by IS NOT NULL AND rb.working_at >= (NOW() - INTERVAL " . BATCH_LOCK_TTL_MIN . " MINUTE)) AS working_active, rb.working_username FROM receiving_batches rb LEFT JOIN receiving_items ri ON ri.batch_id = rb.id WHERE rb.status = 'pending_validation' GROUP BY rb.id ORDER BY rb.created_at ASC");
+    $vl_pending = $vl_pending_q ? $vl_pending_q->fetch_all(MYSQLI_ASSOC) : [];
+
+    // Pending reprice queue
+    $vl_reprice_q = $conn->query("SELECT rb.id, rb.supplier_name, rb.created_at, COUNT(ri.id) AS item_count FROM receiving_batches rb LEFT JOIN receiving_items ri ON ri.batch_id = rb.id WHERE rb.status = 'pending_reprice' GROUP BY rb.id ORDER BY rb.created_at ASC");
+    $vl_reprice = $vl_reprice_q ? $vl_reprice_q->fetch_all(MYSQLI_ASSOC) : [];
+
+    // My validation history
+    $vl_hist_q = $conn->prepare("SELECT id, supplier_name, tally_result, validated_at, computed_subtotal FROM receiving_batches WHERE validator_id = ? ORDER BY validated_at DESC LIMIT 10");
+    $vl_hist_q->bind_param("i", $user_id); $vl_hist_q->execute();
+    $vl_history = $vl_hist_q->get_result()->fetch_all(MYSQLI_ASSOC);
+
+    // Match rate this month
+    $vl_match_q = $conn->prepare("SELECT COUNT(*) AS total, SUM(tally_result = 'match') AS matched FROM receiving_batches WHERE validator_id = ? AND YEAR(validated_at) = YEAR(NOW()) AND MONTH(validated_at) = MONTH(NOW())");
+    $vl_match_q->bind_param("i", $user_id); $vl_match_q->execute();
+    $vl_match = $vl_match_q->get_result()->fetch_assoc();
+    $vl_match_rate = ($vl_match['total'] > 0) ? round(($vl_match['matched'] / $vl_match['total']) * 100, 1) : null;
+
+    $vl_notifs_q = $conn->prepare("SELECT message, created_at FROM notifications WHERE recipient_id = ? AND is_read = 0 ORDER BY created_at DESC LIMIT 5");
+    $vl_notifs_q->bind_param("i", $user_id); $vl_notifs_q->execute();
+    $vl_notifs = $vl_notifs_q->get_result()->fetch_all(MYSQLI_ASSOC);
+?>
+<div class="max-w-4xl mx-auto space-y-6 pb-20 animate-in">
+
+    <!-- Greeting -->
+    <div class="bg-slate-900 rounded-[3rem] p-8 flex flex-wrap items-center justify-between gap-4 text-white shadow-2xl">
+        <div>
+            <p class="text-[10px] font-black text-amber-400 uppercase tracking-[0.2em] mb-1">Validator Workspace</p>
+            <h2 class="serif-title text-3xl font-bold"><?= $_dash_greet ?>, <?= $_dash_uname ?>.</h2>
+            <p class="text-slate-400 text-sm font-bold mt-1"><?= date('l, F j, Y') ?></p>
+        </div>
+        <div class="flex gap-3">
+            <div class="text-center bg-white/5 border border-white/10 rounded-2xl px-5 py-3">
+                <p class="text-2xl font-black text-white"><?= intval($vl_match['total'] ?? 0) ?></p>
+                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Validated This Month</p>
+            </div>
+            <?php if ($vl_match_rate !== null): ?>
+            <div class="text-center bg-white/5 border border-white/10 rounded-2xl px-5 py-3">
+                <p class="text-2xl font-black <?= $vl_match_rate >= 80 ? 'text-emerald-400' : 'text-amber-400' ?>"><?= $vl_match_rate ?>%</p>
+                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Match Rate</p>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Notifications -->
+    <?php if (!empty($vl_notifs)): ?>
+    <div class="bg-amber-50 border border-amber-200 rounded-[2.5rem] overflow-hidden">
+        <div class="px-6 py-4 border-b border-amber-100 flex items-center gap-2">
+            <span class="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
+            <p class="font-black text-amber-800 text-sm uppercase tracking-widest"><?= count($vl_notifs) ?> Unread Notification<?= count($vl_notifs) != 1 ? 's' : '' ?></p>
+        </div>
+        <div class="divide-y divide-amber-100">
+        <?php foreach ($vl_notifs as $n): ?>
+            <div class="px-6 py-3 text-sm text-amber-800 font-bold flex items-start gap-3">
+                <span class="text-amber-400 mt-0.5 flex-shrink-0">•</span>
+                <div class="flex-1"><p><?= htmlspecialchars($n['message']) ?></p><p class="text-[9px] text-amber-500 font-bold mt-0.5"><?= date('M j, Y g:i A', strtotime($n['created_at'])) ?></p></div>
+            </div>
+        <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Pending Validation + Reprice -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <!-- Pending Validation -->
+        <div class="bg-white rounded-[2.5rem] border <?= !empty($vl_pending) ? 'border-amber-200' : 'border-slate-100' ?> shadow-xl overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-50 flex items-center justify-between">
+                <p class="font-black text-slate-800 text-sm uppercase tracking-widest">Awaiting Validation</p>
+                <?php if (!empty($vl_pending)): ?><span class="bg-amber-500 text-white text-[9px] font-black px-2.5 py-1 rounded-full"><?= count($vl_pending) ?></span><?php endif; ?>
+            </div>
+            <div class="divide-y divide-slate-50">
+            <?php if (empty($vl_pending)): ?>
+                <p class="px-6 py-8 text-center text-slate-300 font-black italic text-sm">No batches pending.</p>
+            <?php else: foreach ($vl_pending as $b): ?>
+                <div class="px-6 py-4">
+                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></p>
+                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">Batch #<?= $b['id'] ?> · <?= intval($b['item_count']) ?> items · <?= date('M j', strtotime($b['created_at'])) ?></p>
+                    <?php if ($b['working_active']): ?>
+                    <span class="mt-1.5 inline-block text-[9px] font-black text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">⏳ @<?= htmlspecialchars($b['working_username']) ?> working</span>
+                    <?php else: ?>
+                    <a href="procurement/validate_items.php?batch_id=<?= $b['id'] ?>" class="mt-1.5 inline-block bg-amber-500 hover:bg-amber-400 text-white font-black text-[9px] uppercase tracking-widest px-4 py-1.5 rounded-xl transition-all">Validate →</a>
+                    <?php endif; ?>
+                </div>
+            <?php endforeach; endif; ?>
+            </div>
+        </div>
+
+        <!-- Pending Reprice -->
+        <div class="bg-white rounded-[2.5rem] border <?= !empty($vl_reprice) ? 'border-rose-200' : 'border-slate-100' ?> shadow-xl overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-50 flex items-center justify-between">
+                <p class="font-black text-slate-800 text-sm uppercase tracking-widest">Pending Reprice</p>
+                <?php if (!empty($vl_reprice)): ?><span class="bg-rose-500 text-white text-[9px] font-black px-2.5 py-1 rounded-full"><?= count($vl_reprice) ?></span><?php endif; ?>
+            </div>
+            <div class="divide-y divide-slate-50">
+            <?php if (empty($vl_reprice)): ?>
+                <p class="px-6 py-8 text-center text-slate-300 font-black italic text-sm">No reprices pending.</p>
+            <?php else: foreach ($vl_reprice as $b): ?>
+                <div class="px-6 py-4">
+                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></p>
+                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">Batch #<?= $b['id'] ?> · <?= intval($b['item_count']) ?> items</p>
+                    <a href="procurement/validate_items.php?batch_id=<?= $b['id'] ?>" class="mt-1.5 inline-block bg-rose-500 hover:bg-rose-400 text-white font-black text-[9px] uppercase tracking-widest px-4 py-1.5 rounded-xl transition-all">Reprice →</a>
+                </div>
+            <?php endforeach; endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <!-- My Validation History -->
+    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+        <div class="px-6 py-5 border-b border-slate-50">
+            <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">My Validation History</h4>
+        </div>
+        <div class="divide-y divide-slate-50">
+        <?php if (empty($vl_history)): ?>
+            <p class="px-6 py-12 text-center text-slate-300 font-black italic text-sm">No validations yet.</p>
+        <?php else: foreach ($vl_history as $b): ?>
+            <div class="px-6 py-4 flex items-center gap-4 hover:bg-slate-50/50 transition-colors">
+                <div class="flex-1 min-w-0">
+                    <p class="font-bold text-slate-800 text-sm truncate"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></p>
+                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">Batch #<?= $b['id'] ?> · <?= $b['validated_at'] ? date('M j, Y', strtotime($b['validated_at'])) : '—' ?></p>
+                </div>
+                <div class="text-right shrink-0">
+                    <span class="text-[9px] font-black px-2.5 py-1 rounded-full uppercase <?= $b['tally_result'] === 'match' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700' ?>">
+                        <?= $b['tally_result'] === 'match' ? '✓ Match' : '✗ Discrepancy' ?>
+                    </span>
+                    <?php if ($b['computed_subtotal']): ?><p class="text-[9px] text-slate-400 font-bold mt-0.5">₱<?= number_format($b['computed_subtotal'], 2) ?></p><?php endif; ?>
+                </div>
+            </div>
+        <?php endforeach; endif; ?>
+        </div>
+    </div>
+</div>
+
+<?php
+// ── PRICE CHECKER DASHBOARD ───────────────────────────────────────────────────
+elseif ($role === ROLE_PRICE_CHECKER):
+    // Pipeline counts
+    $pc_pipeline_q = $conn->query("SELECT status, COUNT(*) AS c FROM receiving_batches GROUP BY status");
+    $pc_pipeline = [];
+    if ($pc_pipeline_q) while ($r = $pc_pipeline_q->fetch_assoc()) $pc_pipeline[$r['status']] = intval($r['c']);
+
+    // On-hold batches
+    $pc_onhold_q = $conn->query("SELECT rb.id, rb.supplier_name, rb.computed_subtotal, rb.control_subtotal, rb.validated_at FROM receiving_batches rb WHERE rb.status = 'on_hold' ORDER BY rb.validated_at DESC LIMIT 10");
+    $pc_onhold = $pc_onhold_q ? $pc_onhold_q->fetch_all(MYSQLI_ASSOC) : [];
+
+    // Recent price history
+    $pc_prices_q = $conn->query("SELECT p.name, ph.old_price, ph.new_price, ph.change_date FROM price_history ph JOIN products p ON p.id = ph.product_id ORDER BY ph.id DESC LIMIT 10");
+    $pc_prices = $pc_prices_q ? $pc_prices_q->fetch_all(MYSQLI_ASSOC) : [];
+
+    // Audit feed
+    $pc_audit_q = $conn->query("SELECT pal.action, pal.tally_result, pal.created_at, pal.actor_username, pal.actor_role, rb.supplier_name, pal.batch_id FROM procurement_audit_log pal LEFT JOIN receiving_batches rb ON rb.id = pal.batch_id ORDER BY pal.created_at DESC LIMIT 15");
+    $pc_audit = $pc_audit_q ? $pc_audit_q->fetch_all(MYSQLI_ASSOC) : [];
+?>
+<div class="max-w-5xl mx-auto space-y-6 pb-20 animate-in">
+
+    <!-- Greeting -->
+    <div class="bg-slate-900 rounded-[3rem] p-8 flex flex-wrap items-center justify-between gap-4 text-white shadow-2xl">
+        <div>
+            <p class="text-[10px] font-black text-purple-400 uppercase tracking-[0.2em] mb-1">Price Checker Workspace</p>
+            <h2 class="serif-title text-3xl font-bold"><?= $_dash_greet ?>, <?= $_dash_uname ?>.</h2>
+            <p class="text-slate-400 text-sm font-bold mt-1"><?= date('l, F j, Y') ?></p>
+        </div>
+        <a href="procurement/price_checker.php" class="bg-white/10 hover:bg-white/20 text-white font-black text-[10px] uppercase tracking-widest px-5 py-3 rounded-2xl transition-all">
+            Open Price Checker →
+        </a>
+    </div>
+
+    <!-- Pipeline Funnel -->
+    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl p-6">
+        <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-4">Procurement Pipeline</p>
+        <div class="grid grid-cols-3 md:grid-cols-6 gap-3">
+            <?php
+            $funnel = [
+                ['pending_request',    'Encoding',    'bg-sky-100 text-sky-700'],
+                ['pending_validation', 'Validating',  'bg-amber-100 text-amber-700'],
+                ['on_hold',            'On Hold',     'bg-rose-100 text-rose-600'],
+                ['validated_tally',    'Validated',   'bg-emerald-100 text-emerald-700'],
+                ['pending_reprice',    'Reprice',     'bg-purple-100 text-purple-700'],
+                ['completed',          'Completed',   'bg-slate-100 text-slate-500'],
+            ];
+            foreach ($funnel as [$key, $label, $cls]):
+                $cnt = $pc_pipeline[$key] ?? 0;
+            ?>
+            <div class="text-center p-3 rounded-2xl <?= $cls ?>">
+                <p class="text-2xl font-black"><?= $cnt ?></p>
+                <p class="text-[8px] font-black uppercase tracking-widest mt-0.5"><?= $label ?></p>
+            </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <!-- On-Hold Batches -->
+        <div class="bg-white rounded-[2.5rem] border <?= !empty($pc_onhold) ? 'border-rose-200' : 'border-slate-100' ?> shadow-xl overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-50 flex items-center justify-between">
+                <p class="font-black text-slate-800 text-sm uppercase tracking-widest">On-Hold Batches</p>
+                <?php if (!empty($pc_onhold)): ?><span class="bg-rose-500 text-white text-[9px] font-black px-2.5 py-1 rounded-full"><?= count($pc_onhold) ?></span><?php endif; ?>
+            </div>
+            <div class="divide-y divide-slate-50">
+            <?php if (empty($pc_onhold)): ?>
+                <p class="px-6 py-8 text-center text-slate-300 font-black italic text-sm">No batches on hold.</p>
+            <?php else: foreach ($pc_onhold as $b):
+                $delta = floatval($b['computed_subtotal']) - floatval($b['control_subtotal']);
+            ?>
+                <div class="px-6 py-4">
+                    <p class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></p>
+                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">Batch #<?= $b['id'] ?> · <?= $b['validated_at'] ? date('M j, Y', strtotime($b['validated_at'])) : '—' ?></p>
+                    <p class="text-[10px] font-black mt-1 <?= $delta >= 0 ? 'text-rose-600' : 'text-emerald-600' ?>">Δ <?= $delta >= 0 ? '+' : '' ?>₱<?= number_format($delta, 2) ?></p>
+                </div>
+            <?php endforeach; endif; ?>
+            </div>
+        </div>
+
+        <!-- Recent Price Changes -->
+        <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-50">
+                <p class="font-black text-slate-800 text-sm uppercase tracking-widest">Recent Price Changes</p>
+            </div>
+            <div class="divide-y divide-slate-50">
+            <?php if (empty($pc_prices)): ?>
+                <p class="px-6 py-8 text-center text-slate-300 font-black italic text-sm">No price changes recorded.</p>
+            <?php else: foreach ($pc_prices as $p):
+                $diff = floatval($p['new_price']) - floatval($p['old_price']);
+            ?>
+                <div class="px-6 py-3.5 flex items-center gap-3 hover:bg-slate-50/50 transition-colors">
+                    <div class="flex-1 min-w-0">
+                        <p class="font-bold text-slate-800 text-sm truncate"><?= htmlspecialchars($p['name']) ?></p>
+                        <p class="text-[9px] text-slate-400 font-bold mt-0.5"><?= !empty($p['change_date']) ? date('M j, Y', strtotime($p['change_date'])) : '—' ?></p>
+                    </div>
+                    <div class="text-right shrink-0">
+                        <p class="text-[10px] font-black text-slate-500"><span class="line-through">₱<?= number_format($p['old_price'], 2) ?></span> → <span class="<?= $diff >= 0 ? 'text-rose-600' : 'text-emerald-600' ?>">₱<?= number_format($p['new_price'], 2) ?></span></p>
+                        <p class="text-[9px] font-black <?= $diff >= 0 ? 'text-rose-500' : 'text-emerald-500' ?>"><?= $diff >= 0 ? '+' : '' ?>₱<?= number_format($diff, 2) ?></p>
+                    </div>
+                </div>
+            <?php endforeach; endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Feed -->
+    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+        <div class="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
+            <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">Procurement Audit Feed</h4>
+            <a href="procurement/price_checker.php" class="text-[9px] font-black text-purple-600 bg-purple-50 px-3 py-1.5 rounded-xl border border-purple-100 hover:bg-purple-100 transition-all uppercase tracking-widest">Full Report →</a>
+        </div>
+        <div class="divide-y divide-slate-50">
+        <?php if (empty($pc_audit)): ?>
+            <p class="px-6 py-12 text-center text-slate-300 font-black italic text-sm">No audit events yet.</p>
+        <?php else: foreach ($pc_audit as $a):
+            $a_action_map = ['voucher_created'=>'Voucher Created','items_encoded'=>'Items Encoded','validated_tally'=>'Validated ✓','validated_discrepancy'=>'Discrepancy ✗','inventory_pushed'=>'Pushed to Inventory','supplier_paid'=>'Supplier Paid'];
+            $a_label = $a_action_map[$a['action']] ?? ucwords(str_replace('_',' ',$a['action']));
+            $a_cls   = in_array($a['action'],['validated_tally','inventory_pushed','supplier_paid']) ? 'text-emerald-600' : (in_array($a['action'],['validated_discrepancy']) ? 'text-rose-600' : 'text-slate-500');
+        ?>
+            <div class="px-6 py-3.5 flex items-center gap-4 hover:bg-slate-50/50 transition-colors">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-[9px] font-black <?= $a_cls ?> uppercase tracking-widest"><?= $a_label ?></span>
+                        <span class="text-[9px] text-slate-400 font-bold">Batch #<?= $a['batch_id'] ?></span>
+                        <?php if ($a['supplier_name']): ?><span class="text-[9px] text-slate-400">· <?= htmlspecialchars($a['supplier_name']) ?></span><?php endif; ?>
+                    </div>
+                    <p class="text-[9px] text-slate-300 font-bold mt-0.5">by @<?= htmlspecialchars($a['actor_username'] ?? '—') ?> (<?= htmlspecialchars($a['actor_role'] ?? '—') ?>)</p>
+                </div>
+                <p class="text-[9px] text-slate-300 font-bold whitespace-nowrap flex-shrink-0"><?= date('M j, g:i A', strtotime($a['created_at'])) ?></p>
+            </div>
+        <?php endforeach; endif; ?>
+        </div>
+    </div>
+</div>
+
+<?php
 // ── STAFF DASHBOARD ───────────────────────────────────────────────────────────
-if ($role === ROLE_STAFF):
+elseif ($role === ROLE_STAFF):
     $staff_name      = $_SESSION['username'] ?? 'Staff';
     $today_sales_q   = $conn->query("SELECT COUNT(*) as cnt, COALESCE(SUM(total),0) as amt FROM sales WHERE DATE(created_at) = CURDATE()");
     $today_sales     = $today_sales_q->fetch_assoc();
@@ -319,6 +734,52 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3"><?= date('Y') ?> Year-to-Date</p>
             <h3 class="text-3xl font-black text-slate-800 tracking-tighter">₱<?= number_format($rev_yr['r'], 2) ?></h3>
             <p class="text-slate-400 text-xs font-bold mt-2"><?= number_format($rev_yr['t']) ?> transactions this year</p>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ SALES GRAPH + WHO'S ONLINE ═══════════════════ -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
+
+        <!-- Sales Graph (spans 2 cols) -->
+        <div class="xl:col-span-2 bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
+            <div class="p-6 border-b border-slate-50 flex items-center justify-between flex-wrap gap-3">
+                <div>
+                    <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">Sales Performance</h4>
+                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">Current period vs. previous period</p>
+                </div>
+                <div class="flex gap-1 bg-slate-100 p-1 rounded-xl" id="sales-graph-tabs">
+                    <button type="button" data-period="day"   class="sg-tab px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all bg-white text-slate-800 shadow-sm">Day</button>
+                    <button type="button" data-period="week"  class="sg-tab px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all text-slate-400 hover:text-slate-600">Week</button>
+                    <button type="button" data-period="month" class="sg-tab px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all text-slate-400 hover:text-slate-600">Month</button>
+                    <button type="button" data-period="year"  class="sg-tab px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all text-slate-400 hover:text-slate-600">Year</button>
+                </div>
+            </div>
+            <div class="p-6">
+                <div class="flex items-center gap-5 mb-4 flex-wrap">
+                    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-emerald-500"></span><span id="sg-curr-label" class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Today</span><span id="sg-curr-total" class="text-[10px] font-black text-emerald-600">₱0.00</span></div>
+                    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-slate-300"></span><span id="sg-prev-label" class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Yesterday</span><span id="sg-prev-total" class="text-[10px] font-black text-slate-400">₱0.00</span></div>
+                </div>
+                <div class="relative" style="height:280px;">
+                    <canvas id="salesChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Who's Online -->
+        <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden flex flex-col">
+            <div class="p-6 border-b border-slate-50 flex items-center justify-between">
+                <div>
+                    <h4 class="font-black text-slate-800 text-sm uppercase tracking-widest">Who's Online</h4>
+                    <p class="text-[10px] text-slate-400 font-bold mt-0.5">Active in the last 15 minutes</p>
+                </div>
+                <span class="flex items-center gap-1.5 text-[9px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full uppercase tracking-widest">
+                    <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                    <span id="online-count">0</span> live
+                </span>
+            </div>
+            <div id="online-list" class="divide-y divide-slate-50 flex-1 overflow-y-auto" style="max-height:320px;">
+                <p class="px-6 py-12 text-center text-slate-300 font-black italic text-sm">Loading…</p>
+            </div>
         </div>
     </div>
 
@@ -972,6 +1433,175 @@ function exportCSV(type, fromId, toId) {
     var to   = document.getElementById(toId)?.value   || '';
     window.location.href = '/project/staff/reports/export.php?type=' + type + '&date_from=' + from + '&date_to=' + to;
 }
+</script>
+<?php endif; ?>
+
+<?php if (in_array($role, ROLES_ADMIN_AND_UP)):
+    $is_superadmin_dash = ($role === ROLE_SUPERADMIN);
+?>
+<!-- ── SALES GRAPH + WHO'S ONLINE — scripts ──────────────────────────────────── -->
+<script>
+(function () {
+    // ── Who's Online polling ──────────────────────────────────────────────────
+    var IS_SUPERADMIN = <?= $is_superadmin_dash ? 'true' : 'false' ?>;
+
+    var roleBadge = {
+        receiver:      ['Receiver',      'bg-sky-100 text-sky-700'],
+        validator:     ['Validator',     'bg-amber-100 text-amber-700'],
+        price_checker: ['Price Checker', 'bg-purple-100 text-purple-700'],
+        admin:         ['Admin',         'bg-slate-200 text-slate-700'],
+        superadmin:    ['Superadmin',    'bg-slate-900 text-white'],
+        owner:         ['Owner',         'bg-emerald-100 text-emerald-700'],
+        staff:         ['Cashier',       'bg-emerald-100 text-emerald-700']
+    };
+
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function renderOnline() {
+        var listEl  = document.getElementById('online-list');
+        var countEl = document.getElementById('online-count');
+        if (!listEl) return false; // page changed — stop
+
+        fetch('/project/staff/api/who_is_online.php', { headers: { 'X-Requested-With': 'fetch' } })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!document.getElementById('online-list')) return;
+                var users = (d && d.users) || [];
+                if (countEl) countEl.textContent = users.length;
+                if (!users.length) {
+                    listEl.innerHTML = '<p class="px-6 py-12 text-center text-slate-300 font-black italic text-sm">No one else is online.</p>';
+                    return;
+                }
+                var html = '';
+                users.forEach(function (u) {
+                    var rb    = roleBadge[u.role] || [u.role, 'bg-slate-100 text-slate-500'];
+                    var dot   = u.status === 'active' ? 'bg-emerald-500' : 'bg-amber-400';
+                    var ago   = u.mins_ago === 0 ? 'now' : (u.mins_ago + 'm ago');
+                    var initial = esc((u.username || '?').charAt(0).toUpperCase());
+                    html += '<div class="px-5 py-3.5 flex items-center gap-3 hover:bg-slate-50/50 transition-colors">'
+                          +   '<div class="relative flex-shrink-0">'
+                          +     '<div class="w-9 h-9 bg-slate-900 rounded-2xl flex items-center justify-center text-white font-black text-sm">' + initial + '</div>'
+                          +     '<span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 ' + dot + ' rounded-full border-2 border-white"></span>'
+                          +   '</div>'
+                          +   '<div class="flex-1 min-w-0">'
+                          +     '<div class="flex items-center gap-1.5 flex-wrap">'
+                          +       '<p class="font-black text-slate-800 text-sm truncate">@' + esc(u.username) + '</p>'
+                          +       '<span class="text-[8px] font-black px-1.5 py-0.5 rounded ' + rb[1] + ' uppercase tracking-widest">' + esc(rb[0]) + '</span>'
+                          +     '</div>'
+                          +     '<p class="text-[10px] text-slate-400 font-bold truncate">' + esc(u.page_label) + ' · ' + ago + '</p>'
+                          +   '</div>'
+                          + (IS_SUPERADMIN
+                                ? '<a href="users/users.php" class="text-[9px] font-black text-rose-400 hover:text-rose-600 uppercase tracking-widest flex-shrink-0" title="Manage in Users">Manage</a>'
+                                : '')
+                          + '</div>';
+                });
+                listEl.innerHTML = html;
+            })
+            .catch(function () { /* network blip — keep last render */ });
+        return true;
+    }
+
+    // Clear any prior interval so SPA re-navigation doesn't stack timers
+    if (window._whoOnlineTimer) { clearInterval(window._whoOnlineTimer); window._whoOnlineTimer = null; }
+    renderOnline();
+    window._whoOnlineTimer = setInterval(function () {
+        if (!renderOnline()) { clearInterval(window._whoOnlineTimer); window._whoOnlineTimer = null; }
+    }, 30000);
+
+    // ── Sales Graph (Chart.js) ────────────────────────────────────────────────
+    function peso(n) {
+        return '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function initSalesChart() {
+        var canvas = document.getElementById('salesChart');
+        if (!canvas || typeof Chart === 'undefined') return;
+
+        // Destroy a prior instance if re-navigated
+        if (window._salesChart) { try { window._salesChart.destroy(); } catch (e) {} window._salesChart = null; }
+
+        var ctx = canvas.getContext('2d');
+        window._salesChart = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: [], datasets: [
+                { label: 'Current',  data: [], backgroundColor: 'rgba(16,185,129,0.85)', borderRadius: 6, categoryPercentage: 0.7, barPercentage: 0.9 },
+                { label: 'Previous', data: [], backgroundColor: 'rgba(203,213,225,0.7)', borderRadius: 6, categoryPercentage: 0.7, barPercentage: 0.9 }
+            ]},
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: function (c) { return c.dataset.label + ': ' + peso(c.parsed.y); } } }
+                },
+                scales: {
+                    y: { beginAtZero: true, ticks: { callback: function (v) { return '₱' + Number(v).toLocaleString('en-PH'); }, font: { weight: '700' } }, grid: { color: '#f1f5f9' } },
+                    x: { ticks: { font: { weight: '700' }, maxRotation: 0, autoSkip: true, maxTicksLimit: 16 }, grid: { display: false } }
+                }
+            }
+        });
+        loadSalesData('day');
+    }
+
+    function loadSalesData(period) {
+        fetch('/project/staff/api/sales_chart.php?period=' + encodeURIComponent(period))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!window._salesChart) return;
+                window._salesChart.data.labels = d.labels;
+                window._salesChart.data.datasets[0].data = d.current;
+                window._salesChart.data.datasets[0].label = d.curr_label;
+                window._salesChart.data.datasets[1].data = d.previous;
+                window._salesChart.data.datasets[1].label = d.prev_label;
+                window._salesChart.update();
+
+                var sum = function (a) { return (a || []).reduce(function (x, y) { return x + Number(y || 0); }, 0); };
+                var cl = document.getElementById('sg-curr-label'), ct = document.getElementById('sg-curr-total');
+                var pl = document.getElementById('sg-prev-label'), pt = document.getElementById('sg-prev-total');
+                if (cl) cl.textContent = d.curr_label;
+                if (pl) pl.textContent = d.prev_label;
+                if (ct) ct.textContent = peso(sum(d.current));
+                if (pt) pt.textContent = peso(sum(d.previous));
+            })
+            .catch(function () {});
+    }
+
+    // Tab handlers
+    var tabWrap = document.getElementById('sales-graph-tabs');
+    if (tabWrap) {
+        tabWrap.querySelectorAll('.sg-tab').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                tabWrap.querySelectorAll('.sg-tab').forEach(function (b) {
+                    b.classList.remove('bg-white', 'text-slate-800', 'shadow-sm');
+                    b.classList.add('text-slate-400', 'hover:text-slate-600');
+                });
+                btn.classList.add('bg-white', 'text-slate-800', 'shadow-sm');
+                btn.classList.remove('text-slate-400', 'hover:text-slate-600');
+                loadSalesData(btn.dataset.period);
+            });
+        });
+    }
+
+    // Load Chart.js once, then init
+    if (typeof Chart === 'undefined') {
+        if (!window._chartJsLoading) {
+            window._chartJsLoading = true;
+            var s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+            s.onload = function () { window._chartJsLoading = false; initSalesChart(); };
+            document.head.appendChild(s);
+        } else {
+            var waitChart = setInterval(function () {
+                if (typeof Chart !== 'undefined') { clearInterval(waitChart); initSalesChart(); }
+            }, 150);
+        }
+    } else {
+        initSalesChart();
+    }
+})();
 </script>
 <?php endif; ?>
 

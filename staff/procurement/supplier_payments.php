@@ -394,6 +394,42 @@ function render_payment_card(array $b, array $items, bool $is_paid): void
         <?php endif; ?>
     </form>
 
+    <!-- Export CSV -->
+    <div class="card-modern p-4">
+        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Export Paid Payments (CSV)</p>
+        <div class="flex flex-wrap items-end gap-3">
+            <div>
+                <label class="label-modern text-xs">Date From</label>
+                <input type="date" id="exp-date-from" class="input-modern text-sm">
+            </div>
+            <div>
+                <label class="label-modern text-xs">Date To</label>
+                <input type="date" id="exp-date-to" class="input-modern text-sm">
+            </div>
+            <button type="button" onclick="exportPayments()"
+                class="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-md whitespace-nowrap">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Export CSV
+            </button>
+            <button type="button" onclick="triggerDownload('export_supplier_payments.php')"
+               class="flex items-center gap-2 px-5 py-3 bg-slate-100 hover:bg-slate-700 hover:text-white text-slate-500 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all whitespace-nowrap">
+                Export All Time
+            </button>
+        </div>
+    </div>
+<script>
+function exportPayments() {
+    var from = document.getElementById('exp-date-from').value;
+    var to   = document.getElementById('exp-date-to').value;
+    var url  = 'export_supplier_payments.php';
+    var params = [];
+    if (from) params.push('date_from=' + encodeURIComponent(from));
+    if (to)   params.push('date_to='   + encodeURIComponent(to));
+    if (params.length) url += '?' + params.join('&');
+    triggerDownload(url);
+}
+</script>
+
     <!-- Tabs -->
     <div class="flex gap-1 bg-slate-100 rounded-2xl p-1 w-fit">
         <?php foreach (['unpaid' => 'Unpaid', 'paid' => 'Paid'] as $key => $label):

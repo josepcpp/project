@@ -513,6 +513,18 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
 
         <!-- ── Tab 1: Live Selling Price ─────────────────────────────────────── -->
         <div id="ptab-live">
+        <div class="px-8 py-3 flex justify-end gap-2 border-b border-slate-50 bg-slate-50/30">
+            <button type="button" onclick="triggerDownload('export_prices.php')"
+               class="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all whitespace-nowrap">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Export Prices CSV
+            </button>
+            <button type="button" onclick="triggerDownload('export_price_history.php')"
+               class="flex items-center gap-1.5 px-4 py-2 bg-slate-50 border border-slate-200 text-slate-500 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-700 hover:text-white transition-all whitespace-nowrap">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Export Price History CSV
+            </button>
+        </div>
         <div class="overflow-x-auto">
             <table class="table-modern text-left min-w-full">
                 <thead>

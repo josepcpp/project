@@ -294,9 +294,12 @@ window.addEventListener('beforeunload', function(e) {
     }
 });
 
-// Clear the warning when the form is actually submitted
+// Clear the warning and bust the SPA cache when the form is submitted.
+// Without this, the SPA serves the stale cached form after the redirect,
+// letting the user re-submit a batch that is already completed.
 document.getElementById('validateForm')?.addEventListener('submit', function() {
     _isDirty = false;
+    if (typeof pageCache !== 'undefined') pageCache.clear();
 });
 
 const RECEIPT_TARGET = <?= $is_reprice ? json_encode(round($receipt_target, 2)) : 'null' ?>;

@@ -191,7 +191,7 @@ function _insert_draft_lot(mysqli $conn, string $desc, ?string $barcode, float $
         "INSERT INTO products (supplier_id, name, barcode, box_barcode, box_units, price, cost_price, last_buy_cost, quantity, max_quantity, status, draft_reason, expiry_date, receiving_batch_id, category)
          VALUES (NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?, '" . PRODUCT_DRAFT . "', ?, ?, ?, ?)"
     );
-    $ins->bind_param("sssiddiississ", $desc, $barcode, $box_barcode, $box_units, $cost, $cost, $qty, $qty, $reason, $expiry, $batch_id, $category);
+    $ins->bind_param("sssiddiissis", $desc, $barcode, $box_barcode, $box_units, $cost, $cost, $qty, $qty, $reason, $expiry, $batch_id, $category);
     $ins->execute();
     return $conn->insert_id;
 }

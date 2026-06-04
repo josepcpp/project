@@ -105,3 +105,16 @@ if (!isset($_SESSION['user_id'])) {
     header("Location: /project/auth/login.php?forced=1&by=" . urlencode($by) . "&by_role=" . urlencode($role));
     exit();
 })();
+
+// ── LAST SEEN STAMP — powers the Who's Online dashboard widget ────────────────
+// One lightweight UPDATE per request. Wrapped in @ so it silently skips if the
+// columns don't exist yet (before the v1.7.7 migration has run).
+(function() {
+    global $conn;
+    if (!isset($conn) || !($conn instanceof mysqli)) return;
+    if (!isset($_SESSION['user_id'])) return;
+    $uid  = intval($_SESSION['user_id']);
+    $page = substr($_SERVER['PHP_SELF'] ?? '', 0, 200);
+    $upd  = @$conn->prepare("UPDATE users SET last_seen_at = NOW(), last_seen_page = ? WHERE id = ?");
+    if ($upd) { @$upd->bind_param("si", $page, $uid); @$upd->execute(); }
+})();

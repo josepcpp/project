@@ -51,6 +51,17 @@ $flash_type = isset($_GET['success']) ? 'success' : (isset($_GET['error']) ? 'er
 </style>
 
 <script>
+// ── Silent CSV download — no new tab, no URL change, no refresh issue ─────────
+function triggerDownload(url) {
+    var a = document.createElement('a');
+    a.href = url;
+    a.setAttribute('data-download', '1');
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function() { document.body.removeChild(a); }, 200);
+}
+
 // ── GLOBAL FLASH FUNCTIONS (available to all pages via layout) ────────────────
 function showFlash(message, type) {
     type = type || 'success';

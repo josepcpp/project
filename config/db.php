@@ -769,3 +769,26 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.7.5
+
+// ── v1.7.6 — Make products.category nullable ─────────────────────────────────
+// Batches encoded before the category feature was added have NULL category in
+// receiving_items. push_inventory must be able to insert NULL without crashing.
+$_db_version   = '1.7.6';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE products MODIFY COLUMN category VARCHAR(100) DEFAULT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.6
+
+// ── v1.7.7 — Who's Online tracking columns ───────────────────────────────────
+$_db_version   = '1.7.7';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at   DATETIME     DEFAULT NULL");
+    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_page VARCHAR(200) DEFAULT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.7

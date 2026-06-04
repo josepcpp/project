@@ -569,7 +569,7 @@ function renderPage(htmlText, isSilent = false) {
 
 document.addEventListener('click', e => {
     const a = e.target.closest('a');
-    if (!a || !a.href || !a.href.includes(window.location.origin) || a.href.includes('logout') || a.href.includes('javascript:')) return;
+    if (!a || !a.href || !a.href.includes(window.location.origin) || a.href.includes('logout') || a.href.includes('javascript:') || a.target === '_blank' || a.dataset.download) return;
     e.preventDefault();
     window.history.pushState({}, '', a.href);
     navigate(a.href, null, false); 

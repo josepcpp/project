@@ -355,13 +355,27 @@ $has_filter = $search !== '';
                 <input type="hidden" name="stock" id="kw-stock" value="<?= htmlspecialchars($stock_filter) ?>">
             </form>
 
-            <a href="export_inventory_csv.php" target="_blank"
+            <?php
+            $export_params = [];
+            if ($cat_filter !== '') $export_params['cat']    = $cat_filter;
+            if ($search     !== '') $export_params['search'] = $search;
+            $export_filtered_url = 'export_inventory_csv.php'
+                . (!empty($export_params) ? '?' . http_build_query($export_params) : '');
+            ?>
+            <button type="button" onclick="triggerDownload('<?= htmlspecialchars($export_filtered_url, ENT_QUOTES) ?>')"
                class="flex-shrink-0 h-[52px] px-5 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-[1.5rem] font-black text-[10px] uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all flex items-center gap-2 whitespace-nowrap">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                 </svg>
-                Export CSV
-            </a>
+                Export Filtered
+            </button>
+            <button type="button" onclick="triggerDownload('export_inventory_csv.php?include_draft=1')"
+               class="flex-shrink-0 h-[52px] px-5 bg-slate-50 border border-slate-200 text-slate-500 rounded-[1.5rem] font-black text-[10px] uppercase tracking-widest hover:bg-slate-700 hover:text-white transition-all flex items-center gap-2 whitespace-nowrap">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                </svg>
+                Export All
+            </button>
 
             <?php if ($has_filter): ?>
             <button onclick="navigate('stock_management.php')"
@@ -448,7 +462,7 @@ $has_filter = $search !== '';
                 if ($inv_tab === 'disposed')       echo "Disposed Items";
                 elseif ($inv_tab === 'archived')   echo "Archived Products";
                 elseif ($inv_tab === 'critical')   echo "Critical Stock";
-                elseif ($inv_tab === 'fast')       echo "Fast Moving — Top 30 (Last 30 Days)";
+                elseif ($inv_tab === 'fast')       echo "Fast Moving — Last 30 Days";
                 elseif ($inv_tab === 'slow')       echo "Slow Moving — Last 30 Days";
                 elseif (!empty($batch_filter))     echo "Voucher: " . htmlspecialchars($active_batch_name);
                 else                               echo "Overall Store Inventory";
