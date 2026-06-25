@@ -13,6 +13,7 @@ $role     = strtolower($_SESSION['role'] ?? '');
 $success = trim($_GET['success'] ?? '');
 $error   = trim($_GET['error']   ?? '');
 $warning = trim($_GET['warning'] ?? '');
+$info    = trim($_GET['info']    ?? '');
 
 // Available vouchers — admin-created, no receiver assigned yet.
 // working_active flags a voucher someone is currently encoding (soft lock).
@@ -74,6 +75,9 @@ include '../layout_top.php';
     <?php endif; ?>
     <?php if ($warning): ?>
     <div class="bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($warning) ?></div>
+    <?php endif; ?>
+    <?php if ($info): ?>
+    <div class="bg-blue-50 border border-blue-200 text-blue-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($info) ?></div>
     <?php endif; ?>
     <?php if ($success): ?>
     <div class="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-2xl px-5 py-4 text-sm font-bold"><?= htmlspecialchars($success) ?></div>
@@ -145,7 +149,7 @@ include '../layout_top.php';
                             <td class="font-black text-slate-500">#<?= $b['id'] ?></td>
                             <td class="font-bold"><?= htmlspecialchars($b['supplier_name'] ?? '—') ?></td>
                             <td class="text-center"><?= intval($b['item_count']) ?></td>
-                            <td><span class="<?= $badge ?> text-[10px] font-black px-2 py-1 rounded-full uppercase tracking-wider"><?= $label ?></span></td>
+                            <td><span class="<?= $badge ?> inline-block whitespace-nowrap text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider"><?= $label ?></span></td>
                             <td class="text-slate-400"><?= date('M j, Y', strtotime($b['created_at'])) ?></td>
                             <td class="whitespace-nowrap">
                                 <?php if ($b['status'] === 'pending_request'): ?>

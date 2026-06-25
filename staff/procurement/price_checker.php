@@ -125,6 +125,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: price_checker.php?tab=monitor&success=" . urlencode("Hike report sent to Admin (" . count($flagged) . " item(s)).") );
         exit();
     }
+
+    // ── Flag a damaged inventory item → pending disposal + Admin bell ─────────
+    // Reuses the existing product_disposals workflow: this only creates a PENDING
+    // request; the Admin Disposal Queue (stock_management.php) approves it, and the
+    // existing disposal_approve.php FIFO-deducts the stock. No stock is removed here.
+    if (isset($_POST['flag_damage'])) {
+        $pid    = intval($_POST['product_id'] ?? 0);
+        $dqty   = intval($_POST['qty'] ?? 0);
+        $dnotes = trim($_POST['notes'] ?? '');
+
+        if ($pid < 1 || $dqty < 1) {
+            header("Location: price_checker.php?tab=inventory&error=" . urlencode("Pick an item and a quantity of at least 1."));
+            exit();
+        }
+
+        // Load this specific lot (one supplier's delivery) with its supplier + date.
+        $pq = $conn->prepare(
+            "SELECT p.id, p.name, p.barcode, p.quantity AS lot_qty,
+                    COALESCE(s.name, rb.supplier_name)               AS supplier,
+                    COALESCE(rb.inventory_pushed_at, rb.created_at)  AS delivered
+             FROM products p
+             LEFT JOIN suppliers s          ON s.id  = p.supplier_id
+             LEFT JOIN receiving_batches rb ON rb.id = p.receiving_batch_id
+             WHERE p.id = ? AND p.status = '" . PRODUCT_ACTIVE . "' LIMIT 1"
+        );
+        $pq->bind_param("i", $pid); $pq->execute();
+        $prod = $pq->get_result()->fetch_assoc();
+        if (!$prod) {
+            header("Location: price_checker.php?tab=inventory&error=" . urlencode("Item not found or no longer active."));
+            exit();
+        }
+
+        // Cap by THIS supplier's delivered/remaining quantity (the lot itself).
+        $avail = intval($prod['lot_qty']);
+        if ($dqty > $avail) {
+            header("Location: price_checker.php?tab=inventory&error=" . urlencode("Quantity ($dqty) exceeds what this supplier has in stock ($avail)."));
+            exit();
+        }
+
+        $reason_enum = 'Damaged';   // enum-safe; the free-text detail goes into notes
+        $sup_txt     = $prod['supplier'] ?: 'unknown supplier';
+        $del_txt     = $prod['delivered'] ? date('M j, Y', strtotime($prod['delivered'])) : 'unknown date';
+        $notes_full  = "Flagged damaged on inventory check by @{$username}. From {$sup_txt}, delivered {$del_txt}."
+                     . ($dnotes !== '' ? " Detail: {$dnotes}" : "");
+
+        $conn->begin_transaction();
+        try {
+            $ins = $conn->prepare(
+                "INSERT INTO product_disposals
+                    (product_id, product_name, barcode, qty, reason, notes, requested_by, requested_username, status)
+                 VALUES (?,?,?,?,?,?,?,?, '" . DISPOSAL_PENDING . "')"
+            );
+            $ins->bind_param("ississis", $prod['id'], $prod['name'], $prod['barcode'], $dqty, $reason_enum, $notes_full, $user_id, $username);
+            $ins->execute();
+
+            // Bell notification for the Admin.
+            $nmsg  = "Damage flag by @{$username}: {$dqty}× \"{$prod['name']}\" (#" . ($prod['barcode'] ?: '—') . ") "
+                   . "from {$sup_txt}, delivered {$del_txt}"
+                   . ($dnotes !== '' ? " — {$dnotes}" : "")
+                   . ". Pending disposal review.";
+            $notif = $conn->prepare("INSERT INTO notifications (recipient_role, type, message) VALUES ('admin', 'damage_flag', ?)");
+            $notif->bind_param("s", $nmsg);
+            $notif->execute();
+
+            $conn->commit();
+        } catch (\Throwable $e) {
+            $conn->rollback();
+            header("Location: price_checker.php?tab=inventory&error=" . urlencode("Could not flag item: " . $e->getMessage()));
+            exit();
+        }
+
+        header("Location: price_checker.php?tab=inventory&success=" . urlencode("Flagged {$dqty}× \"{$prod['name']}\" as damaged — sent to Admin for disposal approval."));
+        exit();
+    }
 }
 
 // ── Activity Records — full Receiver + Validator detail per batch ──────────────
@@ -161,6 +235,32 @@ if ($batches && $batches->num_rows > 0) {
 $monitor_search = trim($_GET['q'] ?? '');
 $monitor_items  = load_delivery_prices($conn, $monitor_search);
 
+// ── Inventory Check — active stock with supplier + delivery date (for damage flags) ──
+$inv_rows = [];
+if ($active_tab === 'inventory') {
+    $inv_search = trim($_GET['q'] ?? '');
+    // One row PER LOT (per supplier delivery), so damage can be flagged against the
+    // specific supplier's delivery with that delivery's quantity as the cap.
+    $inv_sql = "SELECT p.id, p.name, p.barcode, p.quantity AS qty, p.expiry_date,
+                       COALESCE(s.name, rb.supplier_name)               AS supplier,
+                       COALESCE(rb.inventory_pushed_at, rb.created_at)  AS delivered
+                FROM products p
+                LEFT JOIN suppliers s          ON s.id  = p.supplier_id
+                LEFT JOIN receiving_batches rb ON rb.id = p.receiving_batch_id
+                WHERE p.status = '" . PRODUCT_ACTIVE . "' AND p.quantity > 0";
+    $inv_params = []; $inv_types = '';
+    if ($inv_search !== '') {
+        $inv_sql .= " AND (p.name LIKE ? OR p.barcode LIKE ?)";
+        $inv_types = 'ss'; $inv_like = '%' . $inv_search . '%';
+        $inv_params = [$inv_like, $inv_like];
+    }
+    $inv_sql .= " ORDER BY p.name ASC, delivered DESC, p.id ASC";
+    $inv_stmt = $conn->prepare($inv_sql);
+    if ($inv_types) { $inv_stmt->bind_param($inv_types, ...$inv_params); }
+    $inv_stmt->execute();
+    $inv_rows = $inv_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+}
+
 include '../layout_top.php';
 ?>
 
@@ -176,7 +276,7 @@ include '../layout_top.php';
     <!-- Tab navigation -->
     <div class="flex gap-1 bg-slate-100 rounded-2xl p-1 w-fit">
         <?php
-        $tabs = ['activity' => 'Activity Records', 'monitor' => 'Price Monitor'];
+        $tabs = ['activity' => 'Activity Records', 'monitor' => 'Price Monitor', 'inventory' => 'Inventory Check'];
         foreach ($tabs as $key => $label):
         ?>
         <a href="?tab=<?= $key ?>"
@@ -386,8 +486,110 @@ include '../layout_top.php';
         </div>
         <?php endif; ?>
     </div>
+
+    <?php elseif ($active_tab === 'inventory'): ?>
+    <!-- ── Inventory Check — flag damaged stock to Admin ───────────────────── -->
+    <div class="card-modern overflow-hidden">
+        <div class="p-6 border-b border-slate-50 flex items-center justify-between flex-wrap gap-3">
+            <div>
+                <h3 class="serif-title text-lg font-black text-slate-800">Inventory Check</h3>
+                <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Flag damaged stock — sent to Admin for disposal approval</p>
+            </div>
+            <form method="GET" class="flex items-center gap-2">
+                <input type="hidden" name="tab" value="inventory">
+                <input type="text" name="q" value="<?= htmlspecialchars($_GET['q'] ?? '') ?>" placeholder="Search item or barcode…"
+                       class="input-modern text-sm w-56">
+                <button type="submit" class="btn-pos-primary px-5 py-2.5 text-xs font-black uppercase tracking-widest">Search</button>
+                <?php if (($_GET['q'] ?? '') !== ''): ?>
+                <a href="?tab=inventory" class="text-xs font-bold text-slate-400 hover:text-slate-600 py-2">Clear</a>
+                <?php endif; ?>
+            </form>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table-modern w-full text-sm text-left">
+                <thead>
+                    <tr>
+                        <th class="px-6 py-4">Product</th>
+                        <th class="px-4 py-4">Supplier</th>
+                        <th class="px-4 py-4">Delivered</th>
+                        <th class="px-4 py-4">Expiry</th>
+                        <th class="px-4 py-4 text-center">Qty in Stock</th>
+                        <th class="px-6 py-4 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-50">
+                    <?php if (empty($inv_rows)): ?>
+                    <tr><td colspan="6" class="px-6 py-12 text-center text-slate-300 font-black italic text-sm">No active stock to show.</td></tr>
+                    <?php else: foreach ($inv_rows as $iv):
+                        $iv_qty   = intval($iv['qty']);
+                        $iv_sup   = $iv['supplier'] ?: 'Unknown supplier';
+                        $iv_deliv = $iv['delivered'] ? date('M j, Y', strtotime($iv['delivered'])) : '—';
+                    ?>
+                    <tr class="hover:bg-slate-50/50 transition-colors">
+                        <td class="px-6 py-4">
+                            <p class="font-bold text-slate-800"><?= htmlspecialchars($iv['name']) ?></p>
+                            <?php if (!empty($iv['barcode'])): ?>
+                            <code class="text-[10px] text-slate-400 font-mono">#<?= htmlspecialchars($iv['barcode']) ?></code>
+                            <?php endif; ?>
+                        </td>
+                        <td class="px-4 py-4 text-slate-600 font-bold"><?= htmlspecialchars($iv_sup) ?></td>
+                        <td class="px-4 py-4 text-slate-400 font-bold"><?= $iv_deliv ?></td>
+                        <td class="px-4 py-4 text-slate-400 font-bold"><?= $iv['expiry_date'] ? date('M j, Y', strtotime($iv['expiry_date'])) : '—' ?></td>
+                        <td class="px-4 py-4 text-center font-black text-slate-700"><?= number_format($iv_qty) ?></td>
+                        <td class="px-6 py-4 text-right">
+                            <button type="button"
+                                onclick="openFlagModal(<?= intval($iv['id']) ?>, '<?= htmlspecialchars(addslashes($iv['name']), ENT_QUOTES) ?>', '<?= htmlspecialchars(addslashes($iv_sup), ENT_QUOTES) ?>', '<?= htmlspecialchars(addslashes($iv_deliv), ENT_QUOTES) ?>', <?= $iv_qty ?>)"
+                                class="bg-rose-50 hover:bg-rose-500 hover:text-white text-rose-600 border border-rose-100 font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-xl transition-all whitespace-nowrap">
+                                Flag Damaged
+                            </button>
+                        </td>
+                    </tr>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
     <?php endif; ?>
 
 </div>
+
+<!-- ── Flag Damaged modal ──────────────────────────────────────────────────── -->
+<div id="flag-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden p-4">
+    <div class="bg-white rounded-[2rem] shadow-2xl w-full max-w-md p-8 animate-in">
+        <h4 class="serif-title text-2xl font-black text-slate-800 mb-1">Flag Damaged Item</h4>
+        <p id="flag-item-name" class="font-black text-slate-800 text-base leading-tight"></p>
+        <p id="flag-detail" class="text-slate-400 text-xs font-bold mb-5"></p>
+        <form method="POST" action="price_checker.php">
+            <?= csrf_field() ?>
+            <input type="hidden" name="flag_damage" value="1">
+            <input type="hidden" name="product_id" id="flag-pid">
+            <label class="label-modern text-xs">Quantity to dispose <span class="text-rose-500">*</span></label>
+            <input type="number" name="qty" id="flag-qty" min="1" value="1" required class="input-modern w-full mb-1">
+            <p id="flag-max" class="text-[10px] text-slate-400 font-bold mb-4"></p>
+            <label class="label-modern text-xs">Reason / damage detail</label>
+            <textarea name="notes" rows="3" placeholder="Describe the damage (e.g. crushed packaging, water-damaged, leaking)…"
+                      class="input-modern w-full resize-none mb-5"></textarea>
+            <div class="flex gap-3">
+                <button type="button" onclick="closeFlagModal()" class="flex-1 border border-slate-200 text-slate-500 font-black text-[10px] uppercase tracking-widest py-3 rounded-2xl hover:bg-slate-50 transition-all">Cancel</button>
+                <button type="submit" class="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-2xl shadow-lg transition-all active:scale-95">Send to Admin</button>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+let _flagMax = 0;
+function openFlagModal(pid, name, supplier, delivered, maxQty) {
+    _flagMax = maxQty;
+    document.getElementById('flag-pid').value = pid;
+    document.getElementById('flag-item-name').textContent = name;
+    document.getElementById('flag-detail').textContent = 'From ' + supplier + ' · delivered ' + delivered;
+    var q = document.getElementById('flag-qty');
+    q.value = 1; q.max = maxQty;
+    document.getElementById('flag-max').textContent = 'This supplier’s delivery has ' + maxQty + ' in stock';
+    document.getElementById('flag-modal').classList.remove('hidden');
+}
+function closeFlagModal() { document.getElementById('flag-modal').classList.add('hidden'); }
+document.getElementById('flag-modal')?.addEventListener('click', function (e) { if (e.target === this) closeFlagModal(); });
+</script>
 
 <?php include '../layout_bottom.php'; ?>

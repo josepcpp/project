@@ -79,7 +79,15 @@ if ($action === 'save_items') {
         ];
         $status_label = $status_labels[$batch['status']] ?? ucwords(str_replace('_', ' ', $batch['status']));
         $msg = "Batch #{$batch_id} is already in \"{$status_label}\" stage and can no longer be edited.";
-        $err($msg, "receive_batch.php?", "receive_batch.php?warning=" . urlencode($msg));
+        // This is INFORMATIONAL, not an error — surface it in blue (info), not red.
+        // Both the AJAX and full-page paths land on the batch list with ?info=.
+        if ($is_ajax) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'redirect' => "receive_batch.php?info=" . urlencode($msg)]);
+            exit();
+        }
+        header("Location: receive_batch.php?info=" . urlencode($msg));
+        exit();
     }
 
     // Validate items

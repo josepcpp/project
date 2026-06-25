@@ -6,10 +6,10 @@
  * to prevent lockout.
  *
  * Supports single IPs (192.168.1.10) and simple CIDR ranges (192.168.1.0/24).
- * Admin and above only.
+ * Superadmin only.
  */
 include '../../config/db.php';
-include '../../includes/admin_only.php';
+include '../../includes/superadmin_only.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $user_id  = $_SESSION['user_id'] ?? null;

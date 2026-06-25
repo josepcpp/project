@@ -239,10 +239,6 @@ include '../layout_top.php';
                                         class="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black px-5 py-2.5 rounded-xl uppercase tracking-widest transition-all">
                                     Override &amp; Accept
                                 </button>
-                                <button type="submit" name="resolution" value="reject"
-                                        class="bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs font-black px-5 py-2.5 rounded-xl uppercase tracking-widest transition-all">
-                                    Reject Batch
-                                </button>
                             </div>
                         </div>
                     </form>
@@ -262,7 +258,6 @@ function confirmResolution(form) {
 
     const labels = {
         override: 'Override & accept this batch (inventory will be updated)',
-        reject:   'Reject this batch permanently',
         reopen_receiver: 'Re-open to Receiver for re-encoding',
         reopen_validator: 'Re-open to Validator for re-pricing',
     };

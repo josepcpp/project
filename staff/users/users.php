@@ -142,7 +142,6 @@ $reset_rows = $pending_resets ? $pending_resets->fetch_all(MYSQLI_ASSOC) : [];
             <input type="password" name="password" placeholder="Password (min 8 chars)" required minlength="8"
                 class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all">
             <select name="role" class="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none">
-                <option value="staff">Staff Member</option>
                 <optgroup label="── Procurement Pipeline ──">
                     <option value="receiver">Receiver</option>
                     <option value="validator">Validator</option>

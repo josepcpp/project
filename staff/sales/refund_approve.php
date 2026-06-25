@@ -143,10 +143,13 @@ if ($action === 'approve' || $action === 'override') {
         if ($disposition === DISP_RESTOCK) {
             // RR-4: only restore status to ACTIVE when qty was 0 (auto-archived); don't touch deliberately-archived products
             $up_p = $conn->prepare(
+                // Reactivation conditions must read the ORIGINAL quantity, so the
+                // status/archived_at IFs come BEFORE the quantity is incremented.
+                // (MySQL evaluates SET left-to-right using already-updated values.)
                 "UPDATE products
-                 SET quantity = quantity + ?,
-                     status   = IF(quantity = 0, '" . PRODUCT_ACTIVE . "', status),
-                     archived_at = IF(quantity = 0, NULL, archived_at)
+                 SET status      = IF(quantity = 0, '" . PRODUCT_ACTIVE . "', status),
+                     archived_at = IF(quantity = 0, NULL, archived_at),
+                     quantity    = quantity + ?
                  WHERE id = ?"
             );
             $up_p->bind_param("ii", $refund_qty, $product_id);

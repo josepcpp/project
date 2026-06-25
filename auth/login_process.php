@@ -57,6 +57,18 @@ if (isset($_POST['username']) && isset($_POST['password'])) {
             $user_role = strtolower($user['role']);
             $_SESSION['role'] = $user_role;
 
+            // Procurement staff: flag the role manual to pop up once this login,
+            // unless they've turned it off (show_manual_on_login = 0).
+            if (in_array($user_role, ROLES_PROCUREMENT_STAFF)) {
+                $mq = $conn->prepare("SELECT show_manual_on_login FROM users WHERE id = ? LIMIT 1");
+                if ($mq) {
+                    $mq->bind_param("i", $user['id']); $mq->execute();
+                    if (intval($mq->get_result()->fetch_assoc()['show_manual_on_login'] ?? 1) === 1) {
+                        $_SESSION['manual_pending'] = true;
+                    }
+                }
+            }
+
             if (in_array($user_role, ROLES_ADMIN_AND_UP)) {
                 header("Location: ../staff/dashboard.php");
             } elseif ($user_role === ROLE_STAFF) {

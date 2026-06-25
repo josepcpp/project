@@ -16,17 +16,18 @@ foreach ($_SESSION['cart'] as $pid => $item) {
     $lt        = floatval($item['line_total'] ?? ($item['price'] * $item['qty']));
     $subtotal += $lt;
 
-    // Fetch category and vat_exempt for this item
-    $cat_q = $conn->prepare("SELECT category, vat_exempt FROM products WHERE id = ? LIMIT 1");
+    // Fetch category, vat_exempt, and VAT-inclusive flag for this item
+    $cat_q = $conn->prepare("SELECT category, vat_exempt, price_includes_vat FROM products WHERE id = ? LIMIT 1");
     $cat_q->bind_param("i", $pid);
     $cat_q->execute();
     $cat_row = $cat_q->get_result()->fetch_assoc();
 
     $cart_composition[] = [
-        'product_id' => (int)$pid,
-        'category'   => $cat_row['category']   ?? '',
-        'vat_exempt' => (int)($cat_row['vat_exempt'] ?? 0),
-        'line_total' => $lt,
+        'product_id'         => (int)$pid,
+        'category'           => $cat_row['category']   ?? '',
+        'vat_exempt'         => (int)($cat_row['vat_exempt'] ?? 0),
+        'price_includes_vat' => (int)($cat_row['price_includes_vat'] ?? 0),
+        'line_total'         => $lt,
     ];
 }
 $tax_rate = TAX_RATE;
@@ -467,28 +468,26 @@ function updateTotals() {
     if (discountAmt > 0) savings.push(`<span class="text-amber-600">Promo −₱${discountAmt.toFixed(2)}</span>`);
     let runningTotal = Math.max(0, afterBundleSubtotal - discountAmt);
 
-    // 4. Split into vatable / exempt portions using raw line-total ratios.
-    // Discounts are proportionally distributed across both groups.
-    let vatableRaw = 0, exemptRaw = 0;
+    // 4. VAT is always INCLUSIVE (mirrors checkout_process.php): the set price is final.
+    //    VAT-able items have the 12% extracted; Non-VAT items carry no tax.
+    //    excRaw stays 0 — the old "add 12% on top" rule is retired.
+    let incRaw = 0, excRaw = 0, exemptRaw = 0;
     cartItems.forEach(function(item) {
-        if (item.vat_exempt) exemptRaw  += item.line_total;
-        else                 vatableRaw += item.line_total;
+        if (item.vat_exempt) exemptRaw += item.line_total;
+        else                 incRaw    += item.line_total;
     });
-    const totalRaw     = vatableRaw + exemptRaw;
-    const vatableRatio = totalRaw > 0 ? vatableRaw / totalRaw : 1;
-    const vatableNet   = runningTotal * vatableRatio;
-    const exemptNet    = runningTotal - vatableNet;
+    const totalRaw  = incRaw + excRaw + exemptRaw;
+    const den       = totalRaw > 0 ? totalRaw : 1;
+    const incNet    = runningTotal * (incRaw / den);
+    const excNet    = runningTotal * (excRaw / den);
+    const exemptNet = runningTotal - incNet - excNet;
 
-    // 4b. F-14: Tax — exclusive (add on top) or inclusive (already embedded),
-    //     applied only to the vatable portion. VAT is always on (12% fixed).
-    let calculatedTax, preRoundTotal;
-    if (TAX_DISPLAY_MODE === 'inclusive') {
-        calculatedTax = vatableNet * (taxRate / (1 + taxRate));
-        preRoundTotal = runningTotal; // inclusive: total unchanged
-    } else {
-        calculatedTax = vatableNet * taxRate;
-        preRoundTotal = vatableNet + calculatedTax + exemptNet;
-    }
+    // 4b. F-14: VAT is always 12%. Inclusive items extract it (no add); exclusive add on top.
+    const taxInc = incNet * (taxRate / (1 + taxRate));
+    const taxExc = excNet * taxRate;
+    const calculatedTax = taxInc + taxExc;
+    const preRoundTotal = incNet + (excNet + taxExc) + exemptNet;
+    const vatableNet    = incNet + excNet;
 
     // 5. F-11: Price rounding
     let finalTotal = applyRounding(preRoundTotal, ROUNDING_RULE);
@@ -506,11 +505,14 @@ function updateTotals() {
     // 6. UI Update
     totalDisplay.innerText = '₱' + finalTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
+    const vatableRaw = incRaw + excRaw;
     let taxInfo;
     if (exemptRaw > 0 && vatableRaw > 0) {
-        taxInfo = `VAT (${(taxRate * 100).toFixed(0)}%) on ₱${vatableNet.toFixed(2)} = ₱${calculatedTax.toFixed(2)} · ₱${exemptNet.toFixed(2)} exempt`;
+        taxInfo = `VAT (${(taxRate * 100).toFixed(0)}%) ₱${calculatedTax.toFixed(2)} · ₱${exemptNet.toFixed(2)} exempt`;
     } else if (exemptRaw > 0) {
         taxInfo = 'VAT Exempt';
+    } else if (excRaw === 0 && incRaw > 0) {
+        taxInfo = `VAT (${(taxRate * 100).toFixed(0)}%) ₱${calculatedTax.toFixed(2)} included`;
     } else {
         taxInfo = `Includes ${(taxRate * 100).toFixed(0)}% Tax (₱${calculatedTax.toFixed(2)})`;
     }
@@ -578,7 +580,7 @@ document.getElementById('checkoutForm').addEventListener('submit', function(e) {
 
     if (activeDiscount.type === DISC_PCT && activeDiscount.value > 100) {
         e.preventDefault();
-        alert('Discount percentage cannot exceed 100%.');
+        showFlash('Discount percentage cannot exceed 100%.', 'error');
         return;
     }
     const finalTotal = parseFloat(document.getElementById('final-total-hidden').value);

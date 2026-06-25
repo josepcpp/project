@@ -792,3 +792,37 @@ file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
 } catch (Throwable $_e) {
     file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
 }} // end v1.7.7
+
+// ── v1.7.8 — Per-item VAT-inclusive pricing flag ─────────────────────────────
+// When 1, the product's stored price already INCLUDES the 12% VAT, so POS
+// extracts the VAT instead of adding it on top (no surprise +12% at checkout).
+// Default 0 keeps every existing item on its current behavior until toggled.
+$_db_version   = '1.7.8';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE products ADD COLUMN IF NOT EXISTS price_includes_vat TINYINT(1) NOT NULL DEFAULT 0");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.8
+
+// ── v1.7.9 — Per-user "show manual on every login" preference ─────────────────
+$_db_version   = '1.7.9';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS show_manual_on_login TINYINT(1) NOT NULL DEFAULT 1");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.7.9
+
+// ── v1.8.0 — Damage-flag notification type (Price Checker → Admin) ────────────
+// Additive enum value only; existing notification types/code are unaffected.
+$_db_version   = '1.8.0';
+$_db_init_flag = __DIR__ . '/../.db_init_v' . str_replace('.', '', $_db_version);
+if (!file_exists($_db_init_flag)) { try {
+    $conn->query("ALTER TABLE notifications MODIFY COLUMN type ENUM('discrepancy','price_change','override','batch_rejected','damage_flag') NOT NULL");
+file_put_contents($_db_init_flag, date('Y-m-d H:i:s'));
+} catch (Throwable $_e) {
+    file_put_contents($_db_init_flag, date('Y-m-d H:i:s') . ' [error: ' . $_e->getMessage() . ']');
+}} // end v1.8.0

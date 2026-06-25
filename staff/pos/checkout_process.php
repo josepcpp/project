@@ -116,15 +116,16 @@ try {
 
     // 5. First pass: re-fetch live prices from DB, validate stock, recalculate line totals (POS-2)
     $server_subtotal = 0.0;
-    $vatable_raw     = 0.0;  // sum of line_totals for VAT-applicable items
-    $exempt_raw      = 0.0;  // sum of line_totals for VAT-exempt items
+    $inc_raw         = 0.0;  // VATable, price already INCLUDES VAT (extract)
+    $exc_raw         = 0.0;  // VATable, legacy exclusive (add 12% on top)
+    $exempt_raw      = 0.0;  // Non-VAT (no tax)
     $items_to_insert = [];
 
     foreach ($_SESSION['cart'] as $pid => $item) {
         // POS-2: FOR UPDATE locks the row so two concurrent checkouts can't both
         // pass the stock check and oversell the last unit(s).
         $p_query = $conn->prepare(
-            "SELECT name, quantity, barcode, price, bulk_qty_full, bulk_qty_half, price_full_box, price_half_box, vat_exempt
+            "SELECT name, quantity, barcode, price, bulk_qty_full, bulk_qty_half, price_full_box, price_half_box, vat_exempt, price_includes_vat
              FROM products WHERE id = ? FOR UPDATE"
         );
         $p_query->bind_param("i", $pid);
@@ -180,10 +181,13 @@ try {
         $effective_unit = ($cart_qty > 0) ? ($line_total / $cart_qty) : $retail;
         $server_subtotal += $line_total;
 
+        // VAT is always treated as INCLUSIVE: the set price is the final price.
+        // VAT-able items have the 12% extracted from the price (never added on top);
+        // Non-VAT items carry no tax. ($exc_raw stays 0 — the old add-on rule is retired.)
         if (!empty($product_data['vat_exempt'])) {
-            $exempt_raw += $line_total;
+            $exempt_raw += $line_total;                       // Non-VAT
         } else {
-            $vatable_raw += $line_total;
+            $inc_raw += $line_total;                          // VATable → price already includes VAT
         }
 
         $items_to_insert[] = [
@@ -310,23 +314,25 @@ try {
 
     $net_subtotal = max(0.0, $after_bundle_subtotal - $discount_amt);
 
-    // 6d. F-14: Tax calculation — VAT (12%) is always on.
-    // Discounts are distributed proportionally: vatable share = net * (vatable_raw / total_raw).
-    // VAT is applied only to the vatable share; exempt share carries no tax.
-    $total_raw     = $vatable_raw + $exempt_raw;
-    $vatable_ratio = $total_raw > 0 ? $vatable_raw / $total_raw : 1.0;
-    $vatable_net   = $net_subtotal * $vatable_ratio;
-    $exempt_net    = $net_subtotal - $vatable_net;
+    // 6d. F-14: Tax calculation — VAT (12%) is always on, decided PER ITEM.
+    // Three buckets: inclusive-vatable (VAT already in price → extract),
+    // exclusive-vatable (legacy → add on top), and exempt (no VAT).
+    // The order's discount is distributed proportionally across the buckets by
+    // their raw line-total share. NOTE: when no item is VAT-inclusive ($inc_raw = 0)
+    // this reduces EXACTLY to the previous exclusive behavior (backward compatible).
+    $total_raw  = $inc_raw + $exc_raw + $exempt_raw;
+    $den        = $total_raw > 0 ? $total_raw : 1.0;
+    $inc_net    = $net_subtotal * ($inc_raw / $den);
+    $exc_net    = $net_subtotal * ($exc_raw / $den);
+    $exempt_net = $net_subtotal - $inc_net - $exc_net;
 
-    if ($tax_display_mode === 'inclusive') {
-        // Prices already embed VAT — extract the component for audit; total unchanged
-        $tax_amt         = $vatable_net * (TAX_RATE / (1 + TAX_RATE));
-        $pre_round_total = $net_subtotal;
-    } else {
-        // Exclusive (default): add VAT on top of vatable portion only
-        $tax_amt         = $vatable_net * TAX_RATE;
-        $pre_round_total = $vatable_net + $tax_amt + $exempt_net;
-    }
+    // Inclusive: VAT embedded → extract for records, charge net as-is (no add).
+    $tax_inc = $inc_net * (TAX_RATE / (1 + TAX_RATE));
+    // Exclusive: VAT added on top.
+    $tax_exc = $exc_net * TAX_RATE;
+
+    $tax_amt         = $tax_inc + $tax_exc;
+    $pre_round_total = $inc_net + ($exc_net + $tax_exc) + $exempt_net;
 
     // 6e. F-11: Apply price rounding rule
     $total = applyRounding($pre_round_total, $rounding_rule);
@@ -395,7 +401,7 @@ try {
                 $new_q   = intval($lot['quantity']) - $take;
                 $new_s   = $new_q <= 0 ? PRODUCT_ARCHIVED : PRODUCT_ACTIVE;
                 $upd_lot = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
-                $upd_lot->bind_param("isis", $new_q, $new_s, $new_s, $lot['id']);
+                $upd_lot->bind_param("issi", $new_q, $new_s, $new_s, $lot['id']);
                 $upd_lot->execute();
                 $remaining -= $take;
             }
@@ -404,7 +410,7 @@ try {
             $new_qty    = max(0, $product_data['quantity'] - $cart_qty);
             $new_status = ($new_qty <= 0) ? PRODUCT_ARCHIVED : PRODUCT_ACTIVE;
             $update_stock = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
-            $update_stock->bind_param("isis", $new_qty, $new_status, $new_status, $pid);
+            $update_stock->bind_param("issi", $new_qty, $new_status, $new_status, $pid);
             $update_stock->execute();
         }
 

@@ -1,5 +1,6 @@
 <?php
 include '../../config/db.php';
+include '../../includes/csrf.php';   // disposal approve/reject forms use csrf_field()
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $role    = strtolower($_SESSION['role'] ?? ROLE_STAFF);
@@ -938,41 +939,41 @@ if (in_array($role, ROLES_ADMIN_AND_UP)):
                 default        => 'bg-slate-100 text-slate-500 border-slate-200',
             };
         ?>
-        <div class="px-8 py-5 flex flex-wrap items-center gap-4">
+        <div class="px-8 py-5 flex flex-col lg:flex-row lg:items-center gap-5">
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-3 flex-wrap">
-                    <p class="font-black text-slate-800"><?= htmlspecialchars($dp['product_name']) ?></p>
-                    <span class="text-[9px] font-black px-2.5 py-1 rounded-full border <?= $reason_cfg ?> uppercase tracking-wider"><?= htmlspecialchars($dp['reason']) ?></span>
+                    <p class="font-black text-slate-800 text-base leading-tight"><?= htmlspecialchars($dp['product_name']) ?></p>
+                    <span class="text-[9px] font-black px-2.5 py-1 rounded-full border <?= $reason_cfg ?> uppercase tracking-wider whitespace-nowrap"><?= htmlspecialchars($dp['reason']) ?></span>
                 </div>
-                <div class="flex items-center gap-4 mt-1 text-[10px] text-slate-400 font-bold flex-wrap">
+                <div class="flex items-center gap-x-4 gap-y-1 mt-1.5 text-[10px] text-slate-400 font-bold flex-wrap">
                     <span>Qty: <span class="text-slate-700 font-black"><?= intval($dp['qty']) ?></span></span>
                     <?php if ($dp['expiry_date']): ?><span>Expiry: <?= date('M j, Y', strtotime($dp['expiry_date'])) ?></span><?php endif; ?>
-                    <span>Requested by <?= htmlspecialchars($dp['requester_fullname'] ?: $dp['requested_username']) ?></span>
+                    <span>By <?= htmlspecialchars($dp['requester_fullname'] ?: $dp['requested_username']) ?></span>
                     <span><?= date('M j, Y g:i A', strtotime($dp['created_at'])) ?></span>
                 </div>
                 <?php if ($dp['notes']): ?>
-                <p class="text-[10px] text-slate-400 italic mt-0.5">"<?= htmlspecialchars($dp['notes']) ?>"</p>
+                <p class="text-[11px] text-slate-400 italic mt-1 leading-relaxed">"<?= htmlspecialchars($dp['notes']) ?>"</p>
                 <?php endif; ?>
             </div>
-            <div class="flex gap-2 flex-shrink-0">
-                <form method="POST" action="disposal_approve.php">
+            <div class="flex flex-col sm:flex-row gap-2 sm:items-stretch lg:flex-shrink-0 w-full lg:w-auto">
+                <form method="POST" action="disposal_approve.php" class="shrink-0">
                     <?= csrf_field() ?>
                     <input type="hidden" name="action" value="approve">
                     <input type="hidden" name="disposal_id" value="<?= $dp['id'] ?>">
                     <button type="submit"
                             onclick="return confirm('Approve disposal of <?= intval($dp['qty']) ?> pcs of \'<?= htmlspecialchars(addslashes($dp['product_name'])) ?>\'?')"
-                            class="bg-orange-500 hover:bg-orange-600 text-white font-black text-xs px-5 py-2.5 rounded-xl uppercase tracking-widest transition-all">
+                            class="w-full sm:w-auto h-[42px] bg-orange-500 hover:bg-orange-600 text-white font-black text-xs px-6 rounded-xl uppercase tracking-widest transition-all">
                         Approve
                     </button>
                 </form>
-                <form method="POST" action="disposal_approve.php" class="flex gap-2 items-center">
+                <form method="POST" action="disposal_approve.php" class="flex gap-2 items-center flex-1 sm:flex-none">
                     <?= csrf_field() ?>
                     <input type="hidden" name="action" value="reject">
                     <input type="hidden" name="disposal_id" value="<?= $dp['id'] ?>">
-                    <input type="text" name="reject_reason" placeholder="Reason..." required
-                           class="input-modern text-xs py-2 w-36">
+                    <input type="text" name="reject_reason" placeholder="Reason…" required
+                           class="input-modern text-xs h-[42px] py-0 flex-1 sm:w-40 min-w-0">
                     <button type="submit"
-                            class="bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-600 font-black text-xs px-5 py-2.5 rounded-xl uppercase tracking-widest transition-all">
+                            class="h-[42px] bg-slate-200 hover:bg-rose-500 hover:text-white text-slate-600 font-black text-xs px-6 rounded-xl uppercase tracking-widest transition-all whitespace-nowrap">
                         Reject
                     </button>
                 </form>

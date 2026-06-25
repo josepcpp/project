@@ -72,10 +72,17 @@ function showFlash(message, type) {
 
     const isSuccess = (type === 'success');
     const isWarning = (type === 'warning');
-    const bg     = isSuccess ? '#10b981' : (isWarning ? '#f59e0b' : '#ef4444');
-    const shadow = isSuccess ? '0 20px 40px -8px rgba(16,185,129,.35)' : (isWarning ? '0 20px 40px -8px rgba(245,158,11,.35)' : '0 20px 40px -8px rgba(239,68,68,.35)');
+    const isInfo    = (type === 'info');
+    // Colour language: green=success, blue=info, amber=warning, red=error
+    const bg     = isSuccess ? '#10b981' : isInfo ? '#3b82f6' : isWarning ? '#f59e0b' : '#ef4444';
+    const shadow = isSuccess ? '0 20px 40px -8px rgba(16,185,129,.35)'
+                 : isInfo    ? '0 20px 40px -8px rgba(59,130,246,.35)'
+                 : isWarning ? '0 20px 40px -8px rgba(245,158,11,.35)'
+                 :             '0 20px 40px -8px rgba(239,68,68,.35)';
     const icon   = isSuccess
         ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>'
+        : isInfo
+        ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>'
         : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>';
 
     el.innerHTML =

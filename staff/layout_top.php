@@ -48,6 +48,7 @@ $titles = [
     'users.php'             => 'Staff Accounts',
     'settings.php'          => 'App Settings',
     'help.php'                      => 'Support',
+    'manual.php'                    => 'User Manual',
     'delivery_return_ticket.php'    => 'Return Ticket',
     // Phase 2 additions
     'customer_groups.php'           => 'Customer Groups',
@@ -73,6 +74,7 @@ $icons = [
     'pos.php'               => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>',
     'stock_management.php'  => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>',
     'help.php'              => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+    'manual.php'            => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>',
     'dashboard.php'         => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>',
     'activity_logs.php'     => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
     'price_maintenance.php' => '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>',
@@ -115,6 +117,7 @@ $hrefs = [
     'users.php'             => '/project/staff/users/users.php',
     'settings.php'          => '/project/staff/settings.php',
     'help.php'              => '/project/staff/help.php',
+    'manual.php'            => '/project/staff/manual.php',
     'delivery_return_ticket.php' => '/project/staff/procurement/delivery_return_ticket.php',
     // Phase 2 hrefs
     'customer_groups.php'   => '/project/staff/pos/customer_groups.php',
@@ -202,13 +205,22 @@ if ($role === ROLE_STAFF) {
     }
 }
 
-// Notification count for procurement specialist roles
-$notif_count = $notif_count ?? 0;
-if (in_array($role, ROLES_PROCUREMENT_STAFF)) {
-    $nq2 = $conn->prepare("SELECT COUNT(*) AS c FROM notifications WHERE (recipient_id = ? OR recipient_role = ?) AND is_read = 0");
-    $nq2->bind_param("is", $_SESSION['user_id'], $role);
-    $nq2->execute();
-    $notif_count = intval($nq2->get_result()->fetch_assoc()['c'] ?? 0);
+// Unified unread-notification count for the bell badge — mirrors the exact
+// recipient logic in api/notifications.php so the initial badge is correct for
+// EVERY role on first load (not just after the poller runs). Display-only.
+$notif_count = 0;
+if (in_array($role, ROLES_ADMIN_AND_UP) || in_array($role, ROLES_PROCUREMENT_STAFF)) {
+    if (in_array($role, ROLES_ADMIN_AND_UP)) {
+        // admin / owner / superadmin → role-broadcast to admin/superadmin OR addressed to them
+        $ncq = $conn->prepare("SELECT COUNT(*) AS c FROM notifications WHERE (recipient_role IN ('admin','superadmin') OR recipient_id = ?) AND is_read = 0");
+        $ncq->bind_param("i", $_SESSION['user_id']);
+    } else {
+        // receiver / validator / price_checker → personal OR their role
+        $ncq = $conn->prepare("SELECT COUNT(*) AS c FROM notifications WHERE (recipient_id = ? OR recipient_role = ?) AND is_read = 0");
+        $ncq->bind_param("is", $_SESSION['user_id'], $role);
+    }
+    $ncq->execute();
+    $notif_count = intval($ncq->get_result()->fetch_assoc()['c'] ?? 0);
 }
 
 if ($role === ROLE_STAFF) {
@@ -224,6 +236,7 @@ if ($role === ROLE_STAFF) {
         'Sales'       => ['pos.php'],
         'Inventory'   => ['stock_management.php'],
         'Procurement' => ['receive_batch.php'],
+        'Guide'       => ['manual.php'],
         'Help'        => ['help.php'],
     ];
 } elseif ($role === ROLE_VALIDATOR) {
@@ -232,6 +245,7 @@ if ($role === ROLE_STAFF) {
         'Sales'       => ['pos.php'],
         'Inventory'   => ['stock_management.php'],
         'Procurement' => ['validate_batch.php'],
+        'Guide'       => ['manual.php'],
         'Help'        => ['help.php'],
     ];
 } elseif ($role === ROLE_PRICE_CHECKER) {
@@ -240,6 +254,7 @@ if ($role === ROLE_STAFF) {
         'Sales'       => ['pos.php'],
         'Inventory'   => ['stock_management.php'],
         'Reports'     => ['price_checker.php'],
+        'Guide'       => ['manual.php'],
         'Help'        => ['help.php'],
     ];
 } elseif (in_array($role, ROLES_ADMIN_OWNER)) {
@@ -248,7 +263,7 @@ if ($role === ROLE_STAFF) {
         'Sales'          => ['pos.php', 'discount.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
         'Procurement'    => $admin_pipeline,
-        'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
+        'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'manual.php', 'help.php'],
     ];
 } else { // superadmin
     $nav_sections = [
@@ -256,7 +271,7 @@ if ($role === ROLE_STAFF) {
         'Sales'          => ['pos.php', 'discount.php'],
         'Inventory'      => ['stock_management.php', 'price_maintenance.php'],
         'Procurement'    => $admin_pipeline,
-        'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'help.php'],
+        'Administration' => ['activity_logs.php', 'users.php', 'backup.php', 'ip_restrictions.php', 'manual.php', 'help.php'],
         'System'         => ['settings.php'],
     ];
 }
@@ -454,8 +469,14 @@ async function navigate(url, formData = null, isSilent = false) {
     const loader = document.getElementById('loading-bar');
     const content = document.getElementById('page-content');
 
+    // Status-dependent pages render differently as a batch changes status
+    // (editable vs read-only), so they must NEVER be served from / stored in the
+    // URL cache — otherwise a reopened batch shows a stale snapshot.
+    const NO_CACHE_PAGES = ['receive_items.php', 'validate_items.php'];
+    const skipCache = NO_CACHE_PAGES.some(p => url.includes(p));
+
     // Serve GET requests from cache instantly — no server round-trip
-    if (!formData && pageCache.has(url)) {
+    if (!formData && !skipCache && pageCache.has(url)) {
         renderPage(pageCache.get(url), true);
         return;
     }
@@ -493,7 +514,7 @@ async function navigate(url, formData = null, isSilent = false) {
         }
         if (formData) {
             pageCache.clear();
-        } else {
+        } else if (!skipCache) {
             pageCache.set(url, text);
         }
         renderPage(text, isSilent);
@@ -562,6 +583,12 @@ function renderPage(htmlText, isSilent = false) {
         if (wm && typeof showFlash === 'function') {
             showFlash(wm, 'warning');
             flashUrl.searchParams.delete('warning');
+            history.replaceState({}, '', flashUrl.toString());
+        }
+        var im = flashUrl.searchParams.get('info');
+        if (im && typeof showFlash === 'function') {
+            showFlash(im, 'info');
+            flashUrl.searchParams.delete('info');
             history.replaceState({}, '', flashUrl.toString());
         }
     }
@@ -683,38 +710,68 @@ document.addEventListener('click', function(e) {
         if (dd) dd.classList.add('hidden');
     }
 });
+// Per-type icon + colour for the notification dropdown
+function notifTypeStyle(type) {
+    const P = {
+        discrepancy:    ['bg-rose-100 text-rose-600',     'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z'],
+        price_change:   ['bg-purple-100 text-purple-600', 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z'],
+        override:       ['bg-emerald-100 text-emerald-600','M5 13l4 4L19 7'],
+        batch_rejected: ['bg-rose-100 text-rose-600',     'M6 18L18 6M6 6l12 12'],
+        damage_flag:    ['bg-amber-100 text-amber-600',   'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16'],
+        _default:       ['bg-slate-100 text-slate-500',   'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9']
+    };
+    return P[type] || P._default;
+}
 function loadNotifications() {
     fetch('/project/staff/api/notifications.php?action=list')
         .then(r => r.json())
         .then(data => {
             const list = document.getElementById('notif-list');
             if (!data.length) {
-                list.innerHTML = '<div class="px-4 py-6 text-center text-slate-400 text-xs font-bold">No notifications</div>';
+                list.innerHTML =
+                    '<div class="px-4 py-10 text-center">' +
+                        '<svg class="w-9 h-9 mx-auto text-slate-200 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>' +
+                        '<p class="text-slate-400 text-xs font-black uppercase tracking-widest">You’re all caught up</p>' +
+                    '</div>';
                 return;
             }
-            const typeIcon = { discrepancy:'🔴', price_change:'🟡', override:'🟢', batch_rejected:'⚫' };
-            list.innerHTML = data.map(n => `
-                <div class="px-4 py-3 ${n.is_read ? '' : 'bg-blue-50'} hover:bg-slate-50 cursor-pointer text-xs" onclick="markOneRead(${n.id}, this)">
-                    <div class="flex gap-2">
-                        <span class="text-base leading-none mt-0.5">${typeIcon[n.type] ?? '🔔'}</span>
-                        <div class="flex-1">
-                            <p class="font-bold text-slate-700 leading-snug">${n.message}</p>
-                            <p class="text-slate-400 mt-0.5">${n.created_at}</p>
-                        </div>
-                    </div>
-                </div>`).join('');
-        }).catch(() => {
+            list.innerHTML = data.map(function (n) {
+                const st = notifTypeStyle(n.type);
+                const unread = !(n.is_read == 1 || n.is_read === true);
+                return ''
+                + '<div class="relative px-4 py-3 ' + (unread ? 'bg-blue-50/70' : '') + ' hover:bg-slate-50 cursor-pointer text-xs transition-colors" onclick="markOneRead(' + n.id + ', this)">'
+                +   (unread ? '<span class="absolute left-0 top-0 bottom-0 w-1 bg-blue-500"></span>' : '')
+                +   '<div class="flex gap-2.5">'
+                +     '<span class="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 ' + st[0] + '">'
+                +       '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="' + st[1] + '"/></svg>'
+                +     '</span>'
+                +     '<div class="flex-1 min-w-0">'
+                +       '<p class="font-bold ' + (unread ? 'text-slate-800' : 'text-slate-500') + ' leading-snug">' + n.message + '</p>'
+                +       '<p class="text-slate-400 mt-0.5 font-bold">' + n.created_at + '</p>'
+                +     '</div>'
+                +     (unread ? '<span class="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-1"></span>' : '')
+                +   '</div>'
+                + '</div>';
+            }).join('');
+        }).catch(function () {
             document.getElementById('notif-list').innerHTML = '<div class="px-4 py-6 text-center text-red-400 text-xs font-bold">Failed to load</div>';
         });
 }
+function _clearUnreadStyle(el) {
+    if (!el) return;
+    el.classList.remove('bg-blue-50/70');
+    // remove the left accent bar + unread dot (both are bg-blue-500)
+    el.querySelectorAll('.bg-blue-500').forEach(function (s) { s.remove(); });
+    el.querySelectorAll('p.text-slate-800').forEach(function (p) { p.classList.remove('text-slate-800'); p.classList.add('text-slate-500'); });
+}
 function markOneRead(id, el) {
     fetch('/project/staff/api/notifications.php?action=mark_read&id=' + id);
-    el.classList.remove('bg-blue-50');
+    _clearUnreadStyle(el);
     refreshNotifBadge();
 }
 function markAllRead() {
     fetch('/project/staff/api/notifications.php?action=mark_all_read');
-    document.querySelectorAll('#notif-list > div').forEach(d => d.classList.remove('bg-blue-50'));
+    document.querySelectorAll('#notif-list > div').forEach(_clearUnreadStyle);
     refreshNotifBadge(0);
 }
 function refreshNotifBadge(forceCount) {

@@ -211,7 +211,7 @@ try {
             "UPDATE products SET quantity = ?, status = ?,
              archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?"
         );
-        $ds->bind_param("isis", $new_qty, $new_status, $new_status, $n['product_id']); $ds->execute();
+        $ds->bind_param("issi", $new_qty, $new_status, $new_status, $n['product_id']); $ds->execute();
 
         $ei = $conn->prepare(
             "INSERT INTO exchange_items (exchange_id, direction, product_id, product_name, qty, unit_price, line_total)

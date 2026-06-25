@@ -1,5 +1,6 @@
 <?php
 include '../../config/db.php';
+include '../../config/settings.php';   // defines TAX_RATE (used by VAT-inclusive pricing)
 include '../../includes/admin_only.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
@@ -24,19 +25,85 @@ function _log_activity(mysqli $conn, int $user_id, int $item_id, string $message
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
 
-    // ── Toggle VAT exempt flag for all active lots of a product ──────────────
+    // ── Toggle VATable / Non-VAT for all active lots of a product ────────────
+    // VATable → price is made VAT-INCLUSIVE: retail + bulk tiers are bumped ×1.12
+    //   once (guarded by price_includes_vat so re-toggling never compounds), and
+    //   POS will extract — not add — the 12% so the displayed price is final.
+    // Non-VAT → if the price was VAT-inclusive, strip the VAT back out (÷1.12).
     if ($action === 'toggle_vat_exempt') {
         $item_name  = trim($_POST['item_name'] ?? '');
-        $new_exempt = intval($_POST['vat_exempt'] ?? 0) ? 1 : 0;
+        $new_exempt = intval($_POST['vat_exempt'] ?? 0) ? 1 : 0;  // 1 = Non-VAT, 0 = VATable
         $is_ajax    = !empty($_POST['_ajax']);
+        $new_price_inc = 0;
+        $new_price     = null;
+
         if ($item_name !== '') {
-            $upd = $conn->prepare("UPDATE products SET vat_exempt = ? WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'");
-            $upd->bind_param("is", $new_exempt, $item_name);
-            $upd->execute();
+            // Current state (lots for a product share the same price/flags)
+            $cur_q = $conn->prepare("SELECT price, price_includes_vat FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "' LIMIT 1");
+            $cur_q->bind_param("s", $item_name); $cur_q->execute();
+            $cur = $cur_q->get_result()->fetch_assoc();
+            $cur_inc = $cur ? intval($cur['price_includes_vat']) === 1 : false;
+
+            $conn->begin_transaction();
+            try {
+                if ($new_exempt === 0) {
+                    // Becoming VATable → make price VAT-inclusive (bump once)
+                    if (!$cur_inc) {
+                        $bump = $conn->prepare(
+                            "UPDATE products SET
+                                price          = ROUND(price * (1 + " . TAX_RATE . "), 2),
+                                price_half_box = ROUND(price_half_box * (1 + " . TAX_RATE . "), 2),
+                                price_full_box = ROUND(price_full_box * (1 + " . TAX_RATE . "), 2),
+                                vat_exempt = 0, price_includes_vat = 1
+                             WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'"
+                        );
+                        $bump->bind_param("s", $item_name); $bump->execute();
+                    } else {
+                        $f = $conn->prepare("UPDATE products SET vat_exempt = 0, price_includes_vat = 1 WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'");
+                        $f->bind_param("s", $item_name); $f->execute();
+                    }
+                    $new_price_inc = 1;
+                } else {
+                    // Becoming Non-VAT → strip VAT back out if it was inclusive
+                    if ($cur_inc) {
+                        $strip = $conn->prepare(
+                            "UPDATE products SET
+                                price          = ROUND(price / (1 + " . TAX_RATE . "), 2),
+                                price_half_box = ROUND(price_half_box / (1 + " . TAX_RATE . "), 2),
+                                price_full_box = ROUND(price_full_box / (1 + " . TAX_RATE . "), 2),
+                                vat_exempt = 1, price_includes_vat = 0
+                             WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'"
+                        );
+                        $strip->bind_param("s", $item_name); $strip->execute();
+                    } else {
+                        $f = $conn->prepare("UPDATE products SET vat_exempt = 1, price_includes_vat = 0 WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'");
+                        $f->bind_param("s", $item_name); $f->execute();
+                    }
+                    $new_price_inc = 0;
+                }
+                $conn->commit();
+
+                // Read back the resulting retail price for the UI
+                $pp = $conn->prepare("SELECT MAX(price) AS p FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND status = '" . PRODUCT_ACTIVE . "'");
+                $pp->bind_param("s", $item_name); $pp->execute();
+                $new_price = floatval($pp->get_result()->fetch_assoc()['p'] ?? 0);
+            } catch (\Throwable $e) {
+                $conn->rollback();
+                if ($is_ajax) {
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                    exit();
+                }
+            }
         }
         if ($is_ajax) {
             header('Content-Type: application/json');
-            echo json_encode(['success' => true, 'vat_exempt' => $new_exempt]);
+            echo json_encode([
+                'success'            => true,
+                'vat_exempt'         => $new_exempt,
+                'price_includes_vat' => $new_price_inc,
+                'price'              => $new_price,
+            ]);
             exit();
         }
     }
@@ -385,6 +452,7 @@ $sql = "SELECT
             MAX(p.cost_price) as cost_price,
             MAX(p.last_buy_cost) as last_buy_cost,
             MAX(p.vat_exempt) as vat_exempt,
+            MAX(p.price_includes_vat) as price_includes_vat,
             MAX(p.bulk_qty_half)   as bulk_qty_half,
             MAX(p.price_half_box)  as price_half_box,
             MAX(p.bulk_qty_full)   as bulk_qty_full,
@@ -546,8 +614,12 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                             $has_pending    = !empty($reqs);
                             $tiers_locked   = intval($r['tiers_locked']) === 1;
                             $is_exempt      = intval($r['vat_exempt']) === 1;
+                            $is_vat_inc     = intval($r['price_includes_vat']) === 1;
                             $eff_cost       = floatval($r['cost_price']) > 0 ? floatval($r['cost_price']) : floatval($r['last_buy_cost']);
-                            $markup_pct     = $eff_cost > 0 ? round(((floatval($r['price']) - $eff_cost) / $eff_cost) * 100, 1) : null;
+                            // Markup is always measured on the NET (pre-VAT) price so a
+                            // VAT-inclusive price never inflates the displayed markup %.
+                            $net_price      = $is_vat_inc ? round(floatval($r['price']) / (1 + TAX_RATE), 2) : floatval($r['price']);
+                            $markup_pct     = $eff_cost > 0 ? round((($net_price - $eff_cost) / $eff_cost) * 100, 1) : null;
                         ?>
                         <tr id="live-row-<?= $r['id'] ?>" class="hover:bg-slate-50/30 transition-all <?= $tiers_locked ? 'bg-rose-50/40' : ($has_pending ? 'bg-amber-50/40' : '') ?>">
                             <td class="px-8 py-5">
@@ -574,13 +646,14 @@ while ($d = $draft_products->fetch_assoc()) $draft_rows[] = $d;
                             </td>
 
                             <td class="px-6 py-5 text-center">
-                                <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Retail Price</p>
+                                <p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Retail Price <span id="vatinc-label-<?= $r['id'] ?>" class="text-emerald-500 <?= $is_vat_inc ? '' : 'hidden' ?>">· incl. VAT</span></p>
                                 <div class="relative inline-block">
                                     <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-black text-sm pointer-events-none">₱</span>
                                     <input type="number" step="0.01" min="0" id="retail_<?= $r['id'] ?>"
                                         value="<?= number_format($r['price'], 2, '.', '') ?>"
                                         data-cost="<?= $eff_cost ?>"
-                                        oninput="updateMarkupBadge(<?= $r['id'] ?>, parseFloat(this.value)||0, parseFloat(this.dataset.cost)||0)"
+                                        data-vatinc="<?= $is_vat_inc ? 1 : 0 ?>"
+                                        oninput="updateMarkupBadge(<?= $r['id'] ?>, parseFloat(this.value)||0, parseFloat(this.dataset.cost)||0, this.dataset.vatinc === '1')"
                                         class="w-28 bg-white border border-slate-200 rounded-xl pl-7 pr-2 py-2 text-right font-black <?= $has_pending ? 'text-amber-500' : 'text-emerald-600' ?> text-base outline-none focus:border-emerald-400 transition-all">
                                 </div>
                                 <?php if ($markup_pct !== null): ?>
@@ -1144,7 +1217,7 @@ function closeRejectModal() {
 }
 async function submitReject() {
     const reason = document.getElementById('reject-reason-text').value.trim();
-    if (!reason) { alert('Please provide a reason for rejection.'); return; }
+    if (!reason) { showFlash('Please provide a reason for rejection.', 'error'); return; }
     const fd = new FormData(document.getElementById('reject-form'));
     if (typeof navigate === 'function') navigate('price_maintenance.php', fd);
     else window.location.reload();
@@ -1155,7 +1228,10 @@ document.getElementById('reject-modal').addEventListener('click', function(e) {
 });
 
 // ── Live markup badge (updates as price input changes) ────────────────────────
-function updateMarkupBadge(pid, price, cost) {
+// When the price is VAT-inclusive, markup is measured on the NET (price ÷ 1.12)
+// so the 12% VAT never inflates the displayed markup.
+const VAT_RATE = <?= json_encode((float)TAX_RATE) ?>;
+function updateMarkupBadge(pid, price, cost, vatInclusive) {
     const badge = document.getElementById('markup-badge-' + pid);
     if (!badge) return;
     if (!cost || cost <= 0) {
@@ -1163,7 +1239,8 @@ function updateMarkupBadge(pid, price, cost) {
         badge.className = 'text-[8px] font-black mt-1 text-slate-300';
         return;
     }
-    const pct = ((price - cost) / cost) * 100;
+    const net = vatInclusive ? (price / (1 + VAT_RATE)) : price;
+    const pct = ((net - cost) / cost) * 100;
     badge.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(1) + '% markup';
     badge.className = 'text-[8px] font-black mt-1 ' +
         (pct >= 30 ? 'text-emerald-600' : pct >= 10 ? 'text-amber-500' : 'text-rose-500');
@@ -1185,8 +1262,11 @@ async function toggleVatExempt(pid, name, currentExempt) {
         const data = await res.json();
 
         if (!data.success) {
-            showFlash('Failed to update VAT status.', 'error');
-        } else if (badge) {
+            showFlash(data.error || 'Failed to update VAT status.', 'error');
+            if (badge) badge.style.opacity = '';
+            return;
+        }
+        if (badge) {
             badge.style.opacity  = '';
             badge.textContent    = newExempt ? 'Non-VAT' : 'VAT 12%';
             badge.className      = newExempt
@@ -1195,8 +1275,25 @@ async function toggleVatExempt(pid, name, currentExempt) {
             badge.setAttribute('onclick',
                 "toggleVatExempt(" + pid + ", '" + name.replace(/'/g, "\\'") + "', " + newExempt + ")"
             );
-            showFlash(name + (newExempt ? ' marked Non-VAT.' : ' marked VAT 12%.'), 'success');
         }
+
+        // Reflect the bumped/stripped retail price + VAT-inclusive state on the row
+        const vatInc   = parseInt(data.price_includes_vat, 10) === 1;
+        const retailEl = document.getElementById('retail_' + pid);
+        if (retailEl && data.price != null && !isNaN(parseFloat(data.price))) {
+            retailEl.value = parseFloat(data.price).toFixed(2);
+            retailEl.dataset.vatinc = vatInc ? '1' : '0';
+            updateMarkupBadge(pid, parseFloat(data.price), parseFloat(retailEl.dataset.cost) || 0, vatInc);
+        }
+        const incLabel = document.getElementById('vatinc-label-' + pid);
+        if (incLabel) incLabel.classList.toggle('hidden', !vatInc);
+
+        showFlash(
+            name + (newExempt
+                ? ' marked Non-VAT.'
+                : ' marked VAT 12% — retail now includes VAT (₱' + parseFloat(data.price).toFixed(2) + ').'),
+            'success'
+        );
     } catch (_) {
         showFlash('Connection error. Try again.', 'error');
         if (badge) badge.style.opacity = '';

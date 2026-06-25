@@ -49,7 +49,7 @@ if ($action === 'approve') {
                 $new_q = intval($lot['quantity']) - $take;
                 $new_s = ($new_q <= 0) ? PRODUCT_ARCHIVED : PRODUCT_ACTIVE;
                 $upd_l = $conn->prepare("UPDATE products SET quantity = ?, status = ?, archived_at = IF(? = '" . PRODUCT_ARCHIVED . "', NOW(), archived_at) WHERE id = ?");
-                $upd_l->bind_param("isis", $new_q, $new_s, $new_s, $lot['id']);
+                $upd_l->bind_param("issi", $new_q, $new_s, $new_s, $lot['id']);
                 $upd_l->execute();
                 $remaining -= $take;
             }

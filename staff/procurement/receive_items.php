@@ -37,6 +37,10 @@ if (!$readonly && $batch['status'] !== 'pending_request') {
     $readonly = true;
 }
 
+// Reopened-to-receiver batches start their quantities at 0 so the receiver
+// must re-count from scratch (the discrepancy was a counting issue).
+$is_reopen = ($batch['resolution_action'] ?? '') === 'reopen_receiver';
+
 // Load existing items
 $iq = $conn->prepare("SELECT * FROM receiving_items WHERE batch_id = ? ORDER BY id ASC");
 $iq->bind_param("i", $batch_id);
@@ -237,15 +241,15 @@ include '../layout_top.php';
                                     <?php endforeach; ?>
                                 </select>
                             </td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty_per_box]" min="1" value="1" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="1" value="<?= $total_raw ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty_per_box]" min="0" value="<?= $is_reopen ? 0 : 1 ?>" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="0" value="<?= $is_reopen ? 0 : $total_raw ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
                             <td class="pr-3 pb-2 text-center">
-                                <span class="total-display font-black text-slate-800 text-base"><?= $total_raw ?></span>
+                                <span class="total-display font-black text-slate-800 text-base"><?= $is_reopen ? 0 : $total_raw ?></span>
                             </td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][damaged_qty]" min="0" value="<?= intval($item['damaged_qty'] ?? 0) ?>" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
+                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][damaged_qty]" min="0" value="<?= $is_reopen ? 0 : intval($item['damaged_qty'] ?? 0) ?>" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
                             <td class="pr-3 pb-2 text-center">
-                                <span class="good-display font-black text-emerald-600 text-base"><?= intval($item['quantity']) ?></span>
-                                <input type="hidden" name="items[<?= $i ?>][qty]" class="qty-hidden" value="<?= intval($item['quantity']) ?>">
+                                <span class="good-display font-black text-emerald-600 text-base"><?= $is_reopen ? 0 : intval($item['quantity']) ?></span>
+                                <input type="hidden" name="items[<?= $i ?>][qty]" class="qty-hidden" value="<?= $is_reopen ? 0 : intval($item['quantity']) ?>">
                             </td>
                             <?php $has_exp = !empty($item['expiry_date']); ?>
                             <td class="pr-3 pb-2 align-top">

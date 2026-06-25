@@ -38,15 +38,21 @@ if ($action === 'create') {
     $contact_no = trim($_POST['contact_no'] ?? '');
     $username   = trim($_POST['username']   ?? '');
     $password   = $_POST['password']        ?? '';
-    $new_role   = strtolower(trim($_POST['role'] ?? 'staff'));
+    $new_role   = strtolower(trim($_POST['role'] ?? 'receiver'));
 
     if (strlen($username) < MIN_USERNAME_LENGTH || strlen($password) < MIN_PASSWORD_LENGTH) {
         header("Location: users.php?error=" . urlencode("Username min " . MIN_USERNAME_LENGTH . " chars, password min " . MIN_PASSWORD_LENGTH . " chars."));
         exit();
     }
-    $admin_creatable = [ROLE_STAFF, ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER];
+    // The Staff role is retired — no new Staff accounts may be created (blocks the
+    // dropdown removal being bypassed via a direct POST, for any creator role).
+    if ($new_role === ROLE_STAFF) {
+        header("Location: users.php?error=" . urlencode("The Staff role has been retired. Choose a Procurement Pipeline or Administration role."));
+        exit();
+    }
+    $admin_creatable = [ROLE_RECEIVER, ROLE_VALIDATOR, ROLE_PRICE_CHECKER];
     if ($role === ROLE_ADMIN && !in_array($new_role, $admin_creatable)) {
-        header("Location: users.php?error=" . urlencode("Admins can only create Staff and Procurement Pipeline accounts."));
+        header("Location: users.php?error=" . urlencode("Admins can only create Procurement Pipeline accounts (Receiver, Validator, Price Checker)."));
         exit();
     }
     if ($role !== ROLE_SUPERADMIN && $new_role === ROLE_SUPERADMIN) {

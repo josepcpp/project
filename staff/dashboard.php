@@ -548,7 +548,7 @@ elseif ($role === ROLE_STAFF):
             <p class="text-2xl font-black text-slate-800"><?= $today_sales['cnt'] ?> <span class="text-sm text-slate-300 font-bold italic">txns</span></p>
             <p class="text-sm font-black text-emerald-600 mt-1">₱<?= number_format($today_sales['amt'], 2) ?></p>
         </a>
-        <a href="inventory/stock_management.php?filter=low_stock" class="bg-white rounded-[2rem] border <?= $low_count > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-7 hover:shadow-lg transition-all">
+        <a href="inventory/stock_management.php?stock=low" class="bg-white rounded-[2rem] border <?= $low_count > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-7 hover:shadow-lg transition-all">
             <div class="w-10 h-10 <?= $low_count > 0 ? 'bg-red-500 animate-pulse' : 'bg-slate-100' ?> rounded-xl flex items-center justify-center mb-4">
                 <svg class="w-5 h-5 <?= $low_count > 0 ? 'text-white' : 'text-slate-400' ?>" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-width="2"/></svg>
             </div>
@@ -673,10 +673,6 @@ $ref_queue_res = $conn->query("
     LIMIT 20
 ");
 $ref_queue_items = $ref_queue_res ? $ref_queue_res->fetch_all(MYSQLI_ASSOC) : [];
-
-// ── Section F: Delivery Monitoring ───────────────────────────────
-$del_pend  = $conn->query("SELECT COUNT(*) as c FROM deliveries WHERE status='" . DEL_PENDING . "'")->fetch_assoc()['c'] ?? 0;
-$del_rec   = $conn->query("SELECT d.*, s.name as supplier FROM deliveries d JOIN suppliers s ON s.id=d.supplier_id ORDER BY d.id DESC LIMIT 5");
 
 // ── Section H: Security Flags ─────────────────────────────────────
 $sec_flags = $conn->query("SELECT * FROM security_flags WHERE status='" . FLAG_OPEN . "' ORDER BY FIELD(severity,'" . SEV_HIGH . "','" . SEV_MEDIUM . "','" . SEV_LOW . "'), created_at DESC LIMIT 20");
@@ -952,16 +948,6 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                 </div>
                 <?php endif; ?>
             </div>
-            <div class="bg-white rounded-[2rem] border border-slate-100 shadow-md p-6 flex items-center gap-5">
-                <div class="w-12 h-12 <?= $del_pend > 0 ? 'bg-blue-100' : 'bg-slate-100' ?> rounded-2xl flex items-center justify-center flex-shrink-0">
-                    <svg class="w-6 h-6 <?= $del_pend > 0 ? 'text-blue-600' : 'text-slate-400' ?>" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
-                </div>
-                <div class="flex-1">
-                    <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Deliveries Pending Validation</p>
-                    <p class="font-black <?= $del_pend > 0 ? 'text-blue-700' : 'text-slate-800' ?> text-lg"><?= $del_pend ?> <span class="text-sm text-slate-300 font-bold italic">pending</span></p>
-                </div>
-                <a href="procurement/deliveries.php?filter=pending" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a>
-            </div>
         </div>
     </div>
 </div>
@@ -1015,9 +1001,9 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <?php
         $steps = [
-            ['label' => 'Suppliers',     'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>',                                                                                                                                                                       'val' => $pip_suppliers,        'sub' => 'active suppliers',                                                                 'href' => 'suppliers.php',                         'color' => 'text-slate-600',                                          'bg' => 'bg-slate-100',  'badge' => 0],
-            ['label' => 'Low Stock Items','icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>',                                                                                                                                          'val' => $inv_low,              'sub' => $inv_low > 0 ? 'items need restocking' : 'all stock levels healthy',   'href' => 'stock_management.php?filter=low_stock', 'color' => $inv_low > 0 ? 'text-red-600' : 'text-slate-600',          'bg' => $inv_low > 0 ? 'bg-red-100' : 'bg-slate-100', 'badge' => 0],
-            ['label' => 'Archived Items', 'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>',                                                                                                                                                                                             'val' => $pip_archived,         'sub' => $pip_archived > 0 ? 'items out of stock / deactivated' : 'no archived items', 'href' => 'stock_management.php?stock=archived',    'color' => $pip_archived > 0 ? 'text-slate-600' : 'text-slate-400',  'bg' => $pip_archived > 0 ? 'bg-slate-200' : 'bg-slate-100', 'badge' => $pip_new_archived],
+            ['label' => 'Suppliers',     'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>',                                                                                                                                                                       'val' => $pip_suppliers,        'sub' => 'active suppliers',                                                                 'href' => 'inventory/stock_management.php',        'color' => 'text-slate-600',                                          'bg' => 'bg-slate-100',  'badge' => 0],
+            ['label' => 'Low Stock Items','icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>',                                                                                                                                          'val' => $inv_low,              'sub' => $inv_low > 0 ? 'items need restocking' : 'all stock levels healthy',   'href' => 'inventory/stock_management.php?stock=low', 'color' => $inv_low > 0 ? 'text-red-600' : 'text-slate-600',          'bg' => $inv_low > 0 ? 'bg-red-100' : 'bg-slate-100', 'badge' => 0],
+            ['label' => 'Archived Items', 'icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>',                                                                                                                                                                                             'val' => $pip_archived,         'sub' => $pip_archived > 0 ? 'items out of stock / deactivated' : 'no archived items', 'href' => 'inventory/stock_management.php?stock=archived', 'color' => $pip_archived > 0 ? 'text-slate-600' : 'text-slate-400',  'bg' => $pip_archived > 0 ? 'bg-slate-200' : 'bg-slate-100', 'badge' => $pip_new_archived],
             ['label' => 'Supplier Payments','icon' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/>',                                                                                                                       'val' => intval($pip_pay['c']), 'sub' => '₱' . number_format($pip_pay['total'], 0) . ' to settle',                'href' => 'procurement/supplier_payments.php',     'color' => intval($pip_pay['c']) > 0 ? 'text-rose-600' : 'text-slate-600', 'bg' => intval($pip_pay['c']) > 0 ? 'bg-rose-50' : 'bg-slate-100', 'badge' => 0],
         ];
         foreach ($steps as $n => $s): ?>
@@ -1098,11 +1084,11 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <!-- Stock Status Cards -->
         <div class="space-y-4">
-            <a href="inventory/stock_management.php?filter=low_stock" class="block bg-white rounded-[2rem] border <?= $inv_low > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-6 hover:shadow-lg transition-all">
+            <a href="inventory/stock_management.php?stock=low" class="block bg-white rounded-[2rem] border <?= $inv_low > 0 ? 'border-red-200 bg-red-50' : 'border-slate-100' ?> shadow-md p-6 hover:shadow-lg transition-all">
                 <p class="text-[9px] font-black <?= $inv_low > 0 ? 'text-red-500' : 'text-slate-400' ?> uppercase tracking-widest mb-1">Low Stock Items</p>
                 <p class="text-3xl font-black <?= $inv_low > 0 ? 'text-red-700' : 'text-slate-700' ?>"><?= $inv_low ?> <span class="text-sm font-bold opacity-30 italic">items</span></p>
             </a>
-            <a href="inventory/stock_management.php?filter=out_of_stock" class="block bg-white rounded-[2rem] border border-slate-100 shadow-md p-6 hover:shadow-lg transition-all">
+            <a href="inventory/stock_management.php?stock=zero" class="block bg-white rounded-[2rem] border border-slate-100 shadow-md p-6 hover:shadow-lg transition-all">
                 <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Zero Stock</p>
                 <p class="text-3xl font-black text-slate-700"><?= $inv_out ?> <span class="text-sm font-bold opacity-30 italic">items</span></p>
             </a>
@@ -1139,44 +1125,6 @@ $mon_change = $rev_prev_mon['r'] > 0 ? round((($rev_mon['r'] - $rev_prev_mon['r'
                 <div class="p-10 text-center text-slate-300 font-black italic text-sm">No price changes recorded.</div>
                 <?php endif; ?>
             </div>
-        </div>
-    </div>
-</div>
-
-<!-- ═══════════════════ SECTION F: DELIVERY MONITORING ═══════════════════ -->
-<div class="space-y-4">
-    <div class="flex items-center justify-between">
-        <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Delivery Monitoring</p>
-        <a href="procurement/deliveries.php" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">All Deliveries →</a>
-    </div>
-    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="w-full text-left">
-                <thead>
-                    <tr class="bg-slate-50/50 border-b border-slate-100">
-                        <th class="px-7 py-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Date</th>
-                        <th class="px-4 py-5 text-[9px] font-black text-slate-400 uppercase tracking-widest">Supplier</th>
-                        <th class="px-4 py-5 text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
-                        <th class="px-7 py-5 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right">Action</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-50">
-                    <?php if ($del_rec && $del_rec->num_rows > 0): while ($d = $del_rec->fetch_assoc()):
-                        $del_status_cfg = $d['status'] === DEL_VERIFIED
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : 'bg-amber-50 text-amber-700';
-                    ?>
-                    <tr class="hover:bg-slate-50/50 transition-colors">
-                        <td class="px-7 py-5 font-bold text-slate-700 text-sm"><?= date("M d, Y", strtotime($d['delivery_date'])) ?></td>
-                        <td class="px-4 py-5 text-slate-600 font-bold text-sm"><?= htmlspecialchars($d['supplier']) ?></td>
-                        <td class="px-4 py-5 text-center"><span class="text-[9px] font-black px-3 py-1 rounded-full <?= $del_status_cfg ?>"><?= $d['status'] ?></span></td>
-                        <td class="px-7 py-5 text-right"><a href="procurement/delivery_view.php?id=<?= $d['id'] ?>" class="text-[9px] font-black text-blue-500 hover:underline uppercase tracking-widest">View →</a></td>
-                    </tr>
-                    <?php endwhile; else: ?>
-                    <tr><td colspan="4" class="px-7 py-12 text-center text-slate-300 font-black italic text-sm">No deliveries found.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
         </div>
     </div>
 </div>
@@ -1276,7 +1224,7 @@ function closeDashReject() {
 
 async function submitDashReject() {
     const reason = document.getElementById('dashRejectReason').value.trim();
-    if (!reason) { alert('Please provide a rejection reason.'); return; }
+    if (!reason) { showFlash('Please provide a rejection reason.', 'error'); return; }
     const ok = await customConfirm('This refund request will be rejected.', 'Reject Request?');
     if (!ok) return;
     document.getElementById('drf-action').value    = 'reject';
@@ -1391,47 +1339,67 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDashRej
                 <p class="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Download CSV for Excel / spreadsheet</p>
             </div>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             <!-- Sales Export -->
             <div class="bg-slate-50 rounded-2xl p-5 border border-slate-100">
                 <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Sales Report</p>
-                <div class="flex gap-2 mb-3">
-                    <input type="date" id="exp-sales-from" value="<?= date('Y-m-01') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
-                    <span class="text-slate-300 font-bold self-center">→</span>
-                    <input type="date" id="exp-sales-to" value="<?= date('Y-m-d') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
+                <div class="space-y-2 mb-3">
+                    <div>
+                        <label class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">From</label>
+                        <input type="date" id="exp-sales-from" value="<?= date('Y-m-01') ?>" class="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-slate-600 bg-white">
+                    </div>
+                    <div>
+                        <label class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">To</label>
+                        <input type="date" id="exp-sales-to" value="<?= date('Y-m-d') ?>" class="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-slate-600 bg-white">
+                    </div>
                 </div>
-                <a id="exp-sales-btn" href="#" onclick="exportCSV('sales','exp-sales-from','exp-sales-to')" class="block text-center bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
+                <button type="button" onclick="exportCSV('sales','exp-sales-from','exp-sales-to')" class="block w-full text-center bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
                     ↓ Export Sales CSV
-                </a>
+                </button>
             </div>
-            <!-- Inventory Export -->
+            <!-- Stock Level Export (rich) -->
             <div class="bg-slate-50 rounded-2xl p-5 border border-slate-100">
-                <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Inventory Snapshot</p>
-                <p class="text-slate-400 text-[10px] font-bold mb-3">Full product list with cost price, margin %, and stock levels as of today.</p>
-                <a href="/project/staff/reports/export.php?type=inventory" class="block text-center bg-blue-500 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
-                    ↓ Export Inventory CSV
-                </a>
+                <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Stock Level</p>
+                <p class="text-slate-400 text-[10px] font-bold mb-3">Live + held stock with expiry dates, cost &amp; retail value, markup %, and VAT status.</p>
+                <button type="button" onclick="triggerDownload('inventory/export_inventory_csv.php?include_draft=1')" class="block w-full text-center bg-blue-500 hover:bg-blue-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
+                    ↓ Export Stock CSV
+                </button>
+            </div>
+            <!-- Master Prices Export -->
+            <div class="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+                <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Master Prices</p>
+                <p class="text-slate-400 text-[10px] font-bold mb-3">Current prices, cost, markup %, bulk tiers, VAT status, and last price change.</p>
+                <button type="button" onclick="triggerDownload('inventory/export_prices.php')" class="block w-full text-center bg-purple-500 hover:bg-purple-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
+                    ↓ Export Prices CSV
+                </button>
             </div>
             <!-- Refunds Export -->
             <div class="bg-slate-50 rounded-2xl p-5 border border-slate-100">
                 <p class="font-black text-slate-700 text-xs uppercase tracking-widest mb-3">Refunds Report</p>
-                <div class="flex gap-2 mb-3">
-                    <input type="date" id="exp-ref-from" value="<?= date('Y-m-01') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
-                    <span class="text-slate-300 font-bold self-center">→</span>
-                    <input type="date" id="exp-ref-to" value="<?= date('Y-m-d') ?>" class="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 font-bold text-slate-600 bg-white">
+                <div class="space-y-2 mb-3">
+                    <div>
+                        <label class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">From</label>
+                        <input type="date" id="exp-ref-from" value="<?= date('Y-m-01') ?>" class="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-slate-600 bg-white">
+                    </div>
+                    <div>
+                        <label class="block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">To</label>
+                        <input type="date" id="exp-ref-to" value="<?= date('Y-m-d') ?>" class="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-slate-600 bg-white">
+                    </div>
                 </div>
-                <a href="#" onclick="exportCSV('refunds','exp-ref-from','exp-ref-to')" class="block text-center bg-rose-500 hover:bg-rose-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
+                <button type="button" onclick="exportCSV('refunds','exp-ref-from','exp-ref-to')" class="block w-full text-center bg-rose-500 hover:bg-rose-600 text-white font-black text-[10px] uppercase tracking-widest py-3 rounded-xl transition-all">
                     ↓ Export Refunds CSV
-                </a>
+                </button>
             </div>
         </div>
     </div>
 </div>
 <script>
+// Date-ranged exports (sales / refunds) still flow through reports/export.php,
+// but download silently via triggerDownload so the SPA never swallows the click.
 function exportCSV(type, fromId, toId) {
     var from = document.getElementById(fromId)?.value || '';
     var to   = document.getElementById(toId)?.value   || '';
-    window.location.href = '/project/staff/reports/export.php?type=' + type + '&date_from=' + from + '&date_to=' + to;
+    triggerDownload('/project/staff/reports/export.php?type=' + type + '&date_from=' + from + '&date_to=' + to);
 }
 </script>
 <?php endif; ?>
@@ -1602,6 +1570,48 @@ function exportCSV(type, fromId, toId) {
         initSalesChart();
     }
 })();
+</script>
+<?php endif; ?>
+
+<?php
+// ── USER MANUAL — pop-up once per login for procurement staff ────────────────
+if (!empty($_SESSION['manual_pending']) && in_array($role, ROLES_PROCUREMENT_STAFF)):
+    unset($_SESSION['manual_pending']);   // consume: show only once this login
+    $manual_role = $role;
+?>
+<div id="manual-login-modal" class="fixed inset-0 z-[300] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="bg-white rounded-[2rem] shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col animate-in">
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+            <h4 class="serif-title text-lg font-black text-slate-800">Welcome — your quick guide</h4>
+            <button type="button" onclick="closeManualModal()" class="text-slate-400 hover:text-slate-700 text-3xl font-black leading-none">&times;</button>
+        </div>
+        <div class="px-6 py-5 overflow-y-auto">
+            <?php include 'includes/manual_content.php'; ?>
+        </div>
+        <div class="px-6 py-4 border-t border-slate-100 flex items-center justify-between gap-4 flex-shrink-0">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" id="manual-login-toggle" checked onchange="saveManualPrefModal(this.checked)" class="w-4 h-4 accent-emerald-500">
+                <span class="text-xs font-bold text-slate-500">Show this guide at every login</span>
+            </label>
+            <button type="button" onclick="closeManualModal()" class="bg-slate-900 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-widest px-6 py-3 rounded-xl transition-all">Got it</button>
+        </div>
+    </div>
+</div>
+<script>
+function closeManualModal() {
+    var m = document.getElementById('manual-login-modal');
+    if (m) m.remove();
+}
+async function saveManualPrefModal(show) {
+    try {
+        var fd = new FormData();
+        fd.append('show', show ? '1' : '0');
+        await fetch('/project/staff/api/manual_pref.php', { method: 'POST', body: fd });
+        if (typeof showFlash === 'function') {
+            showFlash(show ? 'Guide will show at every login.' : 'Guide will no longer show at login.', 'success');
+        }
+    } catch (_) {}
+}
 </script>
 <?php endif; ?>
 
