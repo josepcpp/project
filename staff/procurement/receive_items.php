@@ -159,28 +159,84 @@ include '../layout_top.php';
         @keyframes fieldSync { 0% { background-color: #a7f3d0; } 100% { background-color: transparent; } }
         .field-synced { animation: fieldSync 1.5s ease-out; }
     </style>
-    <div class="card-modern p-8">
-        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
-            <h3 class="serif-title text-lg font-black text-slate-800">Encode Received Items</h3>
-            <div class="flex items-center gap-2">
-                <button type="button" onclick="addRow()" class="text-slate-500 hover:text-slate-700 text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-slate-100">
-                    + Blank row
-                </button>
-                <button type="button" onclick="addNonBarcodeRow()"
-                        class="text-amber-600 hover:text-white text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-amber-500 border border-amber-200 hover:border-amber-500">
-                    + Non-barcode item
-                </button>
+    <?php
+    // Shared renderer: one item row in the list (hidden submit inputs + read-only summary).
+    // Mirrors the JS buildItemRow() exactly so server- and client-added items are identical.
+    function render_item_row(int $i, array $item, bool $is_reopen): void {
+        $total_raw = intval($item['quantity']) + intval($item['damaged_qty'] ?? 0);
+        $bc      = $is_reopen ? '' : '';
+        $barcode = $item['barcode']      ?? '';
+        $boxbc   = $item['box_barcode']  ?? '';
+        $desc    = $item['description']  ?? '';
+        $cat     = $item['category']     ?? '';
+        $qpb     = $is_reopen ? 0 : 1;
+        $box     = $is_reopen ? 0 : $total_raw;
+        $dmg     = $is_reopen ? 0 : intval($item['damaged_qty'] ?? 0);
+        $good    = $is_reopen ? 0 : intval($item['quantity']);
+        $total   = $is_reopen ? 0 : $total_raw;
+        $expd    = $item['expiry_date']  ?? '';
+        $hasexp  = !empty($expd) ? 1 : 0;   // reopen zeros quantities only — expiry is preserved
+        $notes   = $item['damage_notes'] ?? '';
+        $h = fn($v) => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+        ?>
+        <div class="item-row bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3.5 flex items-center gap-4"
+             data-barcode="<?= $h($barcode) ?>" data-boxbc="<?= $h($boxbc) ?>" data-desc="<?= $h($desc) ?>"
+             data-cat="<?= $h($cat) ?>" data-qpb="<?= $qpb ?>" data-box="<?= $box ?>" data-dmg="<?= $dmg ?>"
+             data-good="<?= $good ?>" data-total="<?= $total ?>" data-hasexp="<?= $hasexp ?>"
+             data-expdate="<?= $h($expd) ?>" data-notes="<?= $h($notes) ?>">
+            <input type="hidden" name="items[<?= $i ?>][barcode]"      class="f-barcode"  value="<?= $h($barcode) ?>">
+            <input type="hidden" name="items[<?= $i ?>][box_barcode]"  class="f-boxbc"    value="<?= $h($boxbc) ?>">
+            <input type="hidden" name="items[<?= $i ?>][description]"  class="f-desc"     value="<?= $h($desc) ?>">
+            <input type="hidden" name="items[<?= $i ?>][category]"     class="f-cat"      value="<?= $h($cat) ?>">
+            <input type="hidden" name="items[<?= $i ?>][qty_per_box]"  class="f-qpb qty-per-box" value="<?= $qpb ?>">
+            <input type="hidden" name="items[<?= $i ?>][box_qty]"      class="f-box box-qty"     value="<?= $box ?>">
+            <input type="hidden" name="items[<?= $i ?>][damaged_qty]"  class="f-dmg damaged-qty" value="<?= $dmg ?>">
+            <input type="hidden" name="items[<?= $i ?>][qty]"          class="f-good qty-hidden" value="<?= $good ?>">
+            <input type="hidden" name="items[<?= $i ?>][expiry_date]"  class="f-expdate"  value="<?= $h($expd) ?>">
+            <input type="hidden" name="items[<?= $i ?>][damage_notes]" class="f-notes"    value="<?= $h($notes) ?>">
+            <?php if ($hasexp): ?><input type="hidden" name="items[<?= $i ?>][has_expiry]" class="f-hasexp" value="1"><?php endif; ?>
+
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <p class="font-bold text-slate-800 leading-tight row-name"><?= $h($desc) ?></p>
+                    <span class="row-cat text-[9px] font-black text-blue-500 uppercase bg-blue-50/70 px-2 py-0.5 rounded"><?= $h($cat) ?></span>
+                </div>
+                <div class="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-[10px] font-black text-slate-400 uppercase tracking-wide">
+                    <code class="text-slate-400 bg-slate-100 px-2 py-0.5 rounded border row-bc"><?= $h($barcode ?: $boxbc ?: '—') ?></code>
+                    <span class="text-slate-600 row-good">Good: <?= $good ?></span>
+                    <span class="row-total">Total: <?= $total ?></span>
+                    <?php if ($dmg > 0): ?><span class="text-rose-500 row-dmg">Damaged: <?= $dmg ?></span><?php endif; ?>
+                    <?php if ($expd): ?><span class="row-exp">Exp: <?= date('M j, Y', strtotime($expd)) ?></span><?php endif; ?>
+                    <?php if ($notes): ?><span class="text-slate-400 italic normal-case row-notes">“<?= $h($notes) ?>”</span><?php endif; ?>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <button type="button" onclick="editItem(this)" class="text-[10px] font-black text-slate-500 hover:text-white border border-slate-200 hover:bg-slate-700 px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all">Edit</button>
+                <button type="button" onclick="removeItem(this)" class="text-rose-400 hover:text-rose-600 font-black text-xl leading-none px-1">&times;</button>
             </div>
         </div>
+        <?php
+    }
+    ?>
 
-        <!-- ── Scan Station ─────────────────────────────────────────────── -->
+    <!-- ── ENTRY PANEL — fill this and "Add Item" ──────────────────────────── -->
+    <div class="card-modern p-8">
+        <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
+            <h3 class="serif-title text-lg font-black text-slate-800" id="panel-title">Add Received Item</h3>
+            <button type="button" id="nb-toggle" onclick="toggleNonBarcode()"
+                    class="text-amber-600 hover:text-white text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-amber-500 border border-amber-200 hover:border-amber-500">
+                + Non-barcode item
+            </button>
+        </div>
+
+        <!-- ── Scan Station — pre-fills the form below ──────────────────── -->
         <div id="scan-box" class="bg-slate-900 rounded-xl px-4 py-2.5 flex items-center gap-3 mb-6 cursor-pointer"
              onclick="document.getElementById('scan-input').focus()">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 5v14M7 5v14M11 5v14M15 5v14M19 5v14"/>
             </svg>
             <input type="text" id="scan-input" autocomplete="off" inputmode="numeric"
-                   placeholder="Scan to add — barcode then Enter…"
+                   placeholder="Scan a barcode then Enter — it fills the form below…"
                    class="flex-1 min-w-0 bg-transparent text-white text-sm font-bold placeholder-slate-500 focus:outline-none"
                    onfocus="document.getElementById('scan-box').classList.add('scan-active'); setHint('Active Barcode Entry','ok');"
                    onblur="document.getElementById('scan-box').classList.remove('scan-active'); setHint('Click and Hover to scan','idle');"
@@ -201,82 +257,93 @@ include '../layout_top.php';
             </div>
         </div>
 
-        <form method="POST" action="receive_process.php" id="itemsForm">
-            <?= csrf_field() ?>
-            <input type="hidden" name="action" value="save_items">
-            <input type="hidden" name="batch_id" value="<?= $batch_id ?>">
-
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm" id="items-table">
-                    <thead>
-                        <tr class="text-left">
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-32">Barcode</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 min-w-[130px]">Description <span class="text-rose-500">*</span></th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-36">Category <span class="text-rose-500">*</span></th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-16 text-center">Qty/Box</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-16 text-center">Boxes</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-14 text-center">Total</th>
-                            <th class="pb-3 text-[10px] font-black text-rose-400 uppercase tracking-widest pr-3 w-16 text-center">Damaged</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-14 text-center">Good</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 w-32">Expiry Date</th>
-                            <th class="pb-3 text-[10px] font-black text-slate-400 uppercase tracking-widest pr-3 min-w-[100px]">Damage Notes</th>
-                            <th class="pb-3 w-6"></th>
-                        </tr>
-                    </thead>
-                    <tbody id="items-body">
-                        <?php foreach ($items as $i => $item):
-                            $total_raw = intval($item['quantity']) + intval($item['damaged_qty'] ?? 0);
-                        ?>
-                        <tr class="item-row">
-                            <td class="pr-3 pb-2 align-top">
-                                <input type="text" name="items[<?= $i ?>][barcode]" class="input-modern text-sm w-full barcode-input" value="<?= htmlspecialchars($item['barcode'] ?? '') ?>" placeholder="Per-item barcode" onblur="lookupBarcode(this)">
-                                <input type="text" name="items[<?= $i ?>][box_barcode]" value="<?= htmlspecialchars($item['box_barcode'] ?? '') ?>" placeholder="📦 Box barcode" class="input-modern text-xs w-full mt-1 box-barcode-input <?= $total_raw >= 1 ? '' : 'hidden' ?>">
-                            </td>
-                            <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][description]" required class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['description']) ?>"></td>
-                            <td class="pr-3 pb-2">
-                                <select name="items[<?= $i ?>][category]" required class="input-modern text-sm w-full category-select">
-                                    <option value="">— select —</option>
-                                    <?php foreach (PRODUCT_CATEGORIES as $val => $label): ?>
-                                    <option value="<?= $val ?>" <?= ($item['category'] ?? '') === $val ? 'selected' : '' ?>><?= $label ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][qty_per_box]" min="0" value="<?= $is_reopen ? 0 : 1 ?>" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][box_qty]" min="0" value="<?= $is_reopen ? 0 : $total_raw ?>" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2 text-center">
-                                <span class="total-display font-black text-slate-800 text-base"><?= $is_reopen ? 0 : $total_raw ?></span>
-                            </td>
-                            <td class="pr-3 pb-2"><input type="number" name="items[<?= $i ?>][damaged_qty]" min="0" value="<?= $is_reopen ? 0 : intval($item['damaged_qty'] ?? 0) ?>" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
-                            <td class="pr-3 pb-2 text-center">
-                                <span class="good-display font-black text-emerald-600 text-base"><?= $is_reopen ? 0 : intval($item['quantity']) ?></span>
-                                <input type="hidden" name="items[<?= $i ?>][qty]" class="qty-hidden" value="<?= $is_reopen ? 0 : intval($item['quantity']) ?>">
-                            </td>
-                            <?php $has_exp = !empty($item['expiry_date']); ?>
-                            <td class="pr-3 pb-2 align-top">
-                                <label class="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 cursor-pointer select-none">
-                                    <input type="checkbox" name="items[<?= $i ?>][has_expiry]" value="1" class="expiry-toggle" onchange="toggleExpiry(this)" <?= $has_exp ? 'checked' : '' ?>> With expiry
-                                </label>
-                                <input type="date" name="items[<?= $i ?>][expiry_date]" class="input-modern text-sm w-full expiry-date <?= $has_exp ? '' : 'hidden' ?>" value="<?= htmlspecialchars($item['expiry_date'] ?? '') ?>"<?= $has_exp ? ' required' : '' ?>></td>
-                            <td class="pr-3 pb-2"><input type="text" name="items[<?= $i ?>][damage_notes]" class="input-modern text-sm w-full" value="<?= htmlspecialchars($item['damage_notes'] ?? '') ?>" placeholder="e.g. crushed packaging"></td>
-                            <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+        <!-- Panel fields -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Barcode</label>
+                <input type="text" id="p-bc" class="input-modern text-sm w-full" placeholder="Per-item barcode" onblur="panelLookup()" onkeydown="panelEnter(event)">
+                <input type="text" id="p-boxbc" class="input-modern text-xs w-full mt-1 hidden" placeholder="📦 Box barcode" onkeydown="panelEnter(event)">
+                <span id="p-nb-badge" class="hidden inline-block mt-1 text-[8px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest">Non-barcode Item</span>
             </div>
-
-            <div class="flex gap-3 mt-6">
-                <button type="button" id="saveBtn"
-                        class="btn-pos-primary px-8 py-3 text-sm font-black uppercase tracking-widest">
-                    Save Items
-                </button>
-                <button type="button" id="submitBtn" onclick="openSubmitConfirm()"
-                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100">
-                    Submit Batch
-                </button>
+            <div>
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Description <span class="text-rose-500">*</span></label>
+                <input type="text" id="p-desc" class="input-modern text-sm w-full" placeholder="Product name" onkeydown="panelEnter(event)">
             </div>
-        </form>
+            <div>
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Category <span class="text-rose-500">*</span></label>
+                <select id="p-cat" class="input-modern text-sm w-full">
+                    <option value="">— select —</option>
+                    <?php foreach (PRODUCT_CATEGORIES as $val => $label): ?>
+                    <option value="<?= $val ?>"><?= $label ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div>
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Qty / Box</label>
+                <input type="number" id="p-qpb" min="0" value="0" class="input-modern text-sm w-full text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
+            </div>
+            <div>
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Boxes</label>
+                <input type="number" id="p-box" min="0" value="0" class="input-modern text-sm w-full text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
+            </div>
+            <div>
+                <label class="text-[10px] font-black text-rose-400 uppercase tracking-widest block mb-1">Damaged</label>
+                <input type="number" id="p-dmg" min="0" value="0" class="input-modern text-sm w-full text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
+            </div>
+            <div class="flex items-end gap-4">
+                <div class="text-center"><p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Total</p><p id="p-total" class="text-2xl font-black text-slate-800 leading-none">0</p></div>
+                <div class="text-center"><p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Good</p><p id="p-good" class="text-2xl font-black text-emerald-600 leading-none">0</p></div>
+            </div>
+            <div>
+                <label class="flex items-center gap-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 cursor-pointer select-none">
+                    <input type="checkbox" id="p-hasexp" class="accent-emerald-500" onchange="panelToggleExpiry()"> With expiry
+                </label>
+                <input type="date" id="p-expdate" class="input-modern text-sm w-full hidden" onkeydown="panelEnter(event)">
+            </div>
+            <div>
+                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Damage Notes</label>
+                <input type="text" id="p-notes" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging" onkeydown="panelEnter(event)">
+            </div>
+        </div>
+
+        <div class="flex gap-3 mt-6">
+            <button type="button" id="p-add" onclick="addOrUpdateItem()"
+                    class="btn-pos-primary px-8 py-3 text-sm font-black uppercase tracking-widest">
+                + Add Item
+            </button>
+            <button type="button" id="p-cancel" onclick="cancelEdit()"
+                    class="hidden border border-slate-200 text-slate-500 px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-slate-50 transition-all">
+                Cancel
+            </button>
+        </div>
     </div>
+
+    <!-- ── ITEMS LIST — the form that submits ──────────────────────────────── -->
+    <form method="POST" action="receive_process.php" id="itemsForm" class="card-modern p-8 mt-6">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="save_items">
+        <input type="hidden" name="batch_id" value="<?= $batch_id ?>">
+
+        <h3 class="serif-title text-lg font-black text-slate-800 mb-4">Items in this Batch (<span id="item-count"><?= count($items) ?></span>)</h3>
+
+        <div id="items-body" class="space-y-2.5">
+            <?php foreach ($items as $i => $item) render_item_row($i, $item, $is_reopen); ?>
+        </div>
+        <div id="empty-list" class="<?= empty($items) ? '' : 'hidden' ?> text-center text-slate-300 font-black italic text-sm py-12">
+            No items added yet — fill the form above and click “Add Item”.
+        </div>
+
+        <div class="flex gap-3 mt-6">
+            <button type="button" id="saveBtn"
+                    class="btn-pos-primary px-8 py-3 text-sm font-black uppercase tracking-widest">
+                Save Items
+            </button>
+            <button type="button" id="submitBtn" onclick="openSubmitConfirm()"
+                    class="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100">
+                Submit Batch
+            </button>
+        </div>
+    </form>
 
     <!-- ── Submit Batch Confirm Modal ──────────────────────────────────────── -->
     <div id="submit-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm hidden">
@@ -357,82 +424,71 @@ function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-function updateTotal(input) {
-    const row     = input.closest('tr');
-    const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 0;
-    const boxesRaw = parseInt(row.querySelector('.box-qty').value);
-    const hasBox  = !isNaN(boxesRaw) && boxesRaw >= 1;       // a real box count was entered
-    const effBoxes = hasBox ? boxesRaw : 1;                   // no box → treat Qty/Box as the plain quantity
-    const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
-    const total   = perBox * effBoxes;
-    const good    = Math.max(0, total - damaged);
-    row.querySelector('.total-display').textContent = total;
-    row.querySelector('.good-display').textContent  = good;
-    row.querySelector('.qty-hidden').value          = good;
-    // Box Barcode field appears when this row has boxes — or already holds a box code.
-    const boxBc = row.querySelector('.box-barcode-input');
-    if (boxBc) boxBc.classList.toggle('hidden', !(hasBox || boxBc.value.trim() !== ''));
+// ── Entry panel: live Total / Good preview ───────────────────────────────────
+function panelRecalc() {
+    const perBox   = parseInt(document.getElementById('p-qpb').value) || 0;
+    const boxesRaw = parseInt(document.getElementById('p-box').value);
+    const hasBox   = !isNaN(boxesRaw) && boxesRaw >= 1;     // a real box count was entered
+    const effBoxes = hasBox ? boxesRaw : 1;                  // no box → Qty/Box is the plain quantity
+    const damaged  = parseInt(document.getElementById('p-dmg').value) || 0;
+    const total    = perBox * effBoxes;
+    const good     = Math.max(0, total - damaged);
+    document.getElementById('p-total').textContent = total;
+    document.getElementById('p-good').textContent  = good;
+    const boxBc = document.getElementById('p-boxbc');
+    boxBc.classList.toggle('hidden', !(hasBox || boxBc.value.trim() !== ''));
+    return { perBox: perBox, effBoxes: effBoxes, boxes: hasBox ? boxesRaw : 0, total: total, good: good, damaged: damaged };
+}
+function panelToggleExpiry() {
+    const cb = document.getElementById('p-hasexp');
+    const dt = document.getElementById('p-expdate');
+    if (cb.checked) { dt.classList.remove('hidden'); setTimeout(function(){ dt.focus(); }, 0); }
+    else { dt.classList.add('hidden'); dt.value = ''; }
+}
+function panelEnter(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addOrUpdateItem(); }
 }
 
+// ── Validate the panel; returns the item object or null ───────────────────────
+function panelValidate() {
+    const bc      = document.getElementById('p-bc').value.trim();
+    const boxbc   = document.getElementById('p-boxbc').value.trim();
+    const desc    = document.getElementById('p-desc').value.trim();
+    const cat     = document.getElementById('p-cat').value;
+    const hasexp  = document.getElementById('p-hasexp').checked;
+    const expdate = document.getElementById('p-expdate').value;
+    const r       = panelRecalc();
+    if (!bc && !boxbc) { showFlash('Enter a barcode (per-item or box), or use “Non-barcode item”.', 'error'); document.getElementById('p-bc').focus(); return null; }
+    if (!desc)         { showFlash('Enter a product description.', 'error'); document.getElementById('p-desc').focus(); return null; }
+    if (!cat)          { showFlash('Select a category.', 'error'); document.getElementById('p-cat').focus(); return null; }
+    if (r.total < 1)   { showFlash('Enter a quantity of at least 1 in Qty/Box.', 'error'); document.getElementById('p-qpb').focus(); return null; }
+    if (hasexp && !expdate) { showFlash('Marked “With expiry” — pick a date or untick it.', 'error'); document.getElementById('p-expdate').focus(); return null; }
+    return {
+        barcode: bc, boxbc: boxbc, desc: desc, cat: cat,
+        qpb: r.perBox, box: r.boxes, dmg: r.damaged, good: r.good, total: r.total,
+        hasexp: hasexp ? 1 : 0, expdate: hasexp ? expdate : '',
+        notes: document.getElementById('p-notes').value.trim()
+    };
+}
+
+// ── Submit guards — items are already validated when added to the list ────────
 function syncQtys() {
-    document.querySelectorAll('.item-row').forEach(row => {
-        const perBox  = parseInt(row.querySelector('.qty-per-box').value)  || 0;
+    document.querySelectorAll('#items-body .item-row').forEach(function (row) {
+        const perBox   = parseInt(row.querySelector('.qty-per-box').value) || 0;
         const boxesRaw = parseInt(row.querySelector('.box-qty').value);
-        const hasBox  = !isNaN(boxesRaw) && boxesRaw >= 1;
+        const hasBox   = !isNaN(boxesRaw) && boxesRaw >= 1;
         const effBoxes = hasBox ? boxesRaw : 1;
-        const damaged = parseInt(row.querySelector('.damaged-qty').value)  || 0;
+        const damaged  = parseInt(row.querySelector('.damaged-qty').value) || 0;
         row.querySelector('.qty-hidden').value = Math.max(0, perBox * effBoxes - damaged);
     });
 }
-
 function beforeSubmit() {
+    if (document.querySelectorAll('#items-body .item-row').length === 0) {
+        showFlash('Add at least one item before saving.', 'error');
+        document.getElementById('p-bc').focus();
+        return false;
+    }
     syncQtys();
-    if (document.querySelectorAll('.item-row').length === 0) {
-        showFlash('Scan or add at least one item before saving.', 'error');
-        document.getElementById('scan-input').focus();
-        return false;
-    }
-    // Each item needs at least one barcode — per-item OR box (both is fine, neither is not).
-    var missing = false;
-    document.querySelectorAll('.item-row').forEach(function (row) {
-        var unit = (row.querySelector('.barcode-input')?.value || '').trim();
-        var box  = (row.querySelector('.box-barcode-input')?.value || '').trim();
-        if (!unit && !box) {
-            missing = true;
-            row.querySelector('.barcode-input')?.classList.add('ring-2', 'ring-rose-400');
-        }
-    });
-    if (missing) {
-        showFlash('Each item needs at least one barcode — per-item or box.', 'error');
-        return false;
-    }
-    // "With expiry" rows must carry a date — otherwise the submit is declined.
-    var expiryMissing = false;
-    document.querySelectorAll('.item-row').forEach(function (row) {
-        var cb = row.querySelector('.expiry-toggle');
-        var dt = row.querySelector('.expiry-date');
-        if (cb && cb.checked && !(dt && dt.value)) {
-            expiryMissing = true;
-            dt?.classList.add('ring-2', 'ring-rose-400');
-        }
-    });
-    if (expiryMissing) {
-        showFlash('Items marked "With expiry" need an expiry date — fill it in or untick the box.', 'error');
-        return false;
-    }
-    // Category is required for every row
-    var catMissing = false;
-    document.querySelectorAll('.item-row').forEach(function(row) {
-        var cat = row.querySelector('.category-select');
-        if (cat && !cat.value) {
-            catMissing = true;
-            cat.classList.add('ring-2', 'ring-rose-400');
-        }
-    });
-    if (catMissing) {
-        showFlash('Select a category for each item.', 'error');
-        return false;
-    }
     return true;
 }
 
@@ -443,36 +499,24 @@ async function lookupBarcodeData(barcode) {
     } catch (_) { return null; }
 }
 
-async function lookupBarcode(input) {
-    const barcode = input.value.trim();
-    if (!barcode) return;
-    if (barcode.startsWith('NB-')) return;   // auto-generated internal code — no DB lookup needed
-    const row  = input.closest('tr');
-    const desc = row.querySelector('input[name*="[description]"]');
+async function panelLookup() {
+    const bcEl    = document.getElementById('p-bc');
+    const barcode = bcEl.value.trim();
+    if (!barcode || barcode.startsWith('NB-')) return;   // NB- codes are internal, no lookup
     const data = await lookupBarcodeData(barcode);
-    if (data && data.found) {
-        if (!desc.value.trim()) {
-            desc.value = data.name;
-            flashSynced(desc);
-            showSyncPop(data.name);
-        }
-        // If a BOX code was typed into the per-item field, move it to the box field.
-        if (data.match === 'box') {
-            const boxBc  = row.querySelector('.box-barcode-input');
-            const itemBc = row.querySelector('.barcode-input');
-            if (boxBc) {
-                input.value = data.barcode || '';   // restore per-item code (often blank) here
-                boxBc.value = barcode;
-                flashSynced(boxBc);
-                const qpb = row.querySelector('.qty-per-box');
-                if (qpb && data.box_units > 0) qpb.value = data.box_units;
-                const bq = row.querySelector('.box-qty');
-                if (bq && !(parseInt(bq.value) >= 1)) bq.value = 1;
-                updateTotal(qpb || itemBc);
-            }
-        }
-        // Expiry is NOT carried over — each delivery sets its own expiry date.
+    if (!data || !data.found) return;
+    const desc = document.getElementById('p-desc');
+    if (!desc.value.trim()) { desc.value = data.name; flashSynced(desc); showSyncPop(data.name); }
+    // A BOX code typed into the per-item field → move it to the box field.
+    if (data.match === 'box') {
+        const boxBc = document.getElementById('p-boxbc');
+        bcEl.value  = data.barcode || '';
+        boxBc.value = barcode; boxBc.classList.remove('hidden'); flashSynced(boxBc);
+        if (data.box_units > 0) document.getElementById('p-qpb').value = data.box_units;
+        const bq = document.getElementById('p-box'); if (!(parseInt(bq.value) >= 1)) bq.value = 1;
+        panelRecalc();
     }
+    // Expiry is NOT carried over — each delivery sets its own expiry date.
 }
 
 // ── "Synced from previous data" feedback ───────────────────────────────────
@@ -505,9 +549,10 @@ function findRowByBarcode(barcode) {
     const norm = barcode.trim().toLowerCase();
     if (!norm) return null;
     let match = null;
-    // Match either the per-item or the box barcode field already on a row.
-    document.querySelectorAll('.item-row .barcode-input, .item-row .box-barcode-input').forEach(bc => {
-        if (bc.value.trim().toLowerCase() === norm) match = bc.closest('tr');
+    document.querySelectorAll('#items-body .item-row').forEach(function (row) {
+        const a = (row.dataset.barcode || '').trim().toLowerCase();
+        const b = (row.dataset.boxbc   || '').trim().toLowerCase();
+        if (a === norm || b === norm) match = row;
     });
     return match;
 }
@@ -520,94 +565,46 @@ function flashRow(row) {
     setTimeout(() => row.classList.remove('row-flash'), 2800);
 }
 
+// Scanning fills the entry panel (the clerk reviews, then clicks Add Item).
 async function handleScan() {
     const input   = document.getElementById('scan-input');
     const barcode = input.value.trim();
     if (!barcode) return;
     input.value = '';
 
-    // Already on the list → DO NOT change counts. Make it obvious so the
-    // clerk re-checks the physical count and avoids a discrepancy.
     const existing = findRowByBarcode(barcode);
     if (existing) {
         flashRow(existing);
-        const name = existing.querySelector('input[name*="[description]"]')?.value.trim() || 'this item';
-        showFlash('⚠ "' + name + '" is already on the list — re-count it and update the boxes manually.', 'error');
+        showFlash('⚠ "' + (existing.dataset.desc || 'this item') + '" is already in the list — click Edit to re-count it.', 'error');
         setHint('Already on list ↑ verify', 'warn');
-        input.focus();
         return;
     }
 
-    // Look up FIRST so we know whether this is a per-item or a BOX code.
     setHint('Looking up…', 'busy');
     const data  = await lookupBarcodeData(barcode);
     const isBox = data && data.found && data.match === 'box';
 
-    // Put the scanned code in the correct field (per-item, unless it's a box code).
-    const row    = addRow(isBox ? '' : barcode);
-    const desc   = row.querySelector('input[name*="[description]"]');
-    const itemBc = row.querySelector('.barcode-input');
-    const boxBc  = row.querySelector('.box-barcode-input');
-    input.focus();
-
+    cancelEdit();            // make sure we're adding fresh, not mid-edit
+    const bcEl  = document.getElementById('p-bc');
+    const boxBc = document.getElementById('p-boxbc');
+    if (isBox) {
+        boxBc.value = barcode; boxBc.classList.remove('hidden'); flashSynced(boxBc);
+        if (data.barcode) bcEl.value = data.barcode;
+        if (data.box_units > 0) document.getElementById('p-qpb').value = data.box_units;
+        document.getElementById('p-box').value = 1;
+    } else {
+        bcEl.value = barcode;
+    }
     if (data && data.found) {
-        if (!desc.value.trim()) {
-            desc.value = data.name;
-            flashSynced(desc);            // green flash so the clerk sees it was auto-filled
-            showSyncPop(data.name);       // "Synced from previous data" pop-up
-        }
-        if (isBox) {
-            // Scanned a BOX code → fill the box field, set units/box, reveal the box field.
-            if (boxBc)  { boxBc.value = barcode; flashSynced(boxBc); }
-            if (itemBc && !itemBc.value.trim() && data.barcode) itemBc.value = data.barcode;  // known per-item code too
-            const qpb = row.querySelector('.qty-per-box');
-            if (qpb && data.box_units > 0) qpb.value = data.box_units;
-            const bq = row.querySelector('.box-qty');
-            if (bq && !(parseInt(bq.value) >= 1)) bq.value = 1;   // ensure the box field shows
-            updateTotal(qpb || itemBc);
-            setHint('✓ Box synced — enter # of boxes & expiry', 'ok');
-        } else {
-            // Expiry is left blank — clerk enters this delivery's expiry date.
-            setHint('✓ Synced — enter qty & expiry', 'ok');
-        }
-        input.focus();
+        const desc = document.getElementById('p-desc');
+        desc.value = data.name; flashSynced(desc); showSyncPop(data.name);
+        setHint(isBox ? '✓ Box synced — set boxes & expiry' : '✓ Synced — set qty & expiry', 'ok');
+        panelRecalc();
+        document.getElementById('p-qpb').focus();
     } else {
         setHint('New product — type its name', 'warn');
-        flashRow(row);
-        desc.focus();                            // make them name the unknown item
+        document.getElementById('p-desc').focus();
     }
-}
-
-function addRow(barcode = '') {
-    const i = _rowIdx++;
-    const tbody = document.getElementById('items-body');
-    const tr = document.createElement('tr');
-    tr.className = 'item-row';
-    tr.innerHTML = `
-        <td class="pr-3 pb-2 align-top">
-            <input type="text" name="items[${i}][barcode]" class="input-modern text-sm w-full barcode-input" value="${esc(barcode)}" placeholder="Per-item barcode" onblur="lookupBarcode(this)">
-            <input type="text" name="items[${i}][box_barcode]" placeholder="📦 Box barcode" class="input-modern text-xs w-full mt-1 box-barcode-input hidden">
-        </td>
-        <td class="pr-3 pb-2"><input type="text" name="items[${i}][description]" required class="input-modern text-sm w-full" placeholder="Product name"></td>
-        <td class="pr-3 pb-2"><select name="items[${i}][category]" required class="input-modern text-sm w-full category-select">${_catSelectOptions}</select></td>
-        <td class="pr-3 pb-2"><input type="number" name="items[${i}][qty_per_box]" min="0" value="0" class="input-modern text-sm w-full text-center qty-per-box" oninput="updateTotal(this)"></td>
-        <td class="pr-3 pb-2"><input type="number" name="items[${i}][box_qty]" min="0" value="0" class="input-modern text-sm w-full text-center box-qty" oninput="updateTotal(this)"></td>
-        <td class="pr-3 pb-2 text-center"><span class="total-display font-black text-slate-800 text-base">0</span></td>
-        <td class="pr-3 pb-2"><input type="number" name="items[${i}][damaged_qty]" min="0" value="0" class="input-modern text-sm w-full text-center damaged-qty" oninput="updateTotal(this)"></td>
-        <td class="pr-3 pb-2 text-center">
-            <span class="good-display font-black text-emerald-600 text-base">0</span>
-            <input type="hidden" name="items[${i}][qty]" class="qty-hidden" value="0">
-        </td>
-        <td class="pr-3 pb-2 align-top">
-            <label class="flex items-center gap-1 text-[10px] font-bold text-slate-500 mb-1 cursor-pointer select-none">
-                <input type="checkbox" name="items[${i}][has_expiry]" value="1" class="expiry-toggle" onchange="toggleExpiry(this)"> With expiry
-            </label>
-            <input type="date" name="items[${i}][expiry_date]" class="input-modern text-sm w-full expiry-date hidden"></td>
-        <td class="pr-3 pb-2"><input type="text" name="items[${i}][damage_notes]" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging"></td>
-        <td class="pb-2"><button type="button" onclick="removeRow(this)" class="text-rose-400 hover:text-rose-600 font-black text-lg leading-none">&times;</button></td>`;
-    tbody.appendChild(tr);
-    if (!barcode) tr.querySelector('.barcode-input').focus();
-    return tr;
 }
 
 // ── Non-barcode item: generate NB-YYYYMMDD-XXXXXX and lock the barcode field ──
@@ -628,48 +625,165 @@ function genNbCode() {
     return 'NB-' + d + '-' + rnd;
 }
 
-function addNonBarcodeRow() {
-    var code = genNbCode();
-    var row  = addRow('');
-    var bc   = row.querySelector('.barcode-input');
-
-    // Fill and lock the barcode field — the box barcode input is already hidden by default
-    bc.value    = code;
-    bc.readOnly = true;
-    bc.removeAttribute('onblur');
-    bc.classList.add('bg-amber-50', 'text-amber-800', 'cursor-not-allowed', 'font-mono', 'text-xs');
-
-    // Small badge appended BELOW the input so the column width is unchanged
-    var badge = document.createElement('span');
-    badge.className   = 'inline-block mt-1 text-[7.7px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest';
-    badge.textContent = 'Non-barcode Item';
-    bc.parentElement.appendChild(badge);
-
-    // Jump straight to the description — clerk must name the item
-    var desc = row.querySelector('input[name*="[description]"]');
-    if (desc) desc.focus();
-    return row;
-}
-
-function removeRow(btn) {
-    btn.closest('tr').remove();
-    document.getElementById('scan-input').focus();
-}
-
-// Per-row expiry toggle: "With expiry" opens (and requires) the date; off clears it.
-function toggleExpiry(cb) {
-    const date = cb.closest('td').querySelector('.expiry-date');
-    if (!date) return;
-    if (cb.checked) {
-        date.classList.remove('hidden');
-        date.required = true;
-        date.focus();
+// ── Non-barcode toggle (in the panel) ─────────────────────────────────────────
+let _nbOn = false;
+function applyNbVisual(on) {
+    _nbOn = on;
+    const bc = document.getElementById('p-bc');
+    const badge = document.getElementById('p-nb-badge');
+    const btn = document.getElementById('nb-toggle');
+    if (on) {
+        bc.readOnly = true;
+        bc.classList.add('bg-amber-50', 'text-amber-800', 'cursor-not-allowed', 'font-mono');
+        badge.classList.remove('hidden');
+        btn.classList.add('bg-amber-500', 'text-white');
     } else {
-        date.classList.add('hidden');
-        date.required = false;
-        date.value = '';
-        date.classList.remove('ring-2', 'ring-rose-400');
+        bc.readOnly = false;
+        bc.classList.remove('bg-amber-50', 'text-amber-800', 'cursor-not-allowed', 'font-mono');
+        badge.classList.add('hidden');
+        btn.classList.remove('bg-amber-500', 'text-white');
     }
+}
+function toggleNonBarcode() {
+    if (_nbOn) { applyNbVisual(false); document.getElementById('p-bc').value = ''; }
+    else { applyNbVisual(true); document.getElementById('p-bc').value = genNbCode(); document.getElementById('p-desc').focus(); }
+}
+
+// ── Items list: build / edit / remove ─────────────────────────────────────────
+let _editingRow = null;
+function fmtDate(s) {
+    const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const p = (s || '').split('-'); if (p.length !== 3) return s;
+    return m[parseInt(p[1], 10) - 1] + ' ' + parseInt(p[2], 10) + ', ' + p[0];
+}
+function setRowData(row, d) {
+    row.dataset.barcode = d.barcode; row.dataset.boxbc = d.boxbc; row.dataset.desc = d.desc;
+    row.dataset.cat = d.cat; row.dataset.qpb = d.qpb; row.dataset.box = d.box; row.dataset.dmg = d.dmg;
+    row.dataset.good = d.good; row.dataset.total = d.total; row.dataset.hasexp = d.hasexp;
+    row.dataset.expdate = d.expdate; row.dataset.notes = d.notes;
+}
+function getRowIndex(row) {
+    const inp = row.querySelector('.f-barcode');
+    const m = inp ? inp.name.match(/items\[(\d+)\]/) : null;
+    return m ? parseInt(m[1], 10) : _rowIdx++;
+}
+function rowInner(d, i) {
+    const N = function (f) { return 'items[' + i + '][' + f + ']'; };
+    const exp     = d.hasexp == 1 ? '<input type="hidden" name="' + N('has_expiry') + '" class="f-hasexp" value="1">' : '';
+    const dmgSpan = d.dmg > 0    ? '<span class="text-rose-500 row-dmg">Damaged: ' + d.dmg + '</span>' : '';
+    const expSpan = d.expdate    ? '<span class="row-exp">Exp: ' + fmtDate(d.expdate) + '</span>' : '';
+    const noteSpan = d.notes     ? '<span class="text-slate-400 italic normal-case row-notes">“' + esc(d.notes) + '”</span>' : '';
+    return ''
+      + '<input type="hidden" name="' + N('barcode')      + '" class="f-barcode"  value="' + esc(d.barcode) + '">'
+      + '<input type="hidden" name="' + N('box_barcode')  + '" class="f-boxbc"    value="' + esc(d.boxbc)   + '">'
+      + '<input type="hidden" name="' + N('description')  + '" class="f-desc"     value="' + esc(d.desc)    + '">'
+      + '<input type="hidden" name="' + N('category')     + '" class="f-cat"      value="' + esc(d.cat)     + '">'
+      + '<input type="hidden" name="' + N('qty_per_box')  + '" class="f-qpb qty-per-box" value="' + d.qpb + '">'
+      + '<input type="hidden" name="' + N('box_qty')      + '" class="f-box box-qty"     value="' + d.box + '">'
+      + '<input type="hidden" name="' + N('damaged_qty')  + '" class="f-dmg damaged-qty" value="' + d.dmg + '">'
+      + '<input type="hidden" name="' + N('qty')          + '" class="f-good qty-hidden" value="' + d.good + '">'
+      + '<input type="hidden" name="' + N('expiry_date')  + '" class="f-expdate"  value="' + esc(d.expdate) + '">'
+      + '<input type="hidden" name="' + N('damage_notes') + '" class="f-notes"    value="' + esc(d.notes)   + '">'
+      + exp
+      + '<div class="flex-1 min-w-0">'
+      +   '<div class="flex items-center gap-2 flex-wrap">'
+      +     '<p class="font-bold text-slate-800 leading-tight row-name">' + esc(d.desc) + '</p>'
+      +     '<span class="row-cat text-[9px] font-black text-blue-500 uppercase bg-blue-50/70 px-2 py-0.5 rounded">' + esc(d.cat) + '</span>'
+      +   '</div>'
+      +   '<div class="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1 text-[10px] font-black text-slate-400 uppercase tracking-wide">'
+      +     '<code class="text-slate-400 bg-slate-100 px-2 py-0.5 rounded border row-bc">' + esc(d.barcode || d.boxbc || '—') + '</code>'
+      +     '<span class="text-slate-600 row-good">Good: ' + d.good + '</span>'
+      +     '<span class="row-total">Total: ' + d.total + '</span>'
+      +     dmgSpan + expSpan + noteSpan
+      +   '</div>'
+      + '</div>'
+      + '<div class="flex items-center gap-2 flex-shrink-0">'
+      +   '<button type="button" onclick="editItem(this)" class="text-[10px] font-black text-slate-500 hover:text-white border border-slate-200 hover:bg-slate-700 px-3 py-1.5 rounded-lg uppercase tracking-widest transition-all">Edit</button>'
+      +   '<button type="button" onclick="removeItem(this)" class="text-rose-400 hover:text-rose-600 font-black text-xl leading-none px-1">&times;</button>'
+      + '</div>';
+}
+function addOrUpdateItem() {
+    const d = panelValidate();
+    if (!d) return;
+    if (_editingRow) {
+        const i = getRowIndex(_editingRow);
+        setRowData(_editingRow, d);
+        _editingRow.innerHTML = rowInner(d, i);
+        _editingRow = null;
+    } else {
+        const i = _rowIdx++;
+        const div = document.createElement('div');
+        div.className = 'item-row bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3.5 flex items-center gap-4';
+        setRowData(div, d);
+        div.innerHTML = rowInner(d, i);
+        document.getElementById('items-body').appendChild(div);
+        flashRow(div);
+    }
+    resetPanelFields();
+    setPanelMode(false);
+    refreshItemCount();
+    document.getElementById('p-bc').focus();
+}
+function editItem(btn) {
+    const row = btn.closest('.item-row');
+    _editingRow = row;
+    const d = row.dataset;
+    applyNbVisual(false);
+    document.getElementById('p-bc').value = d.barcode || '';
+    const boxBc = document.getElementById('p-boxbc');
+    boxBc.value = d.boxbc || '';
+    boxBc.classList.toggle('hidden', !((d.boxbc || '').trim()));
+    document.getElementById('p-desc').value = d.desc || '';
+    document.getElementById('p-cat').value  = d.cat || '';
+    document.getElementById('p-qpb').value  = d.qpb || 0;
+    document.getElementById('p-box').value  = d.box || 0;
+    document.getElementById('p-dmg').value  = d.dmg || 0;
+    document.getElementById('p-notes').value = d.notes || '';
+    const hasexp = d.hasexp == 1;
+    document.getElementById('p-hasexp').checked = hasexp;
+    const expEl = document.getElementById('p-expdate');
+    expEl.value = d.expdate || '';
+    expEl.classList.toggle('hidden', !hasexp);
+    if ((d.barcode || '').startsWith('NB-')) applyNbVisual(true);   // keep the existing NB code, locked
+    panelRecalc();
+    setPanelMode(true);
+    document.getElementById('panel-title').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById('p-desc').focus();
+}
+function removeItem(btn) {
+    const row = btn.closest('.item-row');
+    if (_editingRow === row) cancelEdit();
+    row.remove();
+    refreshItemCount();
+}
+function cancelEdit() {
+    _editingRow = null;
+    resetPanelFields();
+    setPanelMode(false);
+}
+function setPanelMode(editing) {
+    document.getElementById('panel-title').textContent = editing ? 'Edit Item' : 'Add Received Item';
+    document.getElementById('p-add').textContent       = editing ? 'Update Item' : '+ Add Item';
+    document.getElementById('p-cancel').classList.toggle('hidden', !editing);
+}
+function resetPanelFields() {
+    applyNbVisual(false);
+    document.getElementById('p-bc').value = '';
+    const boxBc = document.getElementById('p-boxbc'); boxBc.value = ''; boxBc.classList.add('hidden');
+    document.getElementById('p-desc').value = '';
+    document.getElementById('p-cat').value  = '';
+    document.getElementById('p-qpb').value  = 0;
+    document.getElementById('p-box').value  = 0;
+    document.getElementById('p-dmg').value  = 0;
+    document.getElementById('p-notes').value = '';
+    document.getElementById('p-hasexp').checked = false;
+    const expEl = document.getElementById('p-expdate'); expEl.value = ''; expEl.classList.add('hidden');
+    panelRecalc();
+}
+function refreshItemCount() {
+    const n = document.querySelectorAll('#items-body .item-row').length;
+    document.getElementById('item-count').textContent = n;
+    document.getElementById('empty-list').classList.toggle('hidden', n > 0);
 }
 
 // ── AJAX form submission ──────────────────────────────────────────────────────
