@@ -220,101 +220,159 @@ include '../layout_top.php';
     ?>
 
     <!-- ── ENTRY PANEL — fill this and "Add Item" ──────────────────────────── -->
-    <div class="card-modern p-8">
-        <div class="flex items-center justify-between mb-5 flex-wrap gap-3">
-            <h3 class="serif-title text-lg font-black text-slate-800" id="panel-title">Add Received Item</h3>
-            <button type="button" id="nb-toggle" onclick="toggleNonBarcode()"
-                    class="text-amber-600 hover:text-white text-xs font-black px-3 py-2 rounded-xl uppercase tracking-widest transition-all hover:bg-amber-500 border border-amber-200 hover:border-amber-500">
-                + Non-barcode item
-            </button>
-        </div>
+    <div class="bg-white rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-200/50 overflow-hidden">
 
-        <!-- ── Scan Station — pre-fills the form below ──────────────────── -->
-        <div id="scan-box" class="bg-slate-900 rounded-xl px-4 py-2.5 flex items-center gap-3 mb-6 cursor-pointer"
-             onclick="document.getElementById('scan-input').focus()">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-emerald-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 5v14M7 5v14M11 5v14M15 5v14M19 5v14"/>
-            </svg>
-            <input type="text" id="scan-input" autocomplete="off" inputmode="numeric"
-                   placeholder="Scan a barcode then Enter — it fills the form below…"
-                   class="flex-1 min-w-0 bg-transparent text-white text-sm font-bold placeholder-slate-500 focus:outline-none"
-                   onfocus="document.getElementById('scan-box').classList.add('scan-active'); setHint('Active Barcode Entry','ok');"
-                   onblur="document.getElementById('scan-box').classList.remove('scan-active'); setHint('Click and Hover to scan','idle');"
-                   onkeydown="if(event.key==='Enter'){event.preventDefault();handleScan();}">
-            <span id="scan-hint" class="text-[11px] font-black text-slate-400 whitespace-nowrap">Click to scan</span>
-        </div>
-
-        <!-- "Synced from previous data" pop-up -->
-        <div id="sync-pop">
-            <div class="bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-500 max-w-xs">
-                <div class="bg-emerald-500 p-1.5 rounded-lg text-white flex-shrink-0">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        <!-- ── Header strip ─────────────────────────────────────────────── -->
+        <div class="flex items-center justify-between gap-3 flex-wrap px-8 py-5 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-800">
+            <div class="flex items-center gap-3.5 min-w-0">
+                <div class="w-11 h-11 rounded-2xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center flex-shrink-0 ring-1 ring-emerald-400/30">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
                 </div>
                 <div class="min-w-0">
-                    <p class="text-[10px] font-black uppercase tracking-widest text-emerald-400">Synced from previous data</p>
-                    <p id="sync-pop-name" class="font-bold text-sm truncate">Description filled — no need to type it.</p>
+                    <h3 id="panel-title" class="serif-title text-lg font-black text-white leading-tight">Add Received Item</h3>
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-0.5">Fill the form, then add to the batch</p>
                 </div>
             </div>
+            <button type="button" id="nb-toggle" onclick="toggleNonBarcode()"
+                    class="flex items-center gap-1.5 text-amber-300 hover:text-slate-900 text-[10px] font-black px-4 py-2.5 rounded-xl uppercase tracking-widest transition-all hover:bg-amber-400 border border-amber-400/40 hover:border-amber-400">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                Non-barcode item
+            </button>
         </div>
 
-        <!-- Panel fields -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div>
-                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Barcode</label>
-                <input type="text" id="p-bc" class="input-modern text-sm w-full" placeholder="Per-item barcode" onblur="panelLookup()" onkeydown="panelEnter(event)">
-                <input type="text" id="p-boxbc" class="input-modern text-xs w-full mt-1 hidden" placeholder="📦 Box barcode" onkeydown="panelEnter(event)">
-                <span id="p-nb-badge" class="hidden inline-block mt-1 text-[8px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest">Non-barcode Item</span>
-            </div>
-            <div>
-                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Description <span class="text-rose-500">*</span></label>
-                <input type="text" id="p-desc" class="input-modern text-sm w-full" placeholder="Product name" onkeydown="panelEnter(event)">
-            </div>
-            <div>
-                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Category <span class="text-rose-500">*</span></label>
-                <select id="p-cat" class="input-modern text-sm w-full">
-                    <option value="">— select —</option>
-                    <?php foreach (PRODUCT_CATEGORIES as $val => $label): ?>
-                    <option value="<?= $val ?>"><?= $label ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div>
-                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Qty / Box</label>
-                <input type="number" id="p-qpb" min="0" value="0" class="input-modern text-sm w-full text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
-            </div>
-            <div>
-                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Boxes</label>
-                <input type="number" id="p-box" min="0" value="0" class="input-modern text-sm w-full text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
-            </div>
-            <div>
-                <label class="text-[10px] font-black text-rose-400 uppercase tracking-widest block mb-1">Damaged</label>
-                <input type="number" id="p-dmg" min="0" value="0" class="input-modern text-sm w-full text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
-            </div>
-            <div class="flex items-end gap-4">
-                <div class="text-center"><p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Total</p><p id="p-total" class="text-2xl font-black text-slate-800 leading-none">0</p></div>
-                <div class="text-center"><p class="text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">Good</p><p id="p-good" class="text-2xl font-black text-emerald-600 leading-none">0</p></div>
-            </div>
-            <div>
-                <label class="flex items-center gap-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 cursor-pointer select-none">
-                    <input type="checkbox" id="p-hasexp" class="accent-emerald-500" onchange="panelToggleExpiry()"> With expiry
-                </label>
-                <input type="date" id="p-expdate" class="input-modern text-sm w-full hidden" onkeydown="panelEnter(event)">
-            </div>
-            <div>
-                <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Damage Notes</label>
-                <input type="text" id="p-notes" class="input-modern text-sm w-full" placeholder="e.g. crushed packaging" onkeydown="panelEnter(event)">
-            </div>
-        </div>
+        <div class="p-8 space-y-7">
 
-        <div class="flex gap-3 mt-6">
-            <button type="button" id="p-add" onclick="addOrUpdateItem()"
-                    class="btn-pos-primary px-8 py-3 text-sm font-black uppercase tracking-widest">
-                + Add Item
-            </button>
-            <button type="button" id="p-cancel" onclick="cancelEdit()"
-                    class="hidden border border-slate-200 text-slate-500 px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-slate-50 transition-all">
-                Cancel
-            </button>
+            <!-- ── Scan Station — pre-fills the form below ──────────────── -->
+            <div id="scan-box" class="bg-slate-900 rounded-2xl px-5 py-3 flex items-center gap-3 cursor-pointer ring-1 ring-white/5"
+                 onclick="document.getElementById('scan-input').focus()">
+                <span class="flex items-center justify-center w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-400 flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 5v14M7 5v14M11 5v14M15 5v14M19 5v14"/>
+                    </svg>
+                </span>
+                <input type="text" id="scan-input" autocomplete="off" inputmode="numeric"
+                       placeholder="Scan a barcode then Enter — it fills the form below…"
+                       class="flex-1 min-w-0 bg-transparent text-white text-sm font-bold placeholder-slate-500 focus:outline-none"
+                       onfocus="document.getElementById('scan-box').classList.add('scan-active'); setHint('Active Barcode Entry','ok');"
+                       onblur="document.getElementById('scan-box').classList.remove('scan-active'); setHint('Click and Hover to scan','idle');"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();handleScan();}">
+                <span id="scan-hint" class="text-[11px] font-black text-slate-400 whitespace-nowrap">Click to scan</span>
+            </div>
+
+            <!-- "Synced from previous data" pop-up -->
+            <div id="sync-pop">
+                <div class="bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-500 max-w-xs">
+                    <div class="bg-emerald-500 p-1.5 rounded-lg text-white flex-shrink-0">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    </div>
+                    <div class="min-w-0">
+                        <p class="text-[10px] font-black uppercase tracking-widest text-emerald-400">Synced from previous data</p>
+                        <p id="sync-pop-name" class="font-bold text-sm truncate">Description filled — no need to type it.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SECTION 1 · Product ───────────────────────────────────── -->
+            <div class="rounded-2xl border border-slate-100 bg-slate-50/40 p-5">
+                <p class="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Product Details
+                </p>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Barcode</label>
+                        <input type="text" id="p-bc" class="input-modern text-sm w-full bg-white" placeholder="Per-item barcode" onblur="panelLookup()" onkeydown="panelEnter(event)">
+                        <input type="text" id="p-boxbc" class="input-modern text-xs w-full mt-1 bg-white hidden" placeholder="📦 Box barcode" onkeydown="panelEnter(event)">
+                        <span id="p-nb-badge" class="hidden inline-block mt-1 text-[8px] font-black text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-widest">Non-barcode Item</span>
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Description <span class="text-rose-500">*</span></label>
+                        <input type="text" id="p-desc" class="input-modern text-sm w-full bg-white uppercase font-bold" placeholder="Product name"
+                               oninput="this.value = this.value.toUpperCase(); panelPreviewName();" onkeydown="panelEnter(event)">
+                        <p id="p-name-preview" class="hidden text-[10px] font-black text-emerald-600 mt-1 truncate"></p>
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Size / Unit <span class="text-slate-300 normal-case font-normal">(optional)</span></label>
+                        <div class="flex gap-2">
+                            <input type="number" id="p-size" min="0" step="any" class="input-modern text-sm w-1/2 bg-white text-center" placeholder="e.g. 500" oninput="panelPreviewName()" onkeydown="panelEnter(event)">
+                            <select id="p-unit" class="input-modern text-sm w-1/2 bg-white" onchange="panelPreviewName()">
+                                <option value="">— unit —</option>
+                                <option value="G">g</option>
+                                <option value="KG">kg</option>
+                                <option value="MG">mg</option>
+                                <option value="ML">ml</option>
+                                <option value="L">L (liters)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="lg:col-span-1">
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Category <span class="text-rose-500">*</span></label>
+                        <select id="p-cat" class="input-modern text-sm w-full bg-white">
+                            <option value="">— select —</option>
+                            <?php foreach (PRODUCT_CATEGORIES as $val => $label): ?>
+                            <option value="<?= $val ?>"><?= $label ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SECTION 2 · Quantity ──────────────────────────────────── -->
+            <div class="rounded-2xl border border-slate-100 bg-slate-50/40 p-5">
+                <p class="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">
+                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span> Quantity
+                </p>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 items-end">
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Qty / Box</label>
+                        <input type="number" id="p-qpb" min="0" value="0" class="input-modern text-base font-black w-full bg-white text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Boxes</label>
+                        <input type="number" id="p-box" min="0" value="0" class="input-modern text-base font-black w-full bg-white text-center" oninput="panelRecalc()" onkeydown="panelEnter(event)">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-black text-rose-400 uppercase tracking-widest block mb-1">Damaged</label>
+                        <input type="number" id="p-dmg" min="0" value="0" class="input-modern text-base font-black w-full bg-white text-center text-rose-600" oninput="panelRecalc()" onkeydown="panelEnter(event)">
+                    </div>
+                    <div class="bg-white border border-emerald-100 rounded-2xl px-4 py-2.5 flex items-center justify-around shadow-sm">
+                        <div class="text-center"><p class="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Total</p><p id="p-total" class="text-2xl font-black text-slate-800 leading-none">0</p></div>
+                        <div class="w-px h-8 bg-slate-100"></div>
+                        <div class="text-center"><p class="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-0.5">Good</p><p id="p-good" class="text-2xl font-black text-emerald-600 leading-none">0</p></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── SECTION 3 · Other Details ─────────────────────────────── -->
+            <div class="rounded-2xl border border-slate-100 bg-slate-50/40 p-5">
+                <p class="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Other Details
+                </p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                    <div>
+                        <label class="flex items-center gap-1.5 text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 cursor-pointer select-none">
+                            <input type="checkbox" id="p-hasexp" class="accent-emerald-500 w-3.5 h-3.5" onchange="panelToggleExpiry()"> With expiry
+                        </label>
+                        <input type="date" id="p-expdate" class="input-modern text-sm w-full bg-white hidden" onkeydown="panelEnter(event)">
+                    </div>
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1">Damage Notes</label>
+                        <input type="text" id="p-notes" class="input-modern text-sm w-full bg-white" placeholder="e.g. crushed packaging" onkeydown="panelEnter(event)">
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Actions ───────────────────────────────────────────────── -->
+            <div class="flex gap-3 pt-1">
+                <button type="button" id="p-add" onclick="addOrUpdateItem()"
+                        class="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white px-8 py-3.5 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-200 active:scale-[0.98]">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
+                    Add Item
+                </button>
+                <button type="button" id="p-cancel" onclick="cancelEdit()"
+                        class="hidden border border-slate-200 text-slate-500 px-6 py-3.5 rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-slate-50 transition-all">
+                    Cancel
+                </button>
+            </div>
         </div>
     </div>
 
@@ -449,22 +507,42 @@ function panelEnter(e) {
     if (e.key === 'Enter') { e.preventDefault(); addOrUpdateItem(); }
 }
 
+// ── Compose the final product name: BASE + SIZE + UNIT, always UPPERCASE ───────
+// e.g. "Pocari Sweat" + 500 + ML → "POCARI SWEAT 500 ML". Folds into description
+// only — no separate field is stored.
+function buildFinalName() {
+    const base = document.getElementById('p-desc').value.trim().toUpperCase();
+    const size = document.getElementById('p-size').value.trim();
+    const unit = document.getElementById('p-unit').value;   // already uppercase
+    let suffix = '';
+    if (size) suffix = ' ' + size + (unit ? ' ' + unit : '');
+    return (base + suffix).trim();
+}
+function panelPreviewName() {
+    const el = document.getElementById('p-name-preview');
+    if (!el) return;
+    const base = document.getElementById('p-desc').value.trim();
+    const size = document.getElementById('p-size').value.trim();
+    if (base && size) { el.textContent = '→ ' + buildFinalName(); el.classList.remove('hidden'); }
+    else el.classList.add('hidden');
+}
+
 // ── Validate the panel; returns the item object or null ───────────────────────
 function panelValidate() {
     const bc      = document.getElementById('p-bc').value.trim();
     const boxbc   = document.getElementById('p-boxbc').value.trim();
-    const desc    = document.getElementById('p-desc').value.trim();
+    const base    = document.getElementById('p-desc').value.trim();
     const cat     = document.getElementById('p-cat').value;
     const hasexp  = document.getElementById('p-hasexp').checked;
     const expdate = document.getElementById('p-expdate').value;
     const r       = panelRecalc();
     if (!bc && !boxbc) { showFlash('Enter a barcode (per-item or box), or use “Non-barcode item”.', 'error'); document.getElementById('p-bc').focus(); return null; }
-    if (!desc)         { showFlash('Enter a product description.', 'error'); document.getElementById('p-desc').focus(); return null; }
+    if (!base)         { showFlash('Enter a product description.', 'error'); document.getElementById('p-desc').focus(); return null; }
     if (!cat)          { showFlash('Select a category.', 'error'); document.getElementById('p-cat').focus(); return null; }
     if (r.total < 1)   { showFlash('Enter a quantity of at least 1 in Qty/Box.', 'error'); document.getElementById('p-qpb').focus(); return null; }
     if (hasexp && !expdate) { showFlash('Marked “With expiry” — pick a date or untick it.', 'error'); document.getElementById('p-expdate').focus(); return null; }
     return {
-        barcode: bc, boxbc: boxbc, desc: desc, cat: cat,
+        barcode: bc, boxbc: boxbc, desc: buildFinalName(), cat: cat,
         qpb: r.perBox, box: r.boxes, dmg: r.damaged, good: r.good, total: r.total,
         hasexp: hasexp ? 1 : 0, expdate: hasexp ? expdate : '',
         notes: document.getElementById('p-notes').value.trim()
@@ -506,7 +584,7 @@ async function panelLookup() {
     const data = await lookupBarcodeData(barcode);
     if (!data || !data.found) return;
     const desc = document.getElementById('p-desc');
-    if (!desc.value.trim()) { desc.value = data.name; flashSynced(desc); showSyncPop(data.name); }
+    if (!desc.value.trim()) { desc.value = (data.name || '').toUpperCase(); flashSynced(desc); showSyncPop(data.name); panelPreviewName(); }
     // A BOX code typed into the per-item field → move it to the box field.
     if (data.match === 'box') {
         const boxBc = document.getElementById('p-boxbc');
@@ -597,7 +675,7 @@ async function handleScan() {
     }
     if (data && data.found) {
         const desc = document.getElementById('p-desc');
-        desc.value = data.name; flashSynced(desc); showSyncPop(data.name);
+        desc.value = (data.name || '').toUpperCase(); flashSynced(desc); showSyncPop(data.name); panelPreviewName();
         setHint(isBox ? '✓ Box synced — set boxes & expiry' : '✓ Synced — set qty & expiry', 'ok');
         panelRecalc();
         document.getElementById('p-qpb').focus();
@@ -733,7 +811,11 @@ function editItem(btn) {
     const boxBc = document.getElementById('p-boxbc');
     boxBc.value = d.boxbc || '';
     boxBc.classList.toggle('hidden', !((d.boxbc || '').trim()));
-    document.getElementById('p-desc').value = d.desc || '';
+    document.getElementById('p-desc').value = (d.desc || '').toUpperCase();
+    // Size/Unit are already folded into the saved name, so start them blank on edit.
+    document.getElementById('p-size').value = '';
+    document.getElementById('p-unit').value = '';
+    panelPreviewName();
     document.getElementById('p-cat').value  = d.cat || '';
     document.getElementById('p-qpb').value  = d.qpb || 0;
     document.getElementById('p-box').value  = d.box || 0;
@@ -771,6 +853,8 @@ function resetPanelFields() {
     document.getElementById('p-bc').value = '';
     const boxBc = document.getElementById('p-boxbc'); boxBc.value = ''; boxBc.classList.add('hidden');
     document.getElementById('p-desc').value = '';
+    document.getElementById('p-size').value = '';
+    document.getElementById('p-unit').value = '';
     document.getElementById('p-cat').value  = '';
     document.getElementById('p-qpb').value  = 0;
     document.getElementById('p-box').value  = 0;
@@ -778,6 +862,7 @@ function resetPanelFields() {
     document.getElementById('p-notes').value = '';
     document.getElementById('p-hasexp').checked = false;
     const expEl = document.getElementById('p-expdate'); expEl.value = ''; expEl.classList.add('hidden');
+    const prev = document.getElementById('p-name-preview'); if (prev) prev.classList.add('hidden');
     panelRecalc();
 }
 function refreshItemCount() {
